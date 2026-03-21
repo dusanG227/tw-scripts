@@ -1,8 +1,6 @@
-// Updated TW Fake Executor - fakeScriptMain.js
-// Changes:
-// 1. maxFakesPerTarget - limits how many fakes go to one enemy village
-// 2. maxFakesPerVillage - limits how many fakes are sent from one own village
-// 3. Fixed unit selection on rally point (uses 'input' event + React-compatible setNativeValue)
+// TW Fake Executor - Hlavný skript (UPRAVENÝ)
+// Podporuje: maxFakesPerTarget, maxFakesPerVillage
+// Nahraj na GitHub ako fakeScriptMain.js
 
 (function() {
  'use strict';
@@ -23,8 +21,8 @@
  var targets = config.targets || [];
  var fakeLimit = config.fakeLimit || 0.5;
  var openTabs = config.openTabs || 5;
- var maxFakesPerTarget = config.maxFakesPerTarget || 0; // 0 = unlimited
- var maxFakesPerVillage = config.maxFakesPerVillage || 0; // 0 = unlimited
+ var maxFakesPerTarget = config.maxFakesPerTarget || 0;  // 0 = neobmedzené
+ var maxFakesPerVillage = config.maxFakesPerVillage || 0; // 0 = neobmedzené
  var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
  var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
 
@@ -100,6 +98,7 @@
    var vx = coordMatch ? parseInt(coordMatch[1]) : 0;
    var vy = coordMatch ? parseInt(coordMatch[2]) : 0;
 
+   var cells = row.querySelectorAll('td');
    var units = {};
    var unitNames = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 
@@ -164,51 +163,93 @@
   return selected;
  }
 
+ // UPRAVENÁ FUNKCIA - podporuje maxFakesPerTarget a maxFakesPerVillage
  function buildAttackQueue(villages, targetList, fakeLimitPct) {
   var queue = [];
-  // Track counts per target and per village
-  var targetCounts = {}; // "x|y" -> count
-  var villageCounts = {}; // villageId -> count
 
+  // Počítadlá
+  var targetFakeCount = {};  // koľko fejkov už ide na daný cieľ
+  var villageFakeCount = {}; // koľko fejkov už ide z danej dediny
+
+  // Inicializácia počítadiel
   for (var t = 0; t < targetList.length; t++) {
-   var target = targetList[t];
-   var targetKey = target.x + '|' + target.y;
+   var key = targetList[t].x + '|' + targetList[t].y;
+   targetFakeCount[key] = 0;
+  }
+  for (var v = 0; v < villages.length; v++) {
+   villageFakeCount[villages[v].id] = 0;
+  }
 
-   // Check if this target already has max fakes
-   if (maxFakesPerTarget > 0 && (targetCounts[targetKey] || 0) >= maxFakesPerTarget) {
-    continue;
-   }
+  // Rozdeľuj fejky rovnomerne
+  var allAssigned = false;
+  var maxIterations = targetList.length * villages.length; // bezpečnostný limit
+  var iteration = 0;
 
-   // Find a village that can still send
-   var assigned = false;
-   for (var v = 0; v < villages.length; v++) {
-    var village = villages[v];
+  while (!allAssigned && iteration < maxIterations) {
+   allAssigned = true;
+   iteration++;
 
-    // Check if this village already sent max fakes
-    if (maxFakesPerVillage > 0 && (villageCounts[village.id] || 0) >= maxFakesPerVillage) {
+   for (var ti = 0; ti < targetList.length; ti++) {
+    var targetKey = targetList[ti].x + '|' + targetList[ti].y;
+
+    // Skontroluj limit na cieľ
+    if (maxFakesPerTarget > 0 && targetFakeCount[targetKey] >= maxFakesPerTarget) {
      continue;
     }
 
-    var selectedUnits = selectUnitsForFake(village.units, fakeLimitPct);
-    if (Object.keys(selectedUnits).length === 0) continue;
+    // Nájdi dedinu, ktorá ešte môže posielať
+    var assigned = false;
+    for (var vi = 0; vi < villages.length; vi++) {
+     var village = villages[vi];
 
-    queue.push({
-     villageId: village.id, villageName: village.name,
-     villageX: village.x, villageY: village.y,
-     targetX: target.x, targetY: target.y,
-     units: selectedUnits
-    });
+     // Skontroluj limit z dediny
+     if (maxFakesPerVillage > 0 && villageFakeCount[village.id] >= maxFakesPerVillage) {
+      continue;
+     }
 
-    targetCounts[targetKey] = (targetCounts[targetKey] || 0) + 1;
-    villageCounts[village.id] = (villageCounts[village.id] || 0) + 1;
-    assigned = true;
-    break;
+     var selectedUnits = selectUnitsForFake(village.units, fakeLimitPct);
+     if (Object.keys(selectedUnits).length === 0) continue;
+
+     queue.push({
+      villageId: village.id, villageName: village.name,
+      villageX: village.x, villageY: village.y,
+      targetX: targetList[ti].x, targetY: targetList[ti].y,
+      units: selectedUnits
+     });
+
+     targetFakeCount[targetKey]++;
+     villageFakeCount[village.id]++;
+     assigned = true;
+     allAssigned = false;
+     break; // prejdi na ďalší cieľ
+    }
+
+    // Ak sa nepodarilo priradiť žiadnu dedinu tomuto cieľu, pokračuj
+    if (!assigned) continue;
    }
 
-   // If no village could be assigned (all maxed out), try wrapping
-   if (!assigned) {
-    log('⚠️ Žiadna dedina nemôže poslať fake na ' + targetKey);
+   // Skontroluj či ešte existujú ciele, ktoré potrebujú fejky a dediny, ktoré môžu posielať
+   var hasAvailableTargets = false;
+   var hasAvailableVillages = false;
+
+   for (var tc = 0; tc < targetList.length; tc++) {
+    var tk = targetList[tc].x + '|' + targetList[tc].y;
+    if (maxFakesPerTarget === 0 || targetFakeCount[tk] < maxFakesPerTarget) {
+     hasAvailableTargets = true;
+     break;
+    }
    }
+
+   for (var vc = 0; vc < villages.length; vc++) {
+    if (maxFakesPerVillage === 0 || villageFakeCount[villages[vc].id] < maxFakesPerVillage) {
+     if (Object.keys(selectUnitsForFake(villages[vc].units, fakeLimitPct)).length > 0) {
+      hasAvailableVillages = true;
+      break;
+     }
+    }
+   }
+
+   if (!hasAvailableTargets || !hasAvailableVillages) break;
   }
 
   return queue;
@@ -223,28 +264,28 @@
   panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:350px;max-height:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
 
   var h = '<div>';
-  h += '<h3 style="margin:0 0 10px;color:#7d510f;">⚔️ Fake Attack Queue</h3>';
-  h += '<p style="margin:5px 0;">' + queue.length + ' útokov naplánovaných</p>';
-  if (maxFakesPerTarget > 0) h += '<p style="margin:2px 0;font-size:10px;">Max na cieľ: ' + maxFakesPerTarget + '</p>';
-  if (maxFakesPerVillage > 0) h += '<p style="margin:2px 0;font-size:10px;">Max z dediny: ' + maxFakesPerVillage + '</p>';
-  if (arrivalStart) h += '<p style="margin:5px 0;font-size:10px;">Príchod: ' + arrivalStart.toLocaleString('sk') + ' - ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk') : '?') + '</p>';
+  h += '<h3 style="margin:0 0 10px;text-align:center;">⚔️ Fake Attack Queue</h3>';
+  h += '<div style="text-align:center;margin-bottom:8px;">' + queue.length + ' útokov naplánovaných</div>';
+  if (maxFakesPerTarget > 0) h += '<div style="text-align:center;font-size:10px;color:#666;">Max na cieľ: ' + maxFakesPerTarget + '</div>';
+  if (maxFakesPerVillage > 0) h += '<div style="text-align:center;font-size:10px;color:#666;">Max z dediny: ' + maxFakesPerVillage + '</div>';
+  if (arrivalStart) h += '<div style="text-align:center;font-size:10px;color:#666;">Príchod: ' + arrivalStart.toLocaleString('sk') + ' - ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk') : '?') + '</div>';
   h += '<hr style="border-color:#7d510f;margin:8px 0;">';
 
   h += '<div style="max-height:300px;overflow-y:auto;">';
   for (var i = 0; i < Math.min(queue.length, 20); i++) {
    var atk = queue[i];
    var unitStr = Object.keys(atk.units).map(function(k) { return k + ':' + atk.units[k]; }).join(', ');
-   h += '<div style="padding:4px 0;border-bottom:1px solid #d4c4a0;">';
-   h += '<b>' + atk.villageName.substring(0, 20) + '</b> → ' + atk.targetX + '|' + atk.targetY;
-   h += '<br><span style="color:#666;font-size:10px;">' + unitStr + '</span>';
+   h += '<div style="padding:4px 0;border-bottom:1px solid #ddd;">';
+   h += ' <b>' + atk.villageName.substring(0, 20) + '</b> → ' + atk.targetX + '|' + atk.targetY;
+   h += '<br><span style="font-size:10px;color:#666;">' + unitStr + '</span>';
    h += '</div>';
   }
-  if (queue.length > 20) h += '<p style="text-align:center;color:#999;">...a ďalších ' + (queue.length - 20) + '</p>';
+  if (queue.length > 20) h += '<div style="text-align:center;padding:5px;color:#666;">...a ďalších ' + (queue.length - 20) + '</div>';
   h += '</div>';
 
-  h += '<div style="margin-top:10px;display:flex;gap:8px;">';
-  h += '<button id="tw-start-btn" style="flex:1;background:#27ae60;color:#fff;border:none;padding:8px;border-radius:4px;cursor:pointer;font-weight:bold;">▶ Spustiť (' + openTabs + ' tabov)</button>';
-  h += '<button id="tw-close-panel" style="background:#c0392b;color:#fff;border:none;padding:8px 12px;border-radius:4px;cursor:pointer;">✕</button>';
+  h += '<div style="margin-top:10px;text-align:center;">';
+  h += '<button id="tw-start-btn" style="background:#27ae60;color:#fff;border:none;padding:8px 20px;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;">▶ Spustiť (' + openTabs + ' tabov)</button>';
+  h += ' <button id="tw-close-panel" style="background:#e74c3c;color:#fff;border:none;padding:8px 12px;border-radius:5px;cursor:pointer;">✕</button>';
   h += '</div>';
 
   panel.innerHTML = h;
@@ -289,7 +330,6 @@
   }
  }
 
- // FIXED: Rally point handler with proper input value setting
  function handleRallyPoint() {
   var hash = window.location.hash;
   var fakeMatch = hash.match(/twfake=(.+)/);
@@ -309,78 +349,70 @@
 
   log('🎯 Vyplňujem rally point: ' + attack.targetX + '|' + attack.targetY);
 
-  // Helper to set value on input in a way that works with TW's JS framework
-  function setInputValue(input, value) {
-   // Try React-style native value setter first
-   var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-   nativeInputValueSetter.call(input, value);
-
-   // Fire all relevant events
-   input.dispatchEvent(new Event('input', { bubbles: true }));
-   input.dispatchEvent(new Event('change', { bubbles: true }));
-   input.dispatchEvent(new Event('blur', { bubbles: true }));
-
-   // Also try direct assignment as fallback
-   input.value = value;
-  }
-
-  // Wait for page to fully load
   setTimeout(function() {
-   // Set target coordinates
+   // Vyplň súradnice
    var inputX = document.getElementById('inputx') || document.querySelector('input[name="x"]');
    var inputY = document.getElementById('inputy') || document.querySelector('input[name="y"]');
 
    if (inputX && inputY) {
-    setInputValue(inputX, attack.targetX);
-    setInputValue(inputY, attack.targetY);
+    inputX.focus(); inputX.value = attack.targetX;
+    inputX.dispatchEvent(new Event('change', { bubbles: true }));
+    inputX.dispatchEvent(new Event('input', { bubbles: true }));
+    inputY.focus(); inputY.value = attack.targetY;
+    inputY.dispatchEvent(new Event('change', { bubbles: true }));
+    inputY.dispatchEvent(new Event('input', { bubbles: true }));
    }
 
-   // Set units - with retry mechanism
-   function setUnits() {
-    var unitKeys = Object.keys(attack.units);
-    var allSet = true;
+   // Vyplň jednotky - OPRAVENÉ: pridaný input event + delay
+   var unitKeys = Object.keys(attack.units);
+   for (var i = 0; i < unitKeys.length; i++) {
+    (function(unitName, count) {
+     setTimeout(function() {
+      var input = document.getElementById('unit_input_' + unitName);
+      if (!input) {
+       // Skús alternatívne selektory
+       input = document.querySelector('input[name="' + unitName + '"]');
+      }
+      if (input) {
+       // Vyčisti pole
+       input.value = '';
+       input.focus();
+       
+       // Nastav hodnotu
+       var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+       nativeInputValueSetter.call(input, count);
+       
+       // Dispatchuj všetky relevantné eventy
+       input.dispatchEvent(new Event('input', { bubbles: true }));
+       input.dispatchEvent(new Event('change', { bubbles: true }));
+       input.dispatchEvent(new Event('blur', { bubbles: true }));
+       input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+       
+       log('✅ Jednotka ' + unitName + ' = ' + count);
+      } else {
+       log('⚠️ Nenašiel sa input pre: ' + unitName);
+      }
+     }, i * 100); // Malý delay medzi jednotkami
+    })(unitKeys[i], attack.units[unitKeys[i]]);
+   }
 
-    for (var i = 0; i < unitKeys.length; i++) {
-     var unitName = unitKeys[i];
-     var count = attack.units[unitName];
-
-     // Try multiple selectors
-     var input = document.getElementById('unit_input_' + unitName)
-              || document.querySelector('input[name="' + unitName + '"]')
-              || document.querySelector('#unit_input_' + unitName);
-
-     if (input) {
-      setInputValue(input, count);
-      log('✅ Nastavená jednotka: ' + unitName + ' = ' + count);
-     } else {
-      log('⚠️ Nenájdený input pre: ' + unitName);
-      allSet = false;
-     }
+   // Zvýrazni tlačidlo útoku s oneskorením (počkaj kým sa vyplnia jednotky)
+   setTimeout(function() {
+    var attackBtn = document.getElementById('target_attack');
+    if (attackBtn) {
+     attackBtn.style.border = '3px solid #ff0000';
+     attackBtn.style.boxShadow = '0 0 15px rgba(255,0,0,0.6)';
     }
-    return allSet;
-   }
 
-   // Try immediately, then retry after delays
-   if (!setUnits()) {
-    setTimeout(function() { setUnits(); }, 500);
-    setTimeout(function() { setUnits(); }, 1500);
-   }
+    var info = document.createElement('div');
+    info.style.cssText = 'position:fixed;top:5px;left:50%;transform:translateX(-50%);z-index:99999;background:#27ae60;color:#fff;padding:8px 20px;border-radius:20px;font-family:Verdana;font-size:12px;font-weight:bold;box-shadow:0 3px 10px rgba(0,0,0,0.3);';
+    info.textContent = '⚔️ Fake → ' + attack.targetX + '|' + attack.targetY + ' | Klikni Útok!';
+    document.body.appendChild(info);
 
-   // Highlight attack button
-   var attackBtn = document.getElementById('target_attack');
-   if (attackBtn) {
-    attackBtn.style.border = '3px solid #ff0000';
-    attackBtn.style.boxShadow = '0 0 15px rgba(255,0,0,0.6)';
-   }
+    log('✅ Rally point vyplnený.');
+   }, unitKeys.length * 100 + 200);
 
-   // Show info banner
-   var info = document.createElement('div');
-   info.style.cssText = 'position:fixed;top:5px;left:50%;transform:translateX(-50%);z-index:99999;background:#27ae60;color:#fff;padding:8px 20px;border-radius:20px;font-family:Verdana;font-size:12px;font-weight:bold;box-shadow:0 3px 10px rgba(0,0,0,0.3);';
-   info.textContent = '⚔️ Fake → ' + attack.targetX + '|' + attack.targetY + ' | Klikni Útok!';
-   document.body.appendChild(info);
-
-   log('✅ Rally point vyplnený.');
-  }, 800); // Increased delay for page load
+  }, 500);
  }
 
 })();
