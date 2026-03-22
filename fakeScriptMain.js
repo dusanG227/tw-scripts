@@ -1,438 +1,540 @@
-// TW Fake Executor - Hlavný skript (v2)
+// TW Fake Executor v4.0 - Hlavný skript
 // Nahraj na GitHub ako fakeScriptMain.js
-// Zmeny: maxFakesPerTarget, maxFakesPerVillage, podmienka ram/catapult, fix unit input
+// Spúšťa sa bookmarkletom z generátora
 
 (function() {
- 'use strict';
-
- if (typeof _twFakeData === 'undefined') {
-   alert('⚠️ Chýba konfigurácia! Najprv spusti generátor (launcher).');
-   return;
- }
-
- var config;
- try {
-   config = JSON.parse(decodeURIComponent(escape(atob(_twFakeData))));
- } catch(e) {
-   alert('❌ Nepodarilo sa dekódovať konfiguráciu: ' + e.message);
-   return;
- }
-
- var targets = config.targets || [];
- var fakeLimit = config.fakeLimit || 0.5;
- var openTabs = config.openTabs || 5;
- var maxFakesPerTarget = config.maxFakesPerTarget || 0; // 0 = unlimited
- var maxFakesPerVillage = config.maxFakesPerVillage || 0; // 0 = unlimited
- var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
- var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
-
- function log(msg) { console.log('[TW-Fake] ' + msg); }
-
- var unitPop = {
-   spear: 1, sword: 1, axe: 1, archer: 1,
-   spy: 2, light: 4, marcher: 5, heavy: 6,
-   ram: 5, catapult: 8, knight: 10, snob: 100
- };
-
- // Priorita: spy prvý (vždy chceme špeha), potom ram/catapult (podmienka fejku), potom zvyšok
- var fakePriority = ['spy', 'ram', 'catapult', 'light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
-
- var isCombined = window.location.href.indexOf('screen=overview_villages') !== -1;
- var isRallyPoint = window.location.href.indexOf('screen=place') !== -1;
-
- if (isRallyPoint) {
-   handleRallyPoint();
-   return;
- }
-
- if (!isCombined) {
-   if (typeof game_data !== 'undefined') {
-     window.location.href = '/game.php?village=' + game_data.village.id + '&screen=overview_villages&mode=combined';
-     return;
-   }
-   alert('⚠️ Otvor stránku Kombinované (Prehľad dedín → Kombinované)');
-   return;
- }
-
- log('🏠 Spúšťam na Kombinovanej stránke...');
- log('📊 Ciele: ' + targets.length + ' | Fake limit: ' + fakeLimit + '% | Tabs: ' + openTabs);
- if (maxFakesPerTarget) log('🎯 Max fejkov na cieľ: ' + maxFakesPerTarget);
- if (maxFakesPerVillage) log('🏠 Max fejkov z dediny: ' + maxFakesPerVillage);
-
- var villages = parseVillagesFromCombined();
- log('📋 Nájdených ' + villages.length + ' dedín s jednotkami');
-
- if (villages.length === 0) {
-   alert('⚠️ Nenašli sa žiadne dediny na stránke Kombinované!');
-   return;
- }
-
- var attackQueue = buildAttackQueue(villages, targets, fakeLimit);
- log('⚔️ Naplánovaných ' + attackQueue.length + ' útokov');
-
- if (attackQueue.length === 0) {
-   alert('⚠️ Žiadne útoky sa nedajú naplánovať! Skontroluj, či tvoje dediny majú barana alebo katapult.');
-   return;
- }
-
- window._twAttackQueue = attackQueue;
- window._twAttackIndex = 0;
- window._twFakeConfig = config;
-
- showControlPanel(attackQueue);
-
- // ========== PARSE VILLAGES ==========
- function parseVillagesFromCombined() {
-   var result = [];
-   var rows = document.querySelectorAll('#combined_table tr.row_a, #combined_table tr.row_b, table.vis tr.row_a, table.vis tr.row_b');
-   if (rows.length === 0) rows = document.querySelectorAll('tr[class*="row_"]');
-
-   for (var i = 0; i < rows.length; i++) {
-     var row = rows[i];
-     var villageLink = row.querySelector('a[href*="village="]');
-     if (!villageLink) continue;
-
-     var href = villageLink.href || '';
-     var villageIdMatch = href.match(/village=(\d+)/);
-     if (!villageIdMatch) continue;
-     var villageId = villageIdMatch[1];
-
-     var coordMatch = villageLink.textContent.match(/(\d{3})\|(\d{3})/);
-     var vx = coordMatch ? parseInt(coordMatch[1]) : 0;
-     var vy = coordMatch ? parseInt(coordMatch[2]) : 0;
-
-     var units = {};
-     var unitNames = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
-
-     var unitCells = row.querySelectorAll('td.unit-item, td[class*="unit"]');
-     if (unitCells.length > 0) {
-       for (var j = 0; j < unitCells.length && j < unitNames.length; j++) {
-         var val = parseInt(unitCells[j].textContent.trim()) || 0;
-         if (val > 0) units[unitNames[j]] = val;
-       }
-     }
-
-     var totalPop = 0;
-     for (var u in units) {
-       totalPop += units[u] * (unitPop[u] || 1);
-     }
-
-     // Podmienka: dedina musí mať ram ALEBO catapult (inak nemôže posielať fejky)
-     var hasRamOrCata = (units.ram && units.ram > 0) || (units.catapult && units.catapult > 0);
-     if (totalPop > 0 && hasRamOrCata) {
-       result.push({
-         id: villageId, x: vx, y: vy,
-         name: villageLink.textContent.trim(),
-         units: units, totalPop: totalPop
-       });
-     }
-   }
-   return result;
- }
-
- // ========== SELECT UNITS ==========
- function selectUnitsForFake(availableUnits, fakeLimitPct) {
-   var totalPop = 0;
-   for (var u in availableUnits) {
-     totalPop += availableUnits[u] * (unitPop[u] || 1);
-   }
-   var maxPop = Math.ceil(totalPop * (fakeLimitPct / 100));
-   if (maxPop < 1) maxPop = 1;
-
-   var selected = {};
-   var usedPop = 0;
-
-   // Podmienka: musí obsahovať ram alebo catapult
-   // Najprv pridáme 1 ram alebo 1 catapult
-   if (availableUnits.ram && availableUnits.ram > 0) {
-     selected.ram = 1;
-     usedPop += unitPop.ram;
-   } else if (availableUnits.catapult && availableUnits.catapult > 0) {
-     selected.catapult = 1;
-     usedPop += unitPop.catapult;
-   } else {
-     // Nemá ram ani catapult - nemôže posielať fejk
-     return {};
-   }
-
-   // Pridáme špeha ak je dostupný
-   if (availableUnits.spy && availableUnits.spy > 0) {
-     selected.spy = 1;
-     usedPop += unitPop.spy;
-   }
-
-   // Potom doplníme podľa priority do limitu
-   for (var i = 0; i < fakePriority.length; i++) {
-     var unitName = fakePriority[i];
-     if (!availableUnits[unitName] || availableUnits[unitName] <= 0) continue;
-
-     var alreadySelected = selected[unitName] || 0;
-     var remaining = availableUnits[unitName] - alreadySelected;
-     if (remaining <= 0) continue;
-
-     var pop = unitPop[unitName] || 1;
-     var maxCount = Math.floor((maxPop - usedPop) / pop);
-     var count = Math.min(maxCount, remaining);
-
-     if (count > 0) {
-       selected[unitName] = (selected[unitName] || 0) + count;
-       usedPop += count * pop;
-     }
-     if (usedPop >= maxPop) break;
-   }
-
-   return selected;
- }
-
- // ========== BUILD ATTACK QUEUE ==========
- function buildAttackQueue(villages, targetList, fakeLimitPct) {
-   var queue = [];
-   // Track counts per target and per village
-   var targetCounts = {}; // targetKey -> count
-   var villageCounts = {}; // villageId -> count
-
-   for (var t = 0; t < targetList.length; t++) {
-     var targetKey = targetList[t].x + '|' + targetList[t].y;
-     targetCounts[targetKey] = 0;
-   }
-
-   // Round-robin: iterate targets, for each find a village that can attack
-   for (var t = 0; t < targetList.length; t++) {
-     var target = targetList[t];
-     var targetKey = target.x + '|' + target.y;
-
-     // How many fakes should go to this target?
-     var maxForThisTarget = maxFakesPerTarget > 0 ? maxFakesPerTarget : villages.length;
-     var sentToTarget = 0;
-
-     for (var v = 0; v < villages.length && sentToTarget < maxForThisTarget; v++) {
-       var village = villages[v];
-
-       // Check village limit
-       if (maxFakesPerVillage > 0) {
-         var vCount = villageCounts[village.id] || 0;
-         if (vCount >= maxFakesPerVillage) continue;
-       }
-
-       var selectedUnits = selectUnitsForFake(village.units, fakeLimitPct);
-       if (Object.keys(selectedUnits).length === 0) continue;
-
-       queue.push({
-         villageId: village.id, villageName: village.name,
-         villageX: village.x, villageY: village.y,
-         targetX: target.x, targetY: target.y,
-         units: selectedUnits
-       });
-
-       villageCounts[village.id] = (villageCounts[village.id] || 0) + 1;
-       sentToTarget++;
-     }
-   }
-
-   return queue;
- }
-
- // ========== CONTROL PANEL ==========
- function showControlPanel(queue) {
-   var old = document.getElementById('tw-fake-panel');
-   if (old) old.remove();
-
-   var panel = document.createElement('div');
-   panel.id = 'tw-fake-panel';
-   panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:350px;max-height:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
-
-   var h = '<div>';
-   h += '<h3 style="text-align:center;margin:0 0 8px;color:#5c3a11;">⚔️ Fake Attack Queue</h3>';
-   h += '<p style="text-align:center;margin:0 0 5px;">' + queue.length + ' útokov naplánovaných</p>';
-   if (maxFakesPerTarget) h += '<p style="text-align:center;font-size:10px;color:#888;">Max na cieľ: ' + maxFakesPerTarget + '</p>';
-   if (maxFakesPerVillage) h += '<p style="text-align:center;font-size:10px;color:#888;">Max z dediny: ' + maxFakesPerVillage + '</p>';
-   if (arrivalStart) h += '<p style="text-align:center;font-size:10px;">Príchod: ' + arrivalStart.toLocaleString('sk') + ' - ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk') : '?') + '</p>';
-
-   h += '<div style="border-top:1px solid #c9a96e;margin:8px 0;padding-top:8px;">';
-   for (var i = 0; i < Math.min(queue.length, 20); i++) {
-     var atk = queue[i];
-     var unitStr = Object.keys(atk.units).map(function(k) { return k + ':' + atk.units[k]; }).join(', ');
-     h += '<div style="padding:3px 0;border-bottom:1px dotted #c9a96e;">';
-     h += '<b>' + atk.villageName.substring(0, 20) + '</b> → ' + atk.targetX + '|' + atk.targetY;
-     h += '<br><span style="font-size:10px;color:#666;">' + unitStr + '</span>';
-     h += '</div>';
-   }
-   if (queue.length > 20) h += '<p style="text-align:center;font-size:10px;">...a ďalších ' + (queue.length - 20) + '</p>';
-   h += '</div>';
-
-   h += '<div style="display:flex;gap:8px;margin-top:8px;">';
-   h += '<button id="tw-start-btn" style="flex:1;padding:8px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-weight:bold;cursor:pointer;">▶ Spustiť (' + openTabs + ' tabov)</button>';
-   h += '<button id="tw-close-panel" style="padding:8px 12px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">✕</button>';
-   h += '</div></div>';
-
-   panel.innerHTML = h;
-   document.body.appendChild(panel);
-
-   document.getElementById('tw-close-panel').onclick = function() { panel.remove(); };
-   document.getElementById('tw-start-btn').onclick = function() { launchAttacks(); };
- }
-
- // ========== LAUNCH ATTACKS ==========
- function launchAttacks() {
-   var queue = window._twAttackQueue;
-   var idx = window._twAttackIndex || 0;
-   var tabsToOpen = Math.min(openTabs, queue.length - idx);
-
-   if (tabsToOpen <= 0) {
-     alert('✅ Všetky útoky boli otvorené!');
-     return;
-   }
-
-   for (var i = 0; i < tabsToOpen; i++) {
-     var attack = queue[idx + i];
-     if (!attack) break;
-
-     var atkData = btoa(unescape(encodeURIComponent(JSON.stringify(attack))));
-     var url = '/game.php?village=' + attack.villageId + '&screen=place&target=' + attack.targetX + '|' + attack.targetY + '#twfake=' + atkData;
-     window.open(url, '_blank');
-   }
-
-   window._twAttackIndex = idx + tabsToOpen;
-   log('📑 Otvorených ' + tabsToOpen + ' tabov. Zostáva: ' + (queue.length - window._twAttackIndex));
-
-   var btn = document.getElementById('tw-start-btn');
-   var remaining = queue.length - window._twAttackIndex;
-   if (btn) {
-     if (remaining > 0) {
-       btn.textContent = '▶ Ďalších ' + Math.min(openTabs, remaining) + ' (zostáva ' + remaining + ')';
-     } else {
-       btn.textContent = '✅ Hotovo!';
-       btn.disabled = true;
-       btn.style.background = '#95a5a6';
-     }
-   }
- }
-
- // ========== HANDLE RALLY POINT (fix unit inputs) ==========
- function handleRallyPoint() {
-   var hash = window.location.hash;
-   var fakeMatch = hash.match(/twfake=(.+)/);
-
-   if (!fakeMatch) {
-     log('⚠️ Žiadne fake dáta v URL.');
-     return;
-   }
-
-   var attack;
-   try {
-     attack = JSON.parse(decodeURIComponent(escape(atob(fakeMatch[1]))));
-   } catch(e) {
-     log('❌ Chyba dekódovania: ' + e.message);
-     return;
-   }
-
-   log('🎯 Vyplňujem rally point: ' + attack.targetX + '|' + attack.targetY);
-   log('📦 Jednotky: ' + JSON.stringify(attack.units));
-
-   // Čakáme kým sa stránka načíta
-   function waitForElement(selector, callback, maxWait) {
-     var elapsed = 0;
-     var interval = setInterval(function() {
-       var el = document.querySelector(selector);
-       elapsed += 100;
-       if (el) {
-         clearInterval(interval);
-         callback(el);
-       } else if (elapsed >= (maxWait || 5000)) {
-         clearInterval(interval);
-         log('⚠️ Element ' + selector + ' sa nenašiel.');
-       }
-     }, 100);
-   }
-
-   // Funkcia na nastavenie hodnoty inputu - React/jQuery kompatibilná
-   function setInputValue(input, value) {
-     // Skúsime nativeInputValueSetter (funguje s React)
-     var nativeSetter = Object.getOwnPropertyDescriptor(
-       window.HTMLInputElement.prototype, 'value'
-     );
-     if (nativeSetter && nativeSetter.set) {
-       nativeSetter.set.call(input, value);
-     } else {
-       input.value = value;
-     }
-
-     // Spustíme všetky potrebné eventy
-     input.dispatchEvent(new Event('input', { bubbles: true }));
-     input.dispatchEvent(new Event('change', { bubbles: true }));
-     input.dispatchEvent(new Event('blur', { bubbles: true }));
-
-     // Pre istotu aj KeyboardEvent
-     try {
-       input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
-       input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
-     } catch(e) {}
-
-     log('  ✅ Input ' + (input.name || input.id) + ' = ' + value);
-   }
-
-   waitForElement('#unit_input_spy, input[name="spy"]', function() {
-     // Najprv vyplníme cieľové súradnice
-     var inputX = document.getElementById('inputx') || document.querySelector('input[name="x"]');
-     var inputY = document.getElementById('inputy') || document.querySelector('input[name="y"]');
-
-     if (inputX && inputY) {
-       setInputValue(inputX, attack.targetX);
-       setInputValue(inputY, attack.targetY);
-       log('📍 Súradnice vyplnené: ' + attack.targetX + '|' + attack.targetY);
-     }
-
-     // Vyplníme jednotky s malým oneskorením medzi každou
-     var unitKeys = Object.keys(attack.units);
-     var delay = 0;
-
-     for (var i = 0; i < unitKeys.length; i++) {
-       (function(unitName, count, d) {
-         setTimeout(function() {
-           // Skúsime rôzne selektory pre input
-           var input = document.getElementById('unit_input_' + unitName)
-                    || document.querySelector('input[name="' + unitName + '"]')
-                    || document.querySelector('#unit_input_' + unitName);
-
-           if (input) {
-             // Klikneme na input pre focus
-             input.click();
-             input.focus();
-
-             // Vyčistíme a nastavíme hodnotu
-             setInputValue(input, '');
-             setTimeout(function() {
-               setInputValue(input, count);
-             }, 50);
-           } else {
-             log('⚠️ Input pre ' + unitName + ' sa nenašiel!');
-           }
-         }, d);
-       })(unitKeys[i], attack.units[unitKeys[i]], delay);
-       delay += 150; // 150ms medzi každou jednotkou
-     }
-
-     // Po vyplnení všetkých jednotiek zvýrazníme tlačidlo útoku
-     setTimeout(function() {
-       var attackBtn = document.getElementById('target_attack');
-       if (attackBtn) {
-         attackBtn.style.border = '3px solid #ff0000';
-         attackBtn.style.boxShadow = '0 0 15px rgba(255,0,0,0.6)';
-       }
-
-       // Info banner
-       var unitStr = Object.keys(attack.units).map(function(k) {
-         return k + ': ' + attack.units[k];
-       }).join(' | ');
-
-       var info = document.createElement('div');
-       info.style.cssText = 'position:fixed;top:5px;left:50%;transform:translateX(-50%);z-index:99999;background:#27ae60;color:#fff;padding:8px 20px;border-radius:20px;font-family:Verdana;font-size:12px;font-weight:bold;box-shadow:0 3px 10px rgba(0,0,0,0.3);max-width:90%;text-align:center;';
-       info.innerHTML = '⚔️ Fake → ' + attack.targetX + '|' + attack.targetY + '<br><span style="font-size:10px;font-weight:normal;">' + unitStr + '</span><br><span style="font-size:10px;">Klikni Útok!</span>';
-       document.body.appendChild(info);
-
-       log('✅ Rally point vyplnený. Klikni na tlačidlo Útok!');
-     }, delay + 200);
-   });
- }
+  'use strict';
+
+  // ========== SETUP DATA ==========
+  var setup = {};
+  if (typeof _twSetup !== 'undefined') {
+    try { setup = JSON.parse(decodeURIComponent(escape(atob(_twSetup)))); } catch(e) {}
+  }
+
+  var STORAGE_KEY = 'twFakeConfig_' + (setup.worldId || 'default');
+  var COORDS_KEY = 'twFakeCoords_' + (setup.worldId || 'default');
+
+  function log(msg) { console.log('[TW-Fake] ' + msg); }
+  function saveConfig(cfg) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch(e) {} }
+  function loadConfig() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e) { return {}; } }
+  function saveCoordTabs(tabs) { try { localStorage.setItem(COORDS_KEY, JSON.stringify(tabs)); } catch(e) {} }
+  function loadCoordTabs() { try { return JSON.parse(localStorage.getItem(COORDS_KEY)) || [{ name: 'Kmeň 1', coords: '' }]; } catch(e) { return [{ name: 'Kmeň 1', coords: '' }]; } }
+
+  var unitPop = {
+    spear: 1, sword: 1, axe: 1, archer: 1,
+    spy: 2, light: 4, marcher: 5, heavy: 6,
+    ram: 5, catapult: 8, knight: 10
+  };
+
+  var unitNames = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight'];
+  var unitLabels = {
+    spear: 'Kopijník', sword: 'Šermiar', axe: 'Sekerník', archer: 'Lukostrelec',
+    spy: 'Zvěd', light: 'Ľahká kav.', marcher: 'Jazd. luk.', heavy: 'Ťažká kav.',
+    ram: 'Baran', catapult: 'Katapult', knight: 'Paladin'
+  };
+
+  // ========== DETECT PAGE ==========
+  var isRallyPoint = window.location.href.indexOf('screen=place') !== -1;
+  if (isRallyPoint) { handleRallyPoint(); return; }
+
+  var isCombined = window.location.href.indexOf('screen=overview_villages') !== -1;
+  if (!isCombined) {
+    if (typeof game_data !== 'undefined') {
+      window.location.href = '/game.php?village=' + game_data.village.id + '&screen=overview_villages&mode=combined';
+      return;
+    }
+    alert('⚠️ Otvor stránku Kombinované!');
+    return;
+  }
+
+  // ========== PARSE VILLAGES FROM COMBINED ==========
+  var villages = parseVillagesFromCombined();
+  log('📋 Nájdených ' + villages.length + ' dedín');
+
+  if (villages.length === 0) {
+    alert('⚠️ Nenašli sa žiadne dediny na Kombinovanej!');
+    return;
+  }
+
+  // ========== SHOW MAIN UI ==========
+  showMainPanel();
+
+  function parseVillagesFromCombined() {
+    var result = [];
+    var rows = document.querySelectorAll('#combined_table tr.row_a, #combined_table tr.row_b, table.vis tr.row_a, table.vis tr.row_b');
+    if (rows.length === 0) rows = document.querySelectorAll('tr[class*="row_"]');
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var villageLink = row.querySelector('a[href*="village="]');
+      if (!villageLink) continue;
+
+      var href = villageLink.href || '';
+      var villageIdMatch = href.match(/village=(\d+)/);
+      if (!villageIdMatch) continue;
+      var villageId = villageIdMatch[1];
+
+      var coordMatch = villageLink.textContent.match(/(\d{3})\|(\d{3})/);
+      var vx = coordMatch ? parseInt(coordMatch[1]) : 0;
+      var vy = coordMatch ? parseInt(coordMatch[2]) : 0;
+
+      var units = {};
+      var unitCells = row.querySelectorAll('td.unit-item, td[class*="unit"]');
+      if (unitCells.length > 0) {
+        for (var j = 0; j < unitCells.length && j < unitNames.length; j++) {
+          var val = parseInt(unitCells[j].textContent.trim()) || 0;
+          if (val > 0) units[unitNames[j]] = val;
+        }
+      }
+
+      var totalPop = 0;
+      for (var u in units) totalPop += units[u] * (unitPop[u] || 1);
+
+      var hasRamOrCata = (units.ram && units.ram > 0) || (units.catapult && units.catapult > 0);
+      if (totalPop > 0 && hasRamOrCata) {
+        result.push({ id: villageId, x: vx, y: vy, name: villageLink.textContent.trim(), units: units, totalPop: totalPop });
+      }
+    }
+    return result;
+  }
+
+  // ========== MAIN PANEL ==========
+  function showMainPanel() {
+    var old = document.getElementById('tw-fake-main');
+    if (old) old.remove();
+
+    var saved = loadConfig();
+    var coordTabs = loadCoordTabs();
+
+    var panel = document.createElement('div');
+    panel.id = 'tw-fake-main';
+    panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
+
+    var h = '<div style="text-align:center;margin-bottom:10px;">';
+    h += '<h2 style="margin:0;font-size:15px;color:#7d510f;">⚔️ TW Fake Script v4.0</h2>';
+    h += '<p style="margin:2px 0;font-size:10px;color:#8b7355;">Svet: ' + (setup.worldId || '?') + ' | Dediny: ' + villages.length + '</p>';
+    h += '</div>';
+
+    // === UNIT SELECTION ===
+    h += '<fieldset style="border:1px solid #c9a96e;padding:8px;margin-bottom:8px;border-radius:4px;">';
+    h += '<legend style="font-weight:bold;font-size:11px;">🗡️ Výber jednotiek</legend>';
+    h += '<p style="font-size:9px;color:#888;margin:0 0 6px;">Zadaj počet (0=nič, 1,2,3...=presný počet) alebo <b>"min"</b> = automaticky podľa fake limitu. Ram/Katapult sú povinné!</p>';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:10px;">';
+    h += '<tr style="background:#e8d5a3;"><th style="padding:3px;">Jednotka</th><th style="padding:3px;">Pop</th><th style="padding:3px;width:80px;">Počet</th></tr>';
+
+    for (var u = 0; u < unitNames.length; u++) {
+      var un = unitNames[u];
+      var savedVal = saved.units && saved.units[un] !== undefined ? saved.units[un] : (un === 'ram' || un === 'catapult' ? '1' : (un === 'spy' ? '1' : 'min'));
+      var bg = u % 2 === 0 ? '#fff8e7' : '#f4e4bc';
+      var required = (un === 'ram' || un === 'catapult') ? ' <span style="color:red;">*</span>' : '';
+      h += '<tr style="background:' + bg + ';">';
+      h += '<td style="padding:3px;">' + unitLabels[un] + required + '</td>';
+      h += '<td style="padding:3px;text-align:center;">' + unitPop[un] + '</td>';
+      h += '<td style="padding:3px;"><input id="tw-unit-' + un + '" value="' + savedVal + '" style="width:100%;padding:2px;border:1px solid #c9a96e;border-radius:2px;text-align:center;font-size:10px;" placeholder="0/1/2/min"></td>';
+      h += '</tr>';
+    }
+    h += '</table></fieldset>';
+
+    // === SETTINGS ===
+    h += '<fieldset style="border:1px solid #c9a96e;padding:8px;margin-bottom:8px;border-radius:4px;">';
+    h += '<legend style="font-weight:bold;font-size:11px;">⚙️ Nastavenia</legend>';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:10px;">';
+    h += '<tr><td style="padding:3px;">Fake limit (%):</td><td><input id="tw-fakelimit" type="number" step="0.1" min="0.1" value="' + (saved.fakeLimit || 0.5) + '" style="width:100%;padding:3px;border:1px solid #c9a96e;border-radius:2px;"></td></tr>';
+    h += '<tr><td style="padding:3px;">Open tabs:</td><td><input id="tw-opentabs" type="number" min="1" max="50" value="' + (saved.openTabs || 5) + '" style="width:100%;padding:3px;border:1px solid #c9a96e;border-radius:2px;"></td></tr>';
+    h += '<tr><td style="padding:3px;">Max fejkov na cieľ:</td><td><input id="tw-maxpertarget" type="number" min="0" value="' + (saved.maxFakesPerTarget || 0) + '" style="width:100%;padding:3px;border:1px solid #c9a96e;border-radius:2px;"><span style="font-size:9px;color:#888;"> 0=∞</span></td></tr>';
+    h += '<tr><td style="padding:3px;">Max fejkov z dediny:</td><td><input id="tw-maxpervillage" type="number" min="0" value="' + (saved.maxFakesPerVillage || 0) + '" style="width:100%;padding:3px;border:1px solid #c9a96e;border-radius:2px;"><span style="font-size:9px;color:#888;"> 0=∞</span></td></tr>';
+    h += '</table></fieldset>';
+
+    // === ARRIVAL WINDOW ===
+    h += '<fieldset style="border:1px solid #c9a96e;padding:8px;margin-bottom:8px;border-radius:4px;">';
+    h += '<legend style="font-weight:bold;font-size:11px;">⏰ Okno príchodu</legend>';
+    h += '<div style="display:flex;gap:6px;">';
+    h += '<div style="flex:1;"><label style="font-size:9px;">Od:</label><input id="tw-arr-start" type="datetime-local" value="' + (saved.arrivalStart || '') + '" style="width:100%;padding:3px;border:1px solid #c9a96e;border-radius:2px;font-size:10px;"></div>';
+    h += '<div style="flex:1;"><label style="font-size:9px;">Do:</label><input id="tw-arr-end" type="datetime-local" value="' + (saved.arrivalEnd || '') + '" style="width:100%;padding:3px;border:1px solid #c9a96e;border-radius:2px;font-size:10px;"></div>';
+    h += '</div></fieldset>';
+
+    // === COORDINATE TABS ===
+    h += '<fieldset style="border:1px solid #c9a96e;padding:8px;margin-bottom:8px;border-radius:4px;">';
+    h += '<legend style="font-weight:bold;font-size:11px;">🎯 Cieľové súradnice (podľa kmeňa)</legend>';
+
+    h += '<div id="tw-coord-tabs" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;">';
+    for (var t = 0; t < coordTabs.length; t++) {
+      var active = t === 0 ? 'background:#7d510f;color:#fff;' : 'background:#e8d5a3;color:#3e2b0d;';
+      h += '<button class="tw-tab-btn" data-idx="' + t + '" style="padding:4px 10px;border:1px solid #c9a96e;border-radius:3px;cursor:pointer;font-size:10px;font-weight:bold;' + active + '">' + coordTabs[t].name + '</button>';
+    }
+    h += '<button id="tw-add-tab" style="padding:4px 8px;border:1px dashed #c9a96e;border-radius:3px;cursor:pointer;font-size:10px;background:#fff8e7;color:#7d510f;">+ Pridať</button>';
+    h += '</div>';
+
+    h += '<div id="tw-coord-content">';
+    h += '<div style="display:flex;gap:4px;margin-bottom:4px;">';
+    h += '<input id="tw-tab-name" value="' + (coordTabs[0] ? coordTabs[0].name : 'Kmeň 1') + '" placeholder="Názov kmeňa" style="flex:1;padding:3px;border:1px solid #c9a96e;border-radius:2px;font-size:10px;">';
+    h += '<button id="tw-del-tab" style="padding:3px 8px;background:#c0392b;color:#fff;border:none;border-radius:2px;cursor:pointer;font-size:10px;">🗑️</button>';
+    h += '</div>';
+    h += '<textarea id="tw-coords" rows="4" placeholder="500|500 501|501 502|502..." style="width:100%;padding:4px;border:1px solid #c9a96e;border-radius:2px;font-family:monospace;font-size:10px;resize:vertical;">' + (coordTabs[0] ? coordTabs[0].coords : '') + '</textarea>';
+    h += '<p id="tw-coord-count" style="margin:2px 0 0;font-size:9px;color:#888;">0 súradníc</p>';
+    h += '</div></fieldset>';
+
+    // === BUTTONS ===
+    h += '<div style="display:flex;gap:6px;">';
+    h += '<button id="tw-start-btn" style="flex:1;padding:10px;background:#27ae60;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:12px;">⚔️ Spustiť fejky</button>';
+    h += '<button id="tw-save-btn" style="padding:10px;background:#2980b9;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;">💾</button>';
+    h += '<button id="tw-close-btn" style="padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">✕</button>';
+    h += '</div>';
+
+    // === STATUS ===
+    h += '<div id="tw-status" style="display:none;margin-top:8px;padding:8px;background:#fff8e7;border:1px solid #c9a96e;border-radius:4px;font-size:10px;"></div>';
+
+    panel.innerHTML = h;
+    document.body.appendChild(panel);
+
+    // ===== EVENT HANDLERS =====
+    var currentTabIdx = 0;
+
+    function updateCoordCount() {
+      var val = document.getElementById('tw-coords').value;
+      var matches = val.match(/(\d{3})\|(\d{3})/g);
+      document.getElementById('tw-coord-count').textContent = (matches ? matches.length : 0) + ' súradníc';
+    }
+    updateCoordCount();
+    document.getElementById('tw-coords').addEventListener('input', updateCoordCount);
+
+    function saveCurrentTab() {
+      coordTabs[currentTabIdx] = {
+        name: document.getElementById('tw-tab-name').value || ('Kmeň ' + (currentTabIdx + 1)),
+        coords: document.getElementById('tw-coords').value
+      };
+      saveCoordTabs(coordTabs);
+    }
+
+    function switchTab(idx) {
+      saveCurrentTab();
+      currentTabIdx = idx;
+      document.getElementById('tw-tab-name').value = coordTabs[idx].name;
+      document.getElementById('tw-coords').value = coordTabs[idx].coords;
+      updateCoordCount();
+      var btns = document.querySelectorAll('.tw-tab-btn');
+      for (var b = 0; b < btns.length; b++) {
+        btns[b].style.background = parseInt(btns[b].getAttribute('data-idx')) === idx ? '#7d510f' : '#e8d5a3';
+        btns[b].style.color = parseInt(btns[b].getAttribute('data-idx')) === idx ? '#fff' : '#3e2b0d';
+      }
+    }
+
+    var tabBtns = document.querySelectorAll('.tw-tab-btn');
+    for (var tb = 0; tb < tabBtns.length; tb++) {
+      tabBtns[tb].onclick = (function(idx) { return function() { switchTab(idx); }; })(tb);
+    }
+
+    document.getElementById('tw-add-tab').onclick = function() {
+      saveCurrentTab();
+      coordTabs.push({ name: 'Kmeň ' + (coordTabs.length + 1), coords: '' });
+      saveCoordTabs(coordTabs);
+      showMainPanel();
+    };
+
+    document.getElementById('tw-del-tab').onclick = function() {
+      if (coordTabs.length <= 1) { alert('Musíš mať aspoň 1 tab!'); return; }
+      coordTabs.splice(currentTabIdx, 1);
+      saveCoordTabs(coordTabs);
+      showMainPanel();
+    };
+
+    document.getElementById('tw-close-btn').onclick = function() { panel.remove(); };
+
+    document.getElementById('tw-save-btn').onclick = function() {
+      saveCurrentTab();
+      var cfg = getCurrentConfig();
+      saveConfig(cfg);
+      alert('💾 Konfigurácia uložená!');
+    };
+
+    function getCurrentConfig() {
+      var unitConfig = {};
+      for (var i = 0; i < unitNames.length; i++) {
+        var inp = document.getElementById('tw-unit-' + unitNames[i]);
+        if (inp) unitConfig[unitNames[i]] = inp.value.trim();
+      }
+      return {
+        units: unitConfig,
+        fakeLimit: parseFloat(document.getElementById('tw-fakelimit').value) || 0.5,
+        openTabs: parseInt(document.getElementById('tw-opentabs').value) || 5,
+        maxFakesPerTarget: parseInt(document.getElementById('tw-maxpertarget').value) || 0,
+        maxFakesPerVillage: parseInt(document.getElementById('tw-maxpervillage').value) || 0,
+        arrivalStart: document.getElementById('tw-arr-start').value || null,
+        arrivalEnd: document.getElementById('tw-arr-end').value || null
+      };
+    }
+
+    // START
+    document.getElementById('tw-start-btn').onclick = function() {
+      saveCurrentTab();
+      var cfg = getCurrentConfig();
+      saveConfig(cfg);
+
+      var allCoords = [];
+      for (var t = 0; t < coordTabs.length; t++) {
+        var cText = coordTabs[t].coords;
+        var cRegex = /(\d{3})\|(\d{3})/g;
+        var m;
+        while ((m = cRegex.exec(cText)) !== null) {
+          allCoords.push({ x: parseInt(m[1]), y: parseInt(m[2]) });
+        }
+      }
+
+      if (allCoords.length === 0) {
+        alert('⚠️ Zadaj cieľové súradnice!');
+        return;
+      }
+
+      log('🎯 Celkom cieľov: ' + allCoords.length);
+
+      var queue = buildAttackQueue(villages, allCoords, cfg);
+      log('⚔️ Naplánovaných ' + queue.length + ' útokov');
+
+      if (queue.length === 0) {
+        alert('⚠️ Žiadne útoky! Skontroluj dediny (treba ram/katapult) a fake limit.');
+        return;
+      }
+
+      window._twAttackQueue = queue;
+      window._twAttackIndex = 0;
+
+      var status = document.getElementById('tw-status');
+      status.style.display = 'block';
+      status.innerHTML = '<b>⚔️ ' + queue.length + ' útokov naplánovaných</b><br>';
+      status.innerHTML += '<button id="tw-launch-btn" style="margin-top:6px;padding:8px 16px;background:#27ae60;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">▶ Otvoriť ' + Math.min(cfg.openTabs, queue.length) + ' tabov</button>';
+      status.innerHTML += '<div id="tw-queue-preview" style="margin-top:6px;max-height:150px;overflow-y:auto;font-size:9px;"></div>';
+
+      var preview = document.getElementById('tw-queue-preview');
+      var ph = '';
+      for (var q = 0; q < Math.min(queue.length, 15); q++) {
+        var atk = queue[q];
+        var uStr = Object.keys(atk.units).map(function(k) { return k + ':' + atk.units[k]; }).join(', ');
+        ph += '<div style="padding:2px 0;border-bottom:1px dotted #c9a96e;">';
+        ph += atk.villageName.substring(0, 18) + ' → ' + atk.targetX + '|' + atk.targetY + ' [' + uStr + ']';
+        ph += '</div>';
+      }
+      if (queue.length > 15) ph += '<div style="text-align:center;">...a ďalších ' + (queue.length - 15) + '</div>';
+      preview.innerHTML = ph;
+
+      document.getElementById('tw-launch-btn').onclick = function() { launchBatch(cfg.openTabs); };
+    };
+  }
+
+  // ========== SELECT UNITS FOR FAKE ==========
+  function selectUnitsForAttack(availableUnits, unitConfig, fakeLimitPct) {
+    var totalPop = 0;
+    for (var u in availableUnits) totalPop += availableUnits[u] * (unitPop[u] || 1);
+    var maxPop = Math.ceil(totalPop * (fakeLimitPct / 100));
+    if (maxPop < 1) maxPop = 1;
+
+    var selected = {};
+    var usedPop = 0;
+
+    // First: specific counts
+    for (var i = 0; i < unitNames.length; i++) {
+      var un = unitNames[i];
+      var cfgVal = unitConfig[un] || '0';
+      if (cfgVal === 'min' || cfgVal === '0' || cfgVal === '') continue;
+
+      var wantCount = parseInt(cfgVal);
+      if (isNaN(wantCount) || wantCount <= 0) continue;
+
+      var avail = availableUnits[un] || 0;
+      var count = Math.min(wantCount, avail);
+      if (count > 0) {
+        selected[un] = count;
+        usedPop += count * (unitPop[un] || 1);
+      }
+    }
+
+    // Mandatory: ram or catapult
+    if (!selected.ram && !selected.catapult) {
+      if (availableUnits.ram && availableUnits.ram > 0) {
+        selected.ram = 1;
+        usedPop += unitPop.ram;
+      } else if (availableUnits.catapult && availableUnits.catapult > 0) {
+        selected.catapult = 1;
+        usedPop += unitPop.catapult;
+      } else {
+        return {};
+      }
+    }
+
+    // Second: fill "min" units
+    var minPriority = ['spy', 'light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword', 'knight'];
+    var minUnits = [];
+    for (var j = 0; j < unitNames.length; j++) {
+      if ((unitConfig[unitNames[j]] || '0') === 'min') minUnits.push(unitNames[j]);
+    }
+    var sortedMin = minUnits.sort(function(a, b) {
+      return minPriority.indexOf(a) - minPriority.indexOf(b);
+    });
+
+    for (var k = 0; k < sortedMin.length && usedPop < maxPop; k++) {
+      var un3 = sortedMin[k];
+      var avail3 = (availableUnits[un3] || 0) - (selected[un3] || 0);
+      if (avail3 <= 0) continue;
+      var pop3 = unitPop[un3] || 1;
+      var maxCount = Math.floor((maxPop - usedPop) / pop3);
+      var cnt = Math.min(maxCount, avail3);
+      if (cnt > 0) {
+        selected[un3] = (selected[un3] || 0) + cnt;
+        usedPop += cnt * pop3;
+      }
+    }
+
+    if (Object.keys(selected).length === 0) return {};
+    return selected;
+  }
+
+  // ========== BUILD ATTACK QUEUE ==========
+  function buildAttackQueue(villageList, targetList, cfg) {
+    var queue = [];
+    var targetCounts = {};
+    var villageCounts = {};
+    var maxPerTarget = cfg.maxFakesPerTarget || 0;
+    var maxPerVillage = cfg.maxFakesPerVillage || 0;
+
+    for (var t = 0; t < targetList.length; t++) {
+      var target = targetList[t];
+      var tKey = target.x + '|' + target.y;
+      var sentToTarget = targetCounts[tKey] || 0;
+      var maxForTarget = maxPerTarget > 0 ? maxPerTarget : villageList.length;
+
+      for (var v = 0; v < villageList.length && sentToTarget < maxForTarget; v++) {
+        var village = villageList[v];
+        if (maxPerVillage > 0) {
+          var vCount = villageCounts[village.id] || 0;
+          if (vCount >= maxPerVillage) continue;
+        }
+
+        var selectedUnits = selectUnitsForAttack(village.units, cfg.units, cfg.fakeLimit);
+        if (Object.keys(selectedUnits).length === 0) continue;
+
+        queue.push({
+          villageId: village.id, villageName: village.name,
+          villageX: village.x, villageY: village.y,
+          targetX: target.x, targetY: target.y,
+          units: selectedUnits
+        });
+
+        villageCounts[village.id] = (villageCounts[village.id] || 0) + 1;
+        targetCounts[tKey] = (targetCounts[tKey] || 0) + 1;
+        sentToTarget++;
+      }
+    }
+    return queue;
+  }
+
+  // ========== LAUNCH TABS ==========
+  function launchBatch(tabCount) {
+    var queue = window._twAttackQueue;
+    var idx = window._twAttackIndex || 0;
+    var toOpen = Math.min(tabCount, queue.length - idx);
+
+    if (toOpen <= 0) { alert('✅ Všetky útoky boli otvorené!'); return; }
+
+    for (var i = 0; i < toOpen; i++) {
+      var atk = queue[idx + i];
+      if (!atk) break;
+      var atkData = btoa(unescape(encodeURIComponent(JSON.stringify(atk))));
+      var url = '/game.php?village=' + atk.villageId + '&screen=place&target=' + atk.targetX + '|' + atk.targetY + '#twfake=' + atkData;
+      window.open(url, '_blank');
+    }
+
+    window._twAttackIndex = idx + toOpen;
+    var remaining = queue.length - window._twAttackIndex;
+    log('📑 Otvorených ' + toOpen + ' tabov. Zostáva: ' + remaining);
+
+    var btn = document.getElementById('tw-launch-btn');
+    if (btn) {
+      if (remaining > 0) {
+        btn.textContent = '▶ Ďalších ' + Math.min(tabCount, remaining) + ' (zostáva ' + remaining + ')';
+      } else {
+        btn.textContent = '✅ Hotovo!';
+        btn.disabled = true;
+        btn.style.background = '#95a5a6';
+      }
+    }
+  }
+
+  // ========== HANDLE RALLY POINT ==========
+  function handleRallyPoint() {
+    var hash = window.location.hash;
+    var fakeMatch = hash.match(/twfake=(.+)/);
+    if (!fakeMatch) return;
+
+    var attack;
+    try { attack = JSON.parse(decodeURIComponent(escape(atob(fakeMatch[1])))); } catch(e) { return; }
+
+    log('🎯 Rally point: ' + attack.targetX + '|' + attack.targetY);
+    log('📦 Jednotky: ' + JSON.stringify(attack.units));
+
+    function setInputValue(input, value) {
+      var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+      if (nativeSetter && nativeSetter.set) {
+        nativeSetter.set.call(input, value);
+      } else {
+        input.value = value;
+      }
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new Event('blur', { bubbles: true }));
+      try {
+        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
+      } catch(e) {}
+    }
+
+    function waitForElement(selector, callback, maxWait) {
+      var elapsed = 0;
+      var interval = setInterval(function() {
+        var el = document.querySelector(selector);
+        elapsed += 100;
+        if (el) { clearInterval(interval); callback(el); }
+        else if (elapsed >= (maxWait || 5000)) { clearInterval(interval); log('⚠️ ' + selector + ' nenájdený'); }
+      }, 100);
+    }
+
+    waitForElement('#unit_input_spy, input[name="spy"]', function() {
+      var inputX = document.getElementById('inputx') || document.querySelector('input[name="x"]');
+      var inputY = document.getElementById('inputy') || document.querySelector('input[name="y"]');
+      if (inputX && inputY) {
+        setInputValue(inputX, attack.targetX);
+        setInputValue(inputY, attack.targetY);
+      }
+
+      var unitKeys = Object.keys(attack.units);
+      var delay = 0;
+      for (var i = 0; i < unitKeys.length; i++) {
+        (function(unitName, count, d) {
+          setTimeout(function() {
+            var input = document.getElementById('unit_input_' + unitName)
+                     || document.querySelector('input[name="' + unitName + '"]');
+            if (input) {
+              input.click(); input.focus();
+              setInputValue(input, '');
+              setTimeout(function() { setInputValue(input, count); }, 50);
+            } else {
+              log('⚠️ Input pre ' + unitName + ' nenájdený');
+            }
+          }, d);
+        })(unitKeys[i], attack.units[unitKeys[i]], delay);
+        delay += 150;
+      }
+
+      setTimeout(function() {
+        var attackBtn = document.getElementById('target_attack');
+        if (attackBtn) {
+          attackBtn.style.border = '3px solid #ff0000';
+          attackBtn.style.boxShadow = '0 0 15px rgba(255,0,0,0.6)';
+        }
+        var unitStr = Object.keys(attack.units).map(function(k) { return k + ':' + attack.units[k]; }).join(' | ');
+        var info = document.createElement('div');
+        info.style.cssText = 'position:fixed;top:5px;left:50%;transform:translateX(-50%);z-index:99999;background:#27ae60;color:#fff;padding:8px 20px;border-radius:20px;font-family:Verdana;font-size:11px;font-weight:bold;box-shadow:0 3px 10px rgba(0,0,0,0.3);max-width:90%;text-align:center;';
+        info.innerHTML = '⚔️ → ' + attack.targetX + '|' + attack.targetY + '<br><span style="font-size:9px;font-weight:normal;">' + unitStr + '</span>';
+        document.body.appendChild(info);
+      }, delay + 200);
+    });
+  }
 
 })();
