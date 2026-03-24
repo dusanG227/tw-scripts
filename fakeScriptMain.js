@@ -1,621 +1,592 @@
-// TW Fake Executor v3.2 - Slobodný random výber + fake limit pop budget
+// TW Fake Executor v3.3 - Opravený výbeh jednotiek + prvé parsovanie z kombinovanej
 // fakeScriptMain.js - načítava sa z GitHub cez bookmarklet
 
-(function() {
-  'use strict';
+(funkcia() {
+  „používajte prísne“;
 
-  if (typeof _twFakeData === 'undefined') {
-    alert('⚠️ Chýba konfigurácia. Najprv vygeneruj bookmarklet cez launcher.');
-    return;
+  if (typeof _twFakeData === 'nedefinované') {
+    alert (' J️ Chýba konfigurácia. Najprv vygeneruj bookmarklet cez launcher.');
+    návrat;
   }
 
   var config;
-  try {
-    config = JSON.parse(decodeURIComponent(escape(atob(_twFakeData))));
-  } catch (e) {
-    alert('❌ Nepodarilo sa dekódovať konfiguráciu: ' + e.message);
-    return;
+  skús {
+    config = JSON.parse (decodeURIComponent(escape(atob(_twFakeData))));
+  } chytiť (e) {
+    alert ('❌ Nepodarilo sa dekódovať konfiguráciu: ' + e.message);
+    návrat;
   }
 
-  var targets = Array.isArray(config.targets) ? config.targets : [];
-  var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
-  var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
+  var ciele = Array.isArray (config.targets) ? config.targets : [];
+  var arrivalStart = config.arrivalStart (konfigurácia)? nový dátum (config.arrivalStart): null;
+  var príchodKoniec = config.arrivalKoniec ? nový dátum (config.arrivalEnd): null;
 
-  // Defaults - user can change in UI
-  var fakeLimit = 0.5;
+  var fakeLimit = 0,5;
   var openTabs = 5;
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
-  var unitMode = 'random'; // 'random' or 'manual'
+  var unitMode = 'náhodný';
 
-  function log(msg) { console.log('[TW-Fake] ' + msg); }
+  protokol funkcií (msg) {console.log('[TW-Fake] ' + msg); }
 
-  // ============ UNIT DATA ============
   var unitPop = {
-    spear: 1, sword: 1, axe: 1, archer: 1,
-    spy: 2, light: 4, marcher: 5, heavy: 6,
-    ram: 5, catapult: 8, knight: 10, snob: 100
+    kopija: 1, meč: 1, sekera: 1, lukostrelec: 1,
+    špión: 2, ľahký: 4, pochodujúci: 5, ťažký: 6,
+    baran: 5, katapult: 8, rytier: 10, snob: 100
   };
 
   var unitSpeed = {
-    spear: 18, sword: 22, axe: 18, archer: 18,
-    spy: 9, light: 10, marcher: 10, heavy: 11,
-    ram: 30, catapult: 30, knight: 10, snob: 35
+    kopija: 18, meč: 22, sekera: 18, lukostrelec: 18,
+    špión: 9, ľahký: 10, pochodujúci: 10, ťažký: 11,
+    baran: 30, katapult: 30, rytier: 10, snob: 35
   };
 
-  // Paladín (knight) a šľachtic (snob) sú vylúčení
-  var excludedUnits = { militia: true, knight: true, snob: true };
-
-  var allGameUnits = (typeof game_data !== 'undefined' && Array.isArray(game_data.units))
-    ? game_data.units.slice()
-    : ['spear', 'sword', 'axe', 'spy', 'light', 'heavy', 'ram', 'catapult'];
+  var exclusiveUnits = {miliation: true, knight: true, snob: true };
 
   var worldSpeed = 1;
   var unitSpeedMod = 1;
-  try {
-    if (typeof getSpeedConstant === 'function') {
+  skús {
+    if (typ getSpeedConstant === 'funkcia') {
       var speedData = getSpeedConstant();
       if (speedData) {
-        worldSpeed = Number(speedData.worldSpeed) || 1;
-        unitSpeedMod = Number(speedData.unitSpeed) || 1;
+        worldSpeed = Číslo (speedData.worldSpeed) || 1;
+        unitSpeedMod = Číslo (speedData.unitSpeed) || 1;
       }
     }
-  } catch (e) {
-    log('⚠️ getSpeedConstant nedostupný, používam default hodnoty');
+  } chytiť (e) {
+    log ('L️ getSpeedConstant nedostupný, používam default hodnoty');
   }
 
-  // ============ RANDOM INT ============
-  function randInt(min, max) {
-    if (max <= 0) return 0;
-    if (max < min) return max;
-    return Math.floor(Math.random() * (max - min + 1)) + min;
+  funkcia randInt (min, max) {
+    ak (max <= 0) vráti 0;
+    ak (max < min) vráti max;
+    vrátiť Math.floor (Math.random() * (max - min + 1)) + min;
   }
 
-  // ============ SLOBODNÝ RANDOM VÝBER ============
-  // Vyberá jednotky slobodne podľa pop budgetu z fake limitu.
-  // Povinné: aspoň 1 špeha + aspoň 1 baran ALEBO katapult (alebo oboje).
-  // Zvyšok budgetu sa náhodne rozdeľuje medzi dostupné jednotky.
-  function selectRandomUnits(availableUnits, fakeLimitPct) {
-    var hasSpy = (availableUnits.spy || 0) >= 1;
-    var hasRam = (availableUnits.ram || 0) >= 1;
-    var hasCat = (availableUnits.catapult || 0) >= 1;
-    if (!hasSpy || (!hasRam && !hasCat)) return {};
+  // Minimálny pop podľa bodov cieľa
+  funkcia getMinPopForFake (targetPoints) {
+    ak (!targetPoints || targetPoints <= 0) vrátiť 25;
+    ak (targetPoints < 500) vrátite 15;
+    ak (targetPoints < 1500) vrátite 20;
+    ak (targetPoints < 3000) vrátite 25;
+    ak (targetPoints < 5000) vrátite 30;
+    ak (targetPoints < 8000) vrátite 35;
+    ak (cieľové body < 10 000) vrátite 40;
+    vrátiť 50;
+  }
 
-    // Pop budget podľa fake limitu
+  // OPRAVENÝ náhodný výber — nikdy nevyberie jednotku ktorú dedinu nemú
+  funkcia selectRandomUnits (availableUnits, fakeLimitPct, targetPoints) {
+    var hasSpy = (dostupnéUnits.spy || 0) >= 1;
+    var hasRam = (dostupné Units.ram || 0) >= 1;
+    var hasCat = (dostupné jednotky.catapult || 0) >= 1;
+    ak (!hasSpy || (!hasRam & &!hasCat)) vrátiť {};
+
     var totalPop = 0;
-    for (var u in availableUnits) {
-      totalPop += availableUnits[u] * (unitPop[u] || 1);
+    pre (var u v dostupných jednotkách) {
+      ak (dostupné jednotky[u] > 0) totalPop += dostupné jednotky[u] * (unitPop[u] || 1);
     }
-    var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var popBudget = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired);
 
-    var selected = {};
+    var minPopForTarget = getMinPopForFake (targetPoints);
+    var siegePop = má Ram (Ram)? unitPop.ram: unitPop.catapult;
+    var povinnéMinPop = unitPop.spy + obliehaniePop;
+
+    var popBudget = Math.max(
+      Math.ceil(totalPop * (fakeLimitPct/100)),
+      minPopForTarget,
+      povinnéMinPop
+    );
+    popBudget = Math.min (popBudget, totalPop);
+
+    var vybrané = {};
     var usedPop = 0;
 
-    // 1. Povinný špeha (1-4 náhodne, podľa dostupnosti a budgetu)
-    var maxSpy = Math.min(4, availableUnits.spy || 0, Math.floor((popBudget - minRequired + unitPop.spy) / unitPop.spy));
-    selected.spy = randInt(1, Math.max(1, maxSpy));
+    //1. Špionážny
+    var maxSpyByBudget = Math.floor ((popBudget - siegePop) /unitPop.spy);
+    var maxSpy = Math.min (4, dostupnéUnits.spy, Math.max (1, maxSpyByBudget));
+    selected.spy = randInt (1, maxSpy);
     usedPop += selected.spy * unitPop.spy;
 
-    // 2. Baran a/alebo katapult — náhodne kombinácia
-    if (hasRam && hasCat) {
-      // Náhodne: len baran, len katapult, alebo oboje
-      var combo = randInt(0, 2);
-      if (combo !== 1 && usedPop + unitPop.ram <= popBudget) { // baran
-        var maxRam = Math.min(availableUnits.ram, Math.floor((popBudget - usedPop) / unitPop.ram));
-        selected.ram = randInt(1, Math.max(1, Math.min(6, maxRam)));
-        usedPop += selected.ram * unitPop.ram;
+    //2. Ram /Mačka — LEN ak dedina má!
+    if (hasRam & & hasCat) {
+      var combo = randInt (0, 2);
+      ak (kombo!== 1 & & usedPop + unitPop.ram <= popBudget) {
+        var maxRam = Math.min (dostupnéUnits.ram, Math.floor ((popBudget - usedPop) /unitPop.ram));
+        ak (maxRam >= 1) {selected.ram = randInt (1, Math.min (6, maxRam)); usedPop += selected.ram * unitPop.ram; }
       }
-      if (combo !== 0 && usedPop + unitPop.catapult <= popBudget) { // katapult
-        var maxCat = Math.min(availableUnits.catapult, Math.floor((popBudget - usedPop) / unitPop.catapult));
-        selected.catapult = randInt(1, Math.max(1, Math.min(6, maxCat)));
-        usedPop += selected.catapult * unitPop.catapult;
+      ak (kombo!== 0 & & usedPop + unitPop.catapult <= popBudget) {
+        var maxCat = Math.min (availableUnits.catapult, Math.floor ((popBudget - usedPop) /unitPop.catapult));
+        ak (maxCat >= 1) {selected.catapult = randInt (1, Math.min (6, maxCat)); usedPop += selected.catapult * unitPop.catapult; }
       }
-    } else if (hasRam) {
-      var maxRam = Math.min(availableUnits.ram, Math.floor((popBudget - usedPop) / unitPop.ram));
-      selected.ram = randInt(1, Math.max(1, Math.min(6, maxRam)));
-      usedPop += selected.ram * unitPop.ram;
-    } else {
-      var maxCat = Math.min(availableUnits.catapult, Math.floor((popBudget - usedPop) / unitPop.catapult));
-      selected.catapult = randInt(1, Math.max(1, Math.min(6, maxCat)));
-      usedPop += selected.catapult * unitPop.catapult;
+    } inak, ak (hasRam) {
+      var maxRam2 = Math.min (dostupnéUnits.ram, Math.floor ((popBudget - usedPop) /unitPop.ram));
+      ak (maxRam2 >= 1) {selected.ram = randInt (1, Math.min (6, maxRam2)); usedPop += selected.ram * unitPop.ram; }
+    } ostatné {
+      var maxCat2 = Math.min (availableUnits.catapult, Math.floor ((popBudget - usedPop) /unitPop.catapult));
+      ak (maxCat2 >= 1) {selected.catapult = randInt (1, Math.min (6, maxCat2)); usedPop += selected.catapult * unitPop.catapult; }
     }
 
-    // Overenie: musíme mať aspoň ram alebo catapult
-    if (!selected.ram && !selected.catapult) return {};
+    ak (!vybrané.ram & &!selected.catapult) vrátiť {};
 
-    // 3. Zvyšok budgetu rozdeliť náhodne medzi ostatné dostupné jednotky
-    // Zostavíme zoznam kandidátov (okrem spy, ram, catapult, knight, snob, militia)
-    var fillers = [];
-    for (var unitName in availableUnits) {
-      if (excludedUnits[unitName]) continue;
-      if (unitName === 'spy' || unitName === 'ram' || unitName === 'catapult') continue;
-      if ((availableUnits[unitName] || 0) > 0) fillers.push(unitName);
+    //3. Liehovar — náhodné
+    var plnivá = [];
+    pre (var unitName in availableUnits) {
+      ak (vylúčenéJednotky[unitName]) pokračovať;
+      ak (unitName === 'spy' || unitName === 'ram' || unitName === 'catapult') pokračovať;
+      if (availableUnits[unitName] > 0) fillers.push (unitName);
+    }
+    pre (var f = fillers.length - 1; f > 0; f--) {
+      var swap = Math.floor (Math.random() * (f + 1));
+      var tmp = plnivá[f]; plnivá[f] = plnivá[swap]; plnivá[swap] = tmp;
     }
 
-    // Zamieš fillery náhodne
-    for (var f = fillers.length - 1; f > 0; f--) {
-      var swap = Math.floor(Math.random() * (f + 1));
-      var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
-    }
-
-    // Prideľ náhodné množstvo každého fillera v rámci budgetu
-    for (var fi = 0; fi < fillers.length && usedPop < popBudget; fi++) {
-      var fn = fillers[fi];
-      var fp = unitPop[fn] || 1;
-      var canAfford = Math.floor((popBudget - usedPop) / fp);
-      if (canAfford <= 0) continue;
-      var maxUnits = Math.min(availableUnits[fn], canAfford);
-      if (maxUnits <= 0) continue;
-      // Náhodne či vôbec pridáme (50% šanca), a koľko
-      if (Math.random() < 0.5) {
-        var count = randInt(1, maxUnits);
-        selected[fn] = count;
-        usedPop += count * fp;
+    var nižšieMinimum = usedPop < minPopForTarget;
+    pre (var fi = 0; fi < fillers.length && usedPop < popBudget; fi++) {
+      var fn = plnivá[fi];
+      var fp = jednotkaPop[fn] || 1;
+      var canAfford = Math.floor ((popBudget - usedPop) /fp);
+      ak (canAfford <= 0) pokračovať;
+      var maxU = Math.min (dostupné jednotky [fn], canAfford);
+      ak (maxU <= 0) pokračovať;
+      ak (pod minimom) {
+        var c = randInt (1, maxU);
+        vybrané[fn] = c; usedPop += c * fp;
+        nižšie Minimum = usedPop < minPopForTarget;
+      } inak, ak (Math.random() < 0,5) {
+        var c2 = randInt (1, maxU);
+        vybrané[fn] = c2; usedPop += c2 * fp;
       }
     }
 
-    // Validácia: žiadna jednotka nesmie presiahnuť dostupné množstvo
-    for (var k in selected) {
-      if (selected[k] > (availableUnits[k] || 0)) return {};
+    //Druhý priechod ak stále pod minimom
+    ak (použitýPop < minPopForTarget) {
+      pre (var fi2 = 0; fi2 < fillers.length && usedPop < minPopForTarget; fi2++) {
+        var fn2 = plnivá[fi2];
+        ak (vybrané[fn2]) pokračovať;
+        var fp2 = jednotkaPop[fn2] || 1;
+        var ca2 = Math.floor ((popBudget - usedPop) /fp2);
+        ak (ca2 <= 0) pokračovať;
+        var mu2 = Math.min (dostupné jednotky [fn2], ca2);
+        ak (mu2 <= 0) pokračovať;
+        var potrebný = Math.ceil ((minPopForTarget - usedPop) /fp2);
+        var c3 = Math.min (potrebné, mu2);
+        ak (c3 > 0) {vybraté[fn2] = c3; usedPop += c3 * fp2; }
+      }
     }
 
-    return selected;
+    //Fínna validácia
+    pre (var k vo vybratom) {
+      ak (vybrané[k] > (dostupné jednotky[k] || 0)) vrátite {};
+      ak (vybrané[k] <= 0) vymazať vybrané[k];
+    }
+    vrátiť vybrané;
   }
 
-  // ============ MANUAL MODE (pôvodná logika, fake limit pop budget) ============
-  var fakePriority = ['light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
+  var fakePriorita = ['svetlo', 'kopija', 'sekera', 'lukostrelec', 'lukostrelec', 'ťažký', 'meč'];
 
-  function selectManualUnits(availableUnits, fakeLimitPct) {
-    var hasSpy = (availableUnits.spy || 0) > 0;
-    var hasRam = (availableUnits.ram || 0) > 0;
-    var hasCat = (availableUnits.catapult || 0) > 0;
-    if (!hasSpy || (!hasRam && !hasCat)) return {};
+  funkcia vyberteManualUnits (availableUnits, fakeLimitPct, targetPoints) {
+    var hasSpy = (dostupnéUnits.spy || 0) > 0;
+    var hasRam = (dostupné Units.ram || 0) > 0;
+    var hasCat = (dostupné jednotky.katapult || 0) > 0;
+    ak (!hasSpy || (!hasRam & &!hasCat)) vrátiť {};
 
     var totalPop = 0;
-    for (var u in availableUnits) {
-      totalPop += availableUnits[u] * (unitPop[u] || 1);
+    pre (var u v dostupných jednotkách) {
+      ak (dostupné jednotky[u] > 0) totalPop += dostupné jednotky[u] * (unitPop[u] || 1);
     }
 
-    var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var maxPop = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop);
+    var minPopForTarget = getMinPopForFake (targetPoints);
+    var siegePop = má Ram (Ram)? unitPop.ram: unitPop.catapult;
+    var maxPop = Math.max (Math.ceil (totalPop * (fakeLimitPct /100)), minPopForTarget, unitPop.spy + siegePop);
+    maxPop = Math.min (maxPop, totalPop);
 
-    var selected = {};
+    var vybrané = {};
     var usedPop = 0;
+    selected.spy = 1; usedPop += unitPop.spy;
+    ak (hasRam) {vybraté.ram = 1; usedPop += unitPop.ram; }
+    else {selected.catapult = 1; usedPop += unitPop.catapult; }
 
-    selected.spy = 1;
-    usedPop += unitPop.spy;
-
-    if (hasRam) {
-      selected.ram = 1;
-      usedPop += unitPop.ram;
-    } else {
-      selected.catapult = 1;
-      usedPop += unitPop.catapult;
+    pre (var i = 0; i < fakePriority.length && usedPop < maxPop; i++) {
+      var un = falošná priorita[i];
+      var majú = dostupné jednotky [ne] || 0;
+      ak (mať <= 0) pokračovať;
+      var už = vybrané[un] || 0;
+      var rem = mať - už;
+      ak (rem <= 0) pokračovať;
+      var pop = unitPop[un] || 1;
+      var canTake = Math.floor ((maxPop - usedPop) / pop);
+      var cnt = Math.min (rem, canTake);
+      ak (cnt > 0) {vybraté[un] = už + cnt; usedPop += cnt * pop; }
     }
-
-    for (var i = 0; i < fakePriority.length && usedPop < maxPop; i++) {
-      var unitName = fakePriority[i];
-      var have = availableUnits[unitName] || 0;
-      if (have <= 0) continue;
-      var already = selected[unitName] || 0;
-      var remaining = have - already;
-      if (remaining <= 0) continue;
-      var pop = unitPop[unitName] || 1;
-      var canTake = Math.floor((maxPop - usedPop) / pop);
-      var count = Math.min(remaining, canTake);
-      if (count > 0) {
-        selected[unitName] = already + count;
-        usedPop += count * pop;
-      }
-    }
-    return selected;
+    vrátiť vybrané;
   }
 
-  function selectUnitsForFake(availableUnits, fakeLimitPct) {
-    if (unitMode === 'random') {
-      return selectRandomUnits(availableUnits, fakeLimitPct);
-    }
-    return selectManualUnits(availableUnits, fakeLimitPct);
+  funkcia selectUnitsForFake (dostupné jednotky, fakeLimitPct, targetPoints) {
+    ak (unitMode === 'náhodný') vráti výber RandomUnits (availableUnits, fakeLimitPct, targetPoints);
+    vrátiť výberManualUnits (dostupné jednotky, fakeLimitPct, targetPoints);
   }
 
-  // ============ CHECK PAGE ============
-  var isCombined = window.location.href.indexOf('screen=overview_villages') !== -1;
-  if (!isCombined) {
+  // =========== KONTROLNÁ STRÁNKA ==========
+  var isCombined = window.location.href.indexOf ('screen=overview_villages') !== -1;
+  ak (!isCombined) {
     if (window.location.href.indexOf('screen=place') !== -1) {
-      alert('ℹ️ Tento skript spúšťaj iba na Kombinovanej stránke.');
-      return;
+      alert ('i️ Tento skript spúšťaj iba na Kombinovanej strane.');
+      návrat;
     }
-    if (typeof game_data !== 'undefined' && game_data.village && game_data.village.id) {
+    if (typ hry_data!== 'nedefinované' && game_data.village && game_data.village.id) {
       window.location.href = '/game.php?village=' + game_data.village.id + '&screen=overview_villages&mode=combined';
-      return;
+      návrat;
     }
-    alert('⚠️ Otvor stránku Kombinované (overview_villages&mode=combined).');
-    return;
+    alert ('JEDÁLNIČO Otvor stránku Kombinované (overview_villages&mode=combined).');
+    návrat;
   }
 
-  if (!targets.length) {
-    alert('⚠️ Neboli zadané žiadne cieľové súradnice.');
-    return;
+  ak (!targets.length) {
+    alert ('IEL️ Neboli zadané žiadne mestské úrady.');
+    návrat;
   }
 
-  // ============ SHOW CONFIG UI ============
   showConfigPanel();
 
-  function showConfigPanel() {
+  funkcia showConfigPanel() {
     var old = document.getElementById('tw-fake-config');
-    if (old) old.remove();
+    ak (starý) starý.remove();
 
-    var p = document.createElement('div');
+    var p = document.createElement ('div');
     p.id = 'tw-fake-config';
-    p.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:20px;font-family:Verdana,sans-serif;font-size:12px;color:#3e2b0d;width:440px;max-height:90vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
+    p.style.cssText = 'pozícia:pevná;hore:50%;ľavý:50%;transformovať:preložiť (-50%,-50%);z-index:99999;pozadie:#f4e4bc;hranica:2px pevné #7d510f;hranica-polomer:8px;padding:20px;font-rodina:Verdana,sans-serif;font-veľkosť:12px;farba:#3e2b0d;šírka:440px;max-výška:90vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
 
-    var h = '<div style="text-align:center;margin-bottom:12px;">';
-    h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake - Konfigurácia</h2>';
-    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.2 — ' + targets.length + ' cieľov načítaných</p>';
+    var h = '<div style=“text-align:center;margin-bottom:12px;“>';
+    h += '<h2 style=“margin:0;color:#7d510f;font-size:18px;“>️ TW Fake - Konfigurácia</h2>';
+    h += '<p style=“margin:2px 0 0;font-size:10px;color:#8b7355;“>v3.3 — ' + terče.dĺžka + 'cieľov načítaných</p>';
     h += '</div>';
 
-    // Mode toggle
-    h += '<div style="margin-bottom:10px;padding:8px;background:#e8d5a3;border-radius:4px;">';
-    h += '<label style="font-weight:bold;">Režim jednotiek:</label><br/>';
-    h += '<label style="cursor:pointer;margin-right:12px;"><input type="radio" name="tw-mode" value="random" checked /> 🎲 Random (odporúčané)</label>';
-    h += '<label style="cursor:pointer;"><input type="radio" name="tw-mode" value="manual" /> ✏️ Manuálny</label>';
+    h += '<div style=“margin-bottom:10px;padding:8px;background:#e8d5a3;border-radius:4px;“>';
+    h += '<label style=“font-weight:bold;“>Režim jednotiek:</label><br/>';
+    h += '<label style=“cursor:pointer;margin-right:12px;“><input type=“radio“ name=“tw-mode“ value=“random“ checked /> 🎲 Random (odporúčané)</label>';
+    h += '<label style=“kurzor:ukazovateľ;“><typ vstupu=“rádio“ názov=“tw-mode“ hodnota=“manuál“ />  ⁇ ️ Manuálny</label>';
     h += '</div>';
 
-    // Config fields
-    h += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">';
-    h += '<tr><td style="padding:3px;font-weight:bold;">Fake limit (%):</td>';
-    h += '<td><input id="tw-cfg-fakelimit" type="number" value="0.5" step="0.1" min="0.1" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">% z populácie dediny = max veľkosť fake útoku</div></td></tr>';
+    h += '<table style=“width:100%;border-collapse:collapse;margin-bottom:10px;“>';
+    h += '<tr><td style=“padding:3px;font-weight:bold;“>Falošný limit (%):</td>';
+    h += '<td><input id=“tw-cfg-fakelimit“ type=“number“ value=“0.5“ step=“0.1“ min=“0.1“ max=“100“ style=“width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;“ />';
+    h += '<div style=“font-size:9px;color:#8b7355;“>% z populácie dediny = max veľká vec fake útoku</div></td></tr>';
+    h += '<tr><td style=“padding:3px;font-weight:bold;“>Otvoriť karty:</td>';
+    h += '<td><input id=“tw-cfg-opentabs“ type=“number“ value=“5“ min=“1“ max=“50“ style=“width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;“/></td></tr>';
+    h += '<tr><td style=“padding:3px;font-weight:bold;“>Max fejkov na cieli:</td>';
+    h += '<td><input id=“tw-cfg-maxpertarget“ type=“number“ value=“0“ min=“0“ style=“width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;“ />';
+    h += '<div style=“veľkosť písma:9px;color:#8b7355;“>0 = bez limitu</div></td></tr>';
+    h += '<tr><td style=“padding:3px;font-weight:bold;“>Max fejkov z dediny:</td>';
+    h += '<td><input id=“tw-cfg-maxpervillage“ type=“number“ value=“0“ min=“0“ style=“width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;“ />';
+    h += '<div style=“veľkosť písma:9px;color:#8b7355;“>0 = bez limitu</div></td></tr>';
+    h += '</tabuľka>';
 
-    h += '<tr><td style="padding:3px;font-weight:bold;">Open tabs:</td>';
-    h += '<td><input id="tw-cfg-opentabs" type="number" value="5" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
-
-    h += '<tr><td style="padding:3px;font-weight:bold;">Max fejkov na cieľ:</td>';
-    h += '<td><input id="tw-cfg-maxpertarget" type="number" value="0" min="0" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">0 = bez limitu</div></td></tr>';
-
-    h += '<tr><td style="padding:3px;font-weight:bold;">Max fejkov z dediny:</td>';
-    h += '<td><input id="tw-cfg-maxpervillage" type="number" value="0" min="0" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">0 = bez limitu</div></td></tr>';
-    h += '</table>';
-
-    // Buttons
-    h += '<div style="display:flex;gap:8px;">';
-    h += '<button id="tw-cfg-start" style="flex:1;padding:10px;background:#4a7c3f;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;">⚔️ Spustiť</button>';
-    h += '<button id="tw-cfg-close" style="padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">✕</button>';
+    h += '<div style=“display:flex;gap:8px;“>';
+    h += '<button id=“tw-cfg-start“ style=“flex:1;padding:10px;background:#4a7c3f;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;“>️ Spusť</tlačidlo>';
+    h += '<button id=“tw-cfg-close“ style=“padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;“>✕</tlačidlo>';
     h += '</div>';
 
     if (arrivalStart || arrivalEnd) {
-      h += '<div style="margin-top:8px;font-size:10px;color:#8b7355;">';
-      h += '🕐 Arrival: ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk-SK') : '?');
+      h += '<div style=“margin-top:8px;font-size:10px;color:#8b7355;“>';
+      h += '🕐 Príchod: ' + (príchodZačať (arrivalStart)? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (príchodKoniec? arrivalEnd.toLocaleString('sk-SK') : '?');
       h += '</div>';
     }
 
     p.innerHTML = h;
     document.body.appendChild(p);
 
-    document.getElementById('tw-cfg-close').onclick = function() { p.remove(); };
-    document.getElementById('tw-cfg-start').onclick = function() {
-      fakeLimit = parseFloat(document.getElementById('tw-cfg-fakelimit').value) || 0.5;
+    document.getElementById('tw-cfg-close').onclick = funkcia() {p.remove(); };
+    document.getElementById('tw-cfg-start').onclick = funkcia() {
+      fakeLimit = parseFloat (document.getElementById('tw-cfg-fakelimit').value) || 0,5;
       openTabs = parseInt(document.getElementById('tw-cfg-opentabs').value, 10) || 5;
       maxFakesPerTarget = parseInt(document.getElementById('tw-cfg-maxpertarget').value, 10) || 0;
       maxFakesPerVillage = parseInt(document.getElementById('tw-cfg-maxpervillage').value, 10) || 0;
-
-      var modeRadios = document.querySelectorAll('input[name="tw-mode"]');
-      for (var i = 0; i < modeRadios.length; i++) {
-        if (modeRadios[i].checked) { unitMode = modeRadios[i].value; break; }
+      var modeRadios = document.querySelectorAll('input[name=“tw-mode“]');
+      pre (var i = 0; i < modeRadios.length; i++) {
+        if (modeRadios[i].checked) { unitMode = modeRadios[i].value; prestávka; }
       }
-
       p.remove();
       runFakeAttacks();
     };
   }
 
-  function runFakeAttacks() {
-    var villages = parseVillagesFromCombined();
-    if (!villages.length) {
-      alert('⚠️ Nenašli sa žiadne dediny s jednotkami.');
-      return;
+  funkcia runFakeAttacks() {
+    var dediny = parseVillagesFromCombined();
+    ak (!villages.length) {
+      alert ('JEDÁLNI Nenašli sa žiadne dediny s jednotkami.');
+      návrat;
     }
-
-    var attackQueue = buildAttackQueue(villages, targets, fakeLimit);
-    log('⚔️ Naplánovaných útokov: ' + attackQueue.length + ' (režim: ' + unitMode + ')');
-
-    if (!attackQueue.length) {
-      alert('⚠️ Nevytvoril sa žiadny útok. Skontroluj limity a jednotky.');
-      return;
+    log ('📋 Načítaných dedín: ' + dediny.dĺžka);
+    pre (var d = 0; d < Math.min (3, dediny.dĺžka); d++) {
+      var dbg = dediny[d];
+      var ul = []; pre (var u v dbg.units) ul.push(u + ':' + dbg.units[u]);
+      log (' ' + dbg.name + '— ' + ul.join(', '));
     }
-
+    var attackQueue = buildAttackQueue (dediny, ciele, fakeLimit);
+    log ('️ Naplnených: ' + attackQueue.length);
+    ak (!attackQueue.length) {
+      alert (' J️ Nevytvoril sa žiadny útok. Skontroluj limity a jednotky.');
+      návrat;
+    }
     window._twAttackQueue = attackQueue;
     window._twAttackIndex = 0;
-    showControlPanel(attackQueue);
+    showControlPanel (attackQueue);
   }
 
-  // ============ VILLAGE PARSING (z Kombinovanej stránky) ============
-  function parseVillagesFromCombined() {
-    var result = [];
-    var rows = document.querySelectorAll('#combined_table tr.row_a, #combined_table tr.row_b');
-    if (!rows.length) rows = document.querySelectorAll('tr.row_a, tr.row_b');
+  // OPRAVENÉ parsovanie — čítanie jednotiek z hlavičiek tabuľky
+  analýza funkciíVillagesFromCombined() {
+    výsledok var = [];
+    var tabuľka = document.getElementById('combined_table');
+    ak (!tabuľka) {
+      var tabuľky = document.querySelectorAll('tabuľka');
+      pre (var t = 0; t < tabuľky.dĺžka; t++) {
+        if (tables[t].querySelector('td.unit-item')) {tabuľka = tabuľky[t]; prestávka; }
+      }
+    }
+    ak (!tabuľka) { log ('L ⁇ LTabuľka nenájdená'); výsledok vrátenia; }
 
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i];
-      var villageLink = row.querySelector('.quickedit-content a[href*="village="]') || row.querySelector('a[href*="village="]');
-      var coordSource = row.querySelector('.quickedit-label') || villageLink;
-      if (!villageLink || !coordSource) continue;
+    //Detekuj poradu jednotiek z hlavičiek
+    var unitColumnOrder = [];
+    var headerRow = table.querySelector('tr.units_header') || table.querySelector('thead tr');
+    ak (!headerRow) {
+      var allRows = tabuľka.querySelectorAll('tr');
+      pre (var ri = 0; ri < allRows.length; ri++) {
+        if (allRows[ri].querySelectorAll('img[src*=“unit_“]').length >= 3) {
+          headerRow = allRows[ri]; zlomiť;
+        }
+      }
+    }
+    if (headerRow) {
+      var hCells = headerRow.querySelectorAll('th, td');
+      pre (var hi = 0; hi < hCells.length; hi++) {
+        var img = hCells[hi].querySelector('img[src*=“unit_“]');
+        ak (img) {
+          var m = (img.getAttribute('src') || '').match(/unit_(\w+)/);
+          ak (m) jednotkaColumnOrder.push(m[1]);
+        }
+      }
+    }
+    if (unitColumnOrder.length === 0) {
+      if (typ hry_data!== 'nedefinované' && Array.isArray (game_data.units)) {
+        unitColumnOrder = game_data.units.slice();
+      } ostatné {
+        unitColumnOrder = ['kopija','meč','sekera','lukostrelec','špión','ľahký','lukostrelec','ťažký','ram','katapult','rytier','snob'];
+      }
+      log('i️ Záložný radie: ' + unitColumnOrder.join(', '));
+    } ostatné {
+      log ('✅ Poradie z hlavičiek: ' + unitColumnOrder.join(', '));
+    }
 
-      var idMatch = (villageLink.href || '').match(/village=(\d+)/);
-      if (!idMatch) continue;
+    var riadky = tabuľka.querySelectorAll('tr.row_a, tr.row_b');
+    ak (!rows.length) riadky = document.querySelectorAll('tr.row_a, tr.row_b');
 
-      var coordMatch = (coordSource.textContent || '').match(/(\d{3})\|(\d{3})/);
-      if (!coordMatch) continue;
-
-      var villageId = idMatch[1];
-      var vx = parseInt(coordMatch[1], 10);
-      var vy = parseInt(coordMatch[2], 10);
+    pre (var i = 0; i < rows.length; i++) {
+      var riadok = riadky[i];
+      var vLink = row.querySelector('.quickedit-content a[href*=“dedina=“]') || row.querySelector('a[href*=“dedina=“]');
+      var cSrc = row.querySelector('.quickedit-label') || vLink;
+      ak (!vLink || !cSrc) pokračovať;
+      var idM = (vLink.href || '').match(/dedina=(\d+)/);
+      ak (!idM) pokračovať;
+      var cM = (cSrc.textContent || '').match(/(\d{3})\|(\d{3})/);
+      ak (!cM) pokračovať;
 
       var unitCells = row.querySelectorAll('td.unit-item');
-      if (!unitCells.length) continue;
+      ak (!unitCells.length) pokračovať;
 
-      var units = {};
-      for (var j = 0; j < unitCells.length && j < allGameUnits.length; j++) {
-        var unitName = allGameUnits[j];
-        if (excludedUnits[unitName]) continue;
-        var val = parseInt((unitCells[j].textContent || '').replace(/\D+/g, ''), 10) || 0;
-        if (val > 0) units[unitName] = val;
+      jednotky Var = {};
+      pre (var j = 0; j < unitCells.length && j < unitColumnOrder.length; j++) {
+        var un = unitColumnOrder[j];
+        ak (vylúčené jednotky [ne]) pokračujú;
+        var val = parseInt((unitCells[j].textContent || '').trim().replace(/\D+/g, ''), 10) || 0;
+        ak (val > 0) jednotiek [un] = val;
       }
 
       var totalPop = 0;
-      for (var u in units) {
-        totalPop += units[u] * (unitPop[u] || 1);
-      }
-
-      if (totalPop > 0) {
-        result.push({
-          id: villageId, x: vx, y: vy,
-          name: (coordSource.textContent || '').trim(),
-          units: units, totalPop: totalPop
+      pre (var u v jednotkách) totalPop += jednotky[u] * (unitPop[u] || 1);
+      ak (totalPop > 0) {
+        result.push(výsledok)({
+          id: idM[1], x: parseInt(cM[1], 10), y: parseInt(cM[2], 10),
+          názov: (cSrc.textContent || '').trim(),
+          jednotky: jednotky, totalPop: totalPop
         });
       }
     }
-    return result;
+    výsledok vrátenia;
   }
 
-  // ============ HELPERS ============
-  function calcDistance(x1, y1, x2, y2) {
-    return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+  funkcia calcDistance(x1, y1, x2, y2) {
+    vrátiť Math.sqrt (Math.pow(x2-x1,2) + Math.pow(y2-y1,2));
   }
 
-  function getSlowestUnit(units) {
-    var slowest = 'ram';
-    var slowestValue = 0;
-    for (var u in units) {
-      if (!units[u] || units[u] <= 0) continue;
+  funkcia getSlowestUnit(jednotky) {
+    var slowest = 'ram', slowestVal = 0;
+    pre (var u v jednotkách) {
+      ak (!jednotky[u] || jednotky[u] <= 0) pokračovať;
       var spd = unitSpeed[u] || 0;
-      if (spd > slowestValue) { slowestValue = spd; slowest = u; }
+      if (spd > slowestVal) { slowestVal = spd; slowest = u; }
     }
-    return slowest;
+    najpomalšie vracať;
   }
 
-  function parseServerNow() {
+  funkcia parseServerNow() {
     var timeEl = document.getElementById('serverTime');
     var dateEl = document.getElementById('serverDate');
-    if (timeEl && dateEl) {
-      var t = (timeEl.textContent || '').trim();
-      var d = (dateEl.textContent || '').trim();
-      var dateParts = d.split(/[.\/-]/);
-      var timeParts = t.split(':');
-      if (dateParts.length === 3 && timeParts.length >= 2) {
-        var dd = parseInt(dateParts[0], 10);
-        var mm = parseInt(dateParts[1], 10) - 1;
-        var yy = parseInt(dateParts[2], 10);
-        var hh = parseInt(timeParts[0], 10);
-        var mi = parseInt(timeParts[1], 10);
-        var ss = parseInt(timeParts[2] || '0', 10);
-        var dt = new Date(yy, mm, dd, hh, mi, ss);
-        if (!isNaN(dt.getTime())) return dt;
+    if (timeEl & & dateEl) {
+      var t = (timeEl.textContent||'').trim();
+      var d = (dateEl.textContent||'').trim();
+      var dp = d.split(/[.\/-]/), tp = t.split(':');
+      if (dp.length===3 && tp.length>=2) {
+        var dt = nový dátum (parseInt(dp[2],10), parseInt(dp[1],10)-1, parseInt(dp[0],10),
+                          parseInt(tp[0],10), parseInt(tp[1],10), parseInt(tp[2]||'0',10));
+        ak (!isNaN(dt.getTime())) vrátiť dt;
       }
     }
-    return new Date();
+    vrátiť nový dátum();
   }
 
-  function calcTravelTimeMs(fromX, fromY, toX, toY, slowestUnit) {
-    var dist = calcDistance(fromX, fromY, toX, toY);
-    var minutesPerField = unitSpeed[slowestUnit] || 30;
-    var msPerField = minutesPerField * 60 * 1000 / (worldSpeed * unitSpeedMod);
-    return dist * msPerField;
+  funkcia calcTravelTimeMs (fromX, fromY, toX, toY, slowestUnit) {
+    var dist = calcDistance (od X, odY, toX, toY);
+    vrátiť dist * (unitSpeed[slowestUnit]||30) * 60 * 1000 /(worldSpeed * unitSpeedMod);
   }
 
-  function isInArrivalWindow(village, target, selectedUnits) {
-    if (!arrivalStart && !arrivalEnd) return true;
+  funkcia isInArrivalWindow (dedina, cieľ, vybranéJednotky) {
+    ak (!príchodZačnite a &!arrivalEnd) vrátiť pravda;
     var now = parseServerNow();
-    var slowest = getSlowestUnit(selectedUnits);
-    var arrivalMs = now.getTime() + calcTravelTimeMs(village.x, village.y, target.x, target.y, slowest);
-    if (arrivalStart && arrivalMs < arrivalStart.getTime()) return false;
-    if (arrivalEnd && arrivalMs > arrivalEnd.getTime()) return false;
-    return true;
+    var arrMs = now.getTime() + calcTravelTimeMs (village.x, village.y, target.x, target.y, getSlowestUnit (selectedUnits));
+    ak (arrivalStart & & arrMs < arrivalStart.getTime()) vráti hodnotu false;
+    ak (arrivalEnd & & arrMs > arrivalEnd.getTime()) vrátiť false;
+    vrátiť pravdu;
   }
 
-  // ============ BUILD QUEUE ============
-  function buildAttackQueue(villageList, targetList, fakeLimitPct) {
-    var queue = [];
+  funkcia buildAttackQueue (villageList, targetList, fakeLimitPct) {
+    var front = [];
+    var pripravenéDediny = [];
 
-    // Pre random mode: filtrujeme dediny ktoré majú špion + baran/katapult
-    // Pre manual mode: predpočítame jednotky
-    var preparedVillages = [];
-    for (var i = 0; i < villageList.length; i++) {
-      var v = villageList[i];
-      if (unitMode === 'random') {
-        var hasSpy = (v.units.spy || 0) >= 1;
-        var hasRam = (v.units.ram || 0) >= 1;
-        var hasCat = (v.units.catapult || 0) >= 1;
-        if (hasSpy && (hasRam || hasCat)) {
-          preparedVillages.push({ village: v, units: null });
+    pre (var i = 0; i < dedinaZoznam.dĺžka; i++) {
+      var v = dedinaZoznam[i];
+      if (unitMode === 'náhodný') {
+        ak ((v.units.spy||0)>=1 && ((v.units.ram||0)>=1 || (v.units.catapult||0)>=1)) {
+          preparedVillages.push({ obec: v, jednotky: null });
         }
-      } else {
-        var chosen = selectUnitsForFake(v.units, fakeLimitPct);
-        if (Object.keys(chosen).length) {
-          preparedVillages.push({ village: v, units: chosen });
-        }
+      } ostatné {
+        var avg = 0;
+        pre (var tp=0; tp<targetList.length; tp++) avg += (targetList[tp].points||0);
+        avg = targetList.length > 0 (cieľový zoznam)? avg/targetList.dĺžka : 0;
+        var vybraný = vyberte UnitsForFake (v.units, fakeLimitPct, avg);
+        ak (Object.keys(volený).length) pripravenýVillages.push ({dedina: v, jednotky: zvolený });
       }
     }
 
-    if (!preparedVillages.length) return queue;
+    ak (!reparedVillages.length) vrátiť front;
 
-    var targetCap = maxFakesPerTarget > 0 ? maxFakesPerTarget : preparedVillages.length;
-    var villageCap = maxFakesPerVillage > 0 ? maxFakesPerVillage : targetList.length;
-
-    var targetCounts = {};
-    var villageCounts = {};
-    var targetCursor = 0;
+    var targetCap = maxFakesPerTarget > 0? maxFakesPerTarget: preparedVillages.length;
+    var villageCap = maxFakesPerVillage > 0? maxFakesPerVillage: targetList.length;
+    var targetCounts = {}, villageCounts = {}, targetCursor = 0;
     var maxTotal = targetList.length * targetCap;
-    var safety = maxTotal * Math.max(1, preparedVillages.length) + 100;
+    var bezpečnosť = maxTotal * Math.max(1, reparedVillages.length) + 100;
 
-    while (queue.length < maxTotal && safety-- > 0) {
-      var progressed = false;
-
-      for (var v = 0; v < preparedVillages.length; v++) {
-        var pv = preparedVillages[v];
+    kým (dĺžka frontu < maxTotal & & safety-- > 0) {
+      var pokročil = nepravda;
+      pre (var v2 = 0; v2 < pripravenéDediny.dĺžka; v2++) {
+        var pv = pripravenéDediny[v2];
         var vKey = pv.village.id;
-        if ((villageCounts[vKey] || 0) >= villageCap) continue;
-
+        ak ((villageCounts[vKey]||0) >= villageCap) pokračovať;
         var tries = 0;
-        while (tries < targetList.length) {
+        kým (skúša < targetList.length) {
           var target = targetList[targetCursor % targetList.length];
-          targetCursor++;
-          tries++;
-
-          var tKey = target.x + '|' + target.y;
-          if ((targetCounts[tKey] || 0) >= targetCap) continue;
-
-          // V random mode generujeme jednotky čerstvo pre každý útok
+          targetCursor++; skúša++;
+          var tKey = target.x+'|'+target.y;
+          ak ((targetCounts[tKey]||0) >= targetCap) pokračovať;
+          var targetPts = target.points || 0;
           var attackUnits;
-          if (unitMode === 'random') {
-            attackUnits = selectUnitsForFake(pv.village.units, fakeLimitPct);
-            if (!Object.keys(attackUnits).length) continue;
-          } else {
+          if (unitMode === 'náhodný') {
+            var best = null, bestPop = 0;
+            pre (var att=0; att<5; att++) {
+              var cand = selectUnitsForFake (pv.dedina.jednotky, fakeLimitPct, targetPts);
+              ak (!Object.keys(cand).length) pokračovať;
+              var cp = 0; pre (var cu v cand) cp += cand[cu]*(unitPop[cu]||1);
+              if (cp > bestPop) {bestPop=cp; best=cand; }
+            }
+            attackUnits = najlepšie || {};
+            ak (!Object.keys (attackUnits).length) pokračovať;
+          } ostatné {
             attackUnits = pv.units;
           }
-
-          if (!isInArrivalWindow(pv.village, target, attackUnits)) continue;
-
-          queue.push({
-            villageId: pv.village.id,
-            villageName: pv.village.name,
-            villageX: pv.village.x,
-            villageY: pv.village.y,
-            targetX: target.x,
-            targetY: target.y,
-            units: attackUnits
+          ak (!isInArrivalWindow (pv.dedina, cieľ, útočné jednotky)) pokračovať;
+          var atkPop = 0;
+          pre (var au in attackUnits) atkPop += attackUnits[au]*(unitPop[au]||1);
+          front.push ({
+            villageId: pv.village.id, villageName: pv.village.name,
+            villageX: pv.village.x, villageY: pv.village.y,
+            targetX: target.x, targetY: target.y,
+            jednotky: attackUnits, totalPop: atkPop
           });
-
-          targetCounts[tKey] = (targetCounts[tKey] || 0) + 1;
-          villageCounts[vKey] = (villageCounts[vKey] || 0) + 1;
-          progressed = true;
-          break;
+          targetCounts[tKey] = (targetCounts[tKey]||0)+1;
+          villageCounts[vKey] = (villageCounts[vKey]||0)+1;
+          pokročilý = pravda; zlom;
         }
       }
-      if (!progressed) break;
+      ak (!pokročila) prestávka;
     }
-    return queue;
+    vrátiť front;
   }
 
-  // ============ CONTROL PANEL ============
-  function showControlPanel(queue) {
+  funkcia zobraziťControlPanel (queue) {
     var old = document.getElementById('tw-fake-panel');
-    if (old) old.remove();
-
-    var panel = document.createElement('div');
+    ak (starý) starý.remove();
+    var panel = document.createElement ('div');
     panel.id = 'tw-fake-panel';
-    panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:400px;max-height:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
-
-    var h = '<div style="text-align:center;margin-bottom:8px;">';
-    h += '<h3 style="margin:0;color:#7d510f;">⚔️ Fake Attack Queue</h3>';
+    panel.style.cssText = 'pozícia:pevná;hore:10px;vpravo:10px;z-index:99999;pozadie:#f4e4bc;hranica:2px pevné #7d510f;hranica-polomer:8px;vyplnenie:15px;font-rodina:Verdana,sans-serif;font-veľkosť:11px;farba:#3e2b0d;šírka:420px;max-výška:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
+    var h = '<div style=“text-align:center;margin-bottom:8px;“><h3 style=“margin:0;color:#7d510f;“>️ Fake Attack Queue</h3></div>';
+    h += '<div style=“pozadie:#fff3cd;výplň:6px 10px;hraničný polomer:4px;okraj-dole:8px;veľkosť písma:11px;“>';
+    h += '<b>'+queue.length+'</b> útokov | <b>'+(unitMode==='random'?'🎲 Random':' ⁇ ️ Manuálny')+'</b><br/>';
+    h += 'Falošný limit: <b>'+fakeLimit+'%</b> | Karty: <b>'+openTabs+'</b>';
+    ak (maxFakesPerTarget>0) h += '<br/>Max/cieľ: <b>'+maxFakesPerTarget+'</b>';
+    ak (maxFakesPerVillage>0) h += ' | Max/dedina: <b>'+maxFakesPerVillage+'</b>';
+    ak (arrivalStart||arrivalEnd) h += '<br/>🕐 '+ (arrivalStart?príchodStart.toLocaleString('sk-SK'):'?')+' – '+ (príchodKoniec?príchodKoniec.toLocaleString('sk-SK'):'?');
     h += '</div>';
-
-    h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px;">';
-    h += '<b>' + queue.length + '</b> útokov | Režim: <b>' + (unitMode === 'random' ? '🎲 Random' : '✏️ Manuálny') + '</b><br/>';
-    h += 'Fake limit: <b>' + fakeLimit + '%</b> | Tabs: <b>' + openTabs + '</b>';
-    if (maxFakesPerTarget > 0) h += '<br/>Max/cieľ: <b>' + maxFakesPerTarget + '</b>';
-    if (maxFakesPerVillage > 0) h += ' | Max/dedina: <b>' + maxFakesPerVillage + '</b>';
-    if (arrivalStart || arrivalEnd) {
-      h += '<br/>🕐 ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk-SK') : '?');
+    h += '<div style=“max-výška:250px; overflow-y:auto;border:1px solid #d4a574;border-radius:4px;margin-bottom:8px;“>';
+    pre (var i=0; i<Math.min (queue.length,30); i++) {
+      var atk = front[i];
+      var uStr = Object.keys(atk.units).map(funkcia(k){return k+':'+atk.units[k];}).join(', ');
+      var bg = i%2===0?'#fff8e7':'#f4e4bc';
+      h += '<div style=“padding:4px 8px;background:'+bg+';border-bottom:1px solid #e6d5b8;veľkosť písma: 10px;“>';
+      h += '<b>'+atk.villageName.substring(0,22)+'</b> → '+atk.targetX+'|'+atk.targetY;
+      h += '<span style=“color:#4a7c3f;font-weight:bold;“>['+atk.totalPop+' pop]</span>';
+      h += '<br/><span style=“color:#8b7355;“>'+uStr+'</span></div>';
     }
+    if (queue.length>30) h += '<div style=“padding:4px 8px;text-align:center;font-size:10px;color:#8b7355;“>...a ďalších '+(queue.length-30)+'</div>';
     h += '</div>';
-
-    h += '<div style="max-height:250px;overflow-y:auto;border:1px solid #d4a574;border-radius:4px;margin-bottom:8px;">';
-    for (var i = 0; i < Math.min(queue.length, 30); i++) {
-      var atk = queue[i];
-      var unitStr = Object.keys(atk.units).map(function(k) { return k + ':' + atk.units[k]; }).join(', ');
-      var bg = i % 2 === 0 ? '#fff8e7' : '#f4e4bc';
-      h += '<div style="padding:4px 8px;background:' + bg + ';border-bottom:1px solid #e6d5b8;font-size:10px;">';
-      h += '<b>' + atk.villageName.substring(0, 22) + '</b> → ' + atk.targetX + '|' + atk.targetY;
-      h += '<br/><span style="color:#8b7355;">' + unitStr + '</span>';
-      h += '</div>';
-    }
-    if (queue.length > 30) {
-      h += '<div style="padding:4px 8px;text-align:center;font-size:10px;color:#8b7355;">...a ďalších ' + (queue.length - 30) + '</div>';
-    }
+    h += '<div style=“display:flex;gap:8px;“>';
+    h += '<button id=“tw-start-btn“ style=“flex:1;padding:10px;background:#4a7c3f;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;“>▶ Spusť ('+openTabs+' tabov)</tlačidlo>';
+    h += '<button id=“tw-close-panel“ style=“padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;“>✕</tlačidlo>';
     h += '</div>';
-
-    h += '<div style="display:flex;gap:8px;">';
-    h += '<button id="tw-start-btn" style="flex:1;padding:10px;background:#4a7c3f;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;">▶ Spustiť (' + openTabs + ' tabov)</button>';
-    h += '<button id="tw-close-panel" style="padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">✕</button>';
-    h += '</div>';
-
     panel.innerHTML = h;
     document.body.appendChild(panel);
-
-    document.getElementById('tw-close-panel').onclick = function() { panel.remove(); };
+    document.getElementById('tw-zavrieť-panel').onclick = funkcia(){panel.remove();};
     document.getElementById('tw-start-btn').onclick = launchAttacks;
   }
 
-  function launchAttacks() {
-    var queue = window._twAttackQueue || [];
-    var idx = window._twAttackIndex || 0;
-    var tabsToOpen = Math.min(openTabs, queue.length - idx);
-
-    if (tabsToOpen <= 0) {
-      alert('✅ Všetky útoky už boli otvorené.');
-      return;
+  funkcia launchAttacks() {
+    var fronta = okno._twAttackQueue || [];
+    var idx = okno._twAttackIndex || 0;
+    var tabsToOpen = Math.min (openTabs, queue.length - idx);
+    if (tabsToOpen <= 0) { alert('✅ Všetky útoky už boli otvorené.'); return; }
+    pre (var i=0; i<tabsToOpen; i++) {
+      var attack = front [idx+i];
+      ak (!útok) zlomiť;
+      var params = ['village='+encodeURIComponent(attack.villageId),'screen=place','x='+encodeURIComponent(attack.targetX),'y='+encodeURIComponent(attack.targetY)];
+      Object.keys(attack.units).forEach(funkcia(un){if(attack.units[un]>0) params.push(encodeURIComponent(un)+'='+encodeURIComponent(attack.units[un])); });
+      window.open('/game.php?'+params.join('&'), '_blank');
     }
-
-    for (var i = 0; i < tabsToOpen; i++) {
-      var attack = queue[idx + i];
-      if (!attack) break;
-
-      var params = [
-        'village=' + encodeURIComponent(attack.villageId),
-        'screen=place',
-        'x=' + encodeURIComponent(attack.targetX),
-        'y=' + encodeURIComponent(attack.targetY)
-      ];
-
-      Object.keys(attack.units).forEach(function(unitName) {
-        var count = attack.units[unitName];
-        if (count > 0) {
-          params.push(encodeURIComponent(unitName) + '=' + encodeURIComponent(count));
-        }
-      });
-
-      var url = '/game.php?' + params.join('&');
-      window.open(url, '_blank');
-    }
-
     window._twAttackIndex = idx + tabsToOpen;
-
     var btn = document.getElementById('tw-start-btn');
-    var remaining = queue.length - window._twAttackIndex;
-    if (btn) {
-      if (remaining > 0) {
-        btn.textContent = '▶ Ďalších ' + Math.min(openTabs, remaining) + ' (zostáva ' + remaining + ')';
-      } else {
-        btn.textContent = '✅ Hotovo!';
-        btn.disabled = true;
-        btn.style.background = '#95a5a6';
-      }
+    var zostávajúci = front.dĺžka - okno._twAttackIndex;
+    ak (btn) {
+      ak (zostávajúci>0) btn.textContent = '▶ Ďalších '+Math.min (openTabs, remaining)+' (zostava '+remaining+')';
+      inak {btn.textContent='✅ Hotovo!'; btn.disabled=true; btn.style.background='#95a5a6'; }
     }
-    log('📑 Otvorených ' + tabsToOpen + ' tabov, zostáva ' + remaining);
+    log ('📑 Otvorených '+tabsToOpen+' tabov, zostáv '+zostávajúci);
   }
 
 })();
