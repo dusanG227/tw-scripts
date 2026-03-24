@@ -21,7 +21,7 @@
   var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
   var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
 
-  var fakeLimit = 2;  // Default 2% of village population
+  var fakeLimit = 0.5;  // Default 0.5% of village POINTS (not population)
   var openTabs = 5;
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
@@ -78,7 +78,7 @@
   }
 
   // ===== OPRAVENÝ NÁHODNÝ VÝBER =====
-  function selectRandomUnits(availableUnits, fakeLimitPct, targetPoints) {
+  function selectRandomUnits(availableUnits, fakeLimitPct, targetPoints, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) >= 3;  // Minimálne 3 špehovia
     var hasRam = (availableUnits.ram || 0) >= 1;
     var hasCat = (availableUnits.catapult || 0) >= 1;
@@ -135,9 +135,16 @@
     if (!selected.ram && !selected.catapult) return {};
 
     // 3. Vyplnenie - všetky dostupné jednotky
-    // OPRAVENÉ: budgetLimit počítame ako percento z populácie
-    // Minimálne 100 pop na fejk (3-6 spy + 1-3 ram/cat + ostatné)
-    var budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
+    // OPRAVENÉ: budgetLimit sa počítá z BODOV DEDINY, nie z populácie
+    var budgetLimit;
+    if (villagePoints && villagePoints > 0) {
+      // Nový spôsob: 0.5% z bodov dediny = minimálny pop pre fejk
+      budgetLimit = Math.ceil(villagePoints * (fakeLimitPct / 100));
+    } else {
+      // Fallback: starý spôsob na základe populácie
+      budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
+    }
+    
     if (budgetLimit < 100) budgetLimit = 100;  // Minimálne 100 pop
     budgetLimit = Math.min(budgetLimit, totalPop);  // Maximálne dostupná populácia
 
@@ -195,7 +202,7 @@
     'baran'                               // Ram (5 pop)
   ];
 
-  function selectManualUnits(availableUnits, fakeLimitPct, targetPoints) {
+  function selectManualUnits(availableUnits, fakeLimitPct, targetPoints, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) >= 3;  // Minimálne 3 špehovia
     var hasRam = (availableUnits.ram || 0) >= 1;
     var hasCat = (availableUnits.catapult || 0) >= 1;
@@ -228,7 +235,13 @@
       usedPop += unitPop.catapult * catCount;
     }
 
-    var budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
+    // OPRAVENÉ: budgetLimit sa počítá z BODOV DEDINY, nie z populácie
+    var budgetLimit;
+    if (villagePoints && villagePoints > 0) {
+      budgetLimit = Math.ceil(villagePoints * (fakeLimitPct / 100));
+    } else {
+      budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
+    }
     if (budgetLimit < 100) budgetLimit = 100;  // Minimálne 100 pop
     budgetLimit = Math.min(budgetLimit, totalPop);
 
@@ -268,31 +281,57 @@
     return selected;
   }
 
-  function selectUnitsForFake(availableUnits, fakeLimitPct, targetPoints) {
+  function selectUnitsForFake(availableUnits, fakeLimitPct, targetPoints, villagePoints) {
     if (unitMode === 'náhodný') {
-      return selectRandomUnits(availableUnits, fakeLimitPct, targetPoints);
+      return selectRandomUnits(availableUnits, fakeLimitPct, targetPoints, villagePoints);
     }
-    return selectManualUnits(availableUnits, fakeLimitPct, targetPoints);
+    return selectManualUnits(availableUnits, fakeLimitPct, targetPoints, villagePoints);
   }
 
-  // =========== KONTROLNÁ STRÁNKA ==========
-  var isCombined = window.location.href.indexOf('screen=overview_villages') !== -1;
-  if (!isCombined) {
-    if (window.location.href.indexOf('screen=place') !== -1) {
-      alert('⚠️ Tento skript spúšťaj iba na Kombinovanej strane.');
-      return;
-    }
+  // =========== DETEKCIA REŽIMU STRÁNKY ==========
+  var isOverviewVillages = window.location.href.indexOf('screen=overview_villages') !== -1;
+  var isBuildingsMode = window.location.href.indexOf('mode=buildings') !== -1;
+  var isCombinedMode = window.location.href.indexOf('mode=combined') !== -1;
+  var isPlaceScreen = window.location.href.indexOf('screen=place') !== -1;
+
+  if (isPlaceScreen) {
+    alert('⚠️ Tento skript spúšťaj iba na Budovy alebo Kombinovanej strane.');
+    return;
+  }
+
+  if (!isOverviewVillages) {
     if (typeof game_data !== 'undefined' && game_data.village && game_data.village.id) {
-      window.location.href = '/game.php?village=' + game_data.village.id + '&screen=overview_villages&mode=combined';
+      window.location.href = '/game.php?village=' + game_data.village.id + '&screen=overview_villages&mode=buildings';
       return;
     }
-    alert('❌ Otvor stránku Kombinované (overview_villages&mode=combined).');
+    alert('❌ Otvor stránku Budovy alebo Kombinované.');
     return;
   }
 
   if (!targets.length) {
     alert('❌ Neboli zadané žiadne mestské úrady.');
     return;
+  }
+
+  // AK JE BUDOVY REŽIM: Najprv načítaj body, potom prejdi na Kombinovanú
+  if (isBuildingsMode) {
+    log('🏗️ Režim Budovy detekovaný - načítavam body dedín...');
+    var villagePoints = parseVillagesFromBuildings();
+    if (villagePoints && Object.keys(villagePoints).length > 0) {
+      // Uložíme body do sessionStorage
+      window.sessionStorage.setItem('_twVillagePoints', JSON.stringify(villagePoints));
+      log('✅ Načítných ' + Object.keys(villagePoints).length + ' dedín s bodmi');
+      
+      // Prejdi na Kombinovanú
+      var currentVillageId = (window.location.href.match(/village=(\d+)/) || [null, '125'])[1];
+      window.location.href = '/game.php?village=' + currentVillageId + '&screen=overview_villages&mode=combined';
+      return;
+    }
+  }
+
+  // AK JE KOMBINOVANÁ: Načítaj jednotky (body by mali byť v sessionStorage z Budovy)
+  if (isCombinedMode) {
+    log('📋 Režim Kombinované detekovaný - načítavam jednotky...');
   }
 
   showConfigPanel();
@@ -318,8 +357,8 @@
 
     h += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">';
     h += '<tr><td style="padding:3px;font-weight:bold;">Falošný limit (%):</td>';
-    h += '<td><input id="tw-cfg-fakelimit" type="number" value="2" step="0.5" min="0.5" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">% z populácie dediny na fejk</div></td></tr>';
+    h += '<td><input id="tw-cfg-fakelimit" type="number" value="0.5" step="0.1" min="0.1" max="5" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
+    h += '<div style="font-size:9px;color:#8b7355;">0.5% z BODOV dediny na fejk (odporúčané)</div></td></tr>';
     
     h += '<tr><td style="padding:3px;font-weight:bold;">Otvoriť karty:</td>';
     h += '<td><input id="tw-cfg-opentabs" type="number" value="5" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;"/></td></tr>';
@@ -370,17 +409,39 @@
   }
 
   function runFakeAttacks() {
+    // Najprv pokús načítať body z sessionStorage (z režimu Budový)
+    var villagePoints = {};
+    try {
+      var stored = window.sessionStorage.getItem('_twVillagePoints');
+      if (stored) {
+        villagePoints = JSON.parse(stored);
+        window.sessionStorage.removeItem('_twVillagePoints');  // Vymaž po použití
+        log('📍 Načítaných ' + Object.keys(villagePoints).length + ' bodov z Budovy');
+      }
+    } catch (e) {
+      log('⚠️ Chyba pri načítaní bodov z sessionStorage');
+    }
+
     var dediny = parseVillagesFromCombined();
     if (!dediny.length) {
       alert('❌ Nenašli sa žiadne dediny s jednotkami.');
       return;
     }
+
+    // Spoj body s jednotkami
+    for (var d = 0; d < dediny.length; d++) {
+      if (villagePoints[dediny[d].id]) {
+        dediny[d].points = villagePoints[dediny[d].id];
+      }
+    }
+
     log('📋 Načítaných dedín: ' + dediny.length);
     for (var d = 0; d < Math.min(3, dediny.length); d++) {
       var dbg = dediny[d];
       var ul = [];
       for (var u in dbg.units) ul.push(u + ':' + dbg.units[u]);
-      log('  ' + dbg.name + ' — ' + ul.join(', '));
+      var pts = dbg.points ? ' (' + dbg.points + ' bodov)' : '';
+      log('  ' + dbg.name + pts + ' — ' + ul.join(', '));
     }
     
     var attackQueue = buildAttackQueue(dediny, targets, fakeLimit);
@@ -392,6 +453,92 @@
     window._twAttackQueue = attackQueue;
     window._twAttackIndex = 0;
     showControlPanel(attackQueue);
+  }
+
+  // ===== PARSOVANIE BODOV Z REŽIMU BUDOVY =====
+  function parseVillagesFromBuildings() {
+    var result = {};
+    var tabuľka = null;
+    
+    // Hľadaj tabuľku s bodmi
+    var tabuľky = document.querySelectorAll('table');
+    for (var t = 0; t < tabuľky.length; t++) {
+      var cellTexts = tabuľky[t].textContent || '';
+      if (cellTexts.indexOf('Bodov') !== -1 || cellTexts.indexOf('bodov') !== -1) {
+        tabuľka = tabuľky[t];
+        break;
+      }
+    }
+
+    if (!tabuľka) {
+      log('⚠️ Tabuľka bodov nenájdená v režime Budovy');
+      return result;
+    }
+
+    // Nájdi hlavičku a poradi stĺpcov
+    var headerRow = null;
+    var bodovIndex = -1;
+    var riadky = tabuľka.querySelectorAll('tr');
+    
+    for (var ri = 0; ri < riadky.length; ri++) {
+      var bunky = riadky[ri].querySelectorAll('th, td');
+      for (var bi = 0; bi < bunky.length; bi++) {
+        var text = (bunky[bi].textContent || '').toLowerCase().trim();
+        if (text === 'bodov' || text === 'body' || text.indexOf('bod') !== -1) {
+          headerRow = riadky[ri];
+          bodovIndex = bi;
+          break;
+        }
+      }
+      if (bodovIndex !== -1) break;
+    }
+
+    if (bodovIndex === -1) {
+      log('⚠️ Stĺpec "Bodov" nenájdený');
+      return result;
+    }
+
+    log('✅ Nájdený stĺpec Bodov na pozícii ' + bodovIndex);
+
+    // Parsuj dáta - hľadaj ID dediny a jej body
+    var dataRows = tabuľka.querySelectorAll('tr');
+    for (var i = 0; i < dataRows.length; i++) {
+      var row = dataRows[i];
+      
+      // Preskočí hlavičku
+      if (row === headerRow) continue;
+      
+      var cells = row.querySelectorAll('td, th');
+      if (cells.length <= bodovIndex) continue;
+
+      // Nájdi ID dediny - zwäčša v href atribúte
+      var villageLink = row.querySelector('a[href*="dedina="], a[href*="village="]');
+      var villageId = null;
+      
+      if (villageLink) {
+        var match = villageLink.href.match(/(?:dedina|village)=(\d+)/);
+        if (match) villageId = match[1];
+      } else {
+        // Alternatíva: ID môže byť v prvej bunke
+        var cellLink = cells[0].querySelector('a');
+        if (cellLink) {
+          var match = cellLink.href.match(/(?:dedina|village)=(\d+)/);
+          if (match) villageId = match[1];
+        }
+      }
+
+      if (!villageId) continue;
+
+      // Prečítaj body
+      var bodovText = (cells[bodovIndex].textContent || '').trim();
+      var bodovVal = parseInt(bodovText.replace(/\D+/g, ''), 10) || 0;
+      
+      if (bodovVal > 0) {
+        result[villageId] = bodovVal;
+      }
+    }
+
+    return result;
   }
 
   // OPRAVENÉ PARSOVANIE
@@ -545,14 +692,14 @@
       var v = villageList[i];
       if (unitMode === 'náhodný') {
         // Kontrola: dedina má minimálne 3 špionov a aspoň ram alebo katapult
-        if ((v.units.spy || 0) >= 3 && ((v.units.baran || 0) >= 1 || (v.units.katapult || 0) >= 1)) {
+        if ((v.units.spy || 0) >= 3 && ((v.units.ram || 0) >= 1 || (v.units.catapult || 0) >= 1)) {
           preparedVillages.push({village: v, units: null});
         }
       } else {
         var avg = 0;
         for (var tp = 0; tp < targetList.length; tp++) avg += (targetList[tp].points || 0);
         avg = targetList.length > 0 ? avg / targetList.length : 0;
-        var selected = selectUnitsForFake(v.units, fakeLimitPct, avg);
+        var selected = selectUnitsForFake(v.units, fakeLimitPct, avg, v.points);
         if (Object.keys(selected).length) {
           preparedVillages.push({village: v, units: selected});
         }
@@ -589,7 +736,7 @@
           if (unitMode === 'náhodný') {
             var best = null, bestPop = 0;
             for (var att = 0; att < 5; att++) {
-              var cand = selectUnitsForFake(pv.village.units, fakeLimitPct, targetPts);
+              var cand = selectUnitsForFake(pv.village.units, fakeLimitPct, targetPts, pv.village.points);
               if (!Object.keys(cand).length) continue;
               var cp = 0;
               for (var cu in cand) cp += cand[cu] * (unitPop[cu] || 1);
@@ -642,7 +789,7 @@
     var h = '<div style="text-align:center;margin-bottom:8px;"><h3 style="margin:0;color:#7d510f;">🎯 Fake Attack Queue</h3></div>';
     h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px;">';
     h += '<b>' + queue.length + '</b> útokov | <b>' + (unitMode === 'náhodný' ? '🎲 Náhodný' : '⚙️ Manuálny') + '</b><br/>';
-    h += 'Falošný limit: <b>' + fakeLimit + '%</b> | Karty: <b>' + openTabs + '</b>';
+    h += 'Falošný limit: <b>' + fakeLimit + '%</b> z bodov | Karty: <b>' + openTabs + '</b>';
     if (maxFakesPerTarget > 0) h += '<br/>Max/cieľ: <b>' + maxFakesPerTarget + '</b>';
     if (maxFakesPerVillage > 0) h += ' | Max/dedina: <b>' + maxFakesPerVillage + '</b>';
     if (arrivalStart || arrivalEnd) {
