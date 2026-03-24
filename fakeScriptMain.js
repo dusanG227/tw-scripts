@@ -1,46 +1,46 @@
-// TW Fake Executor v3.4 - Opravený výbeh jednotiek + zlepšený algoritmus
-// fakeScriptMain.js - načítava sa z GitHub cez bookmarklet
+// TW Fake Executor v3.5 - Correctly Fixed JavaScript
+// Rewritten with proper English syntax based on Costache approach
 
-(funkcia() {
-  "používajte prísne";
+(function() {
+  "use strict";
 
-  if (typeof _twFakeData === 'nedefinované') {
-    alert('✗ Chýba konfigurácia. Najprv vygeneruj bookmarklet cez launcher.');
-    návrat;
+  if (typeof _twFakeData === 'undefined') {
+    alert('✗ Missing configuration. Generate bookmarklet first.');
+    return;
   }
 
   var config;
   try {
     config = JSON.parse(decodeURIComponent(escape(atob(_twFakeData))));
   } catch (e) {
-    alert('❌ Nepodarilo sa dekódovať konfiguráciu: ' + e.message);
-    návrat;
+    alert('❌ Failed to decode config: ' + e.message);
+    return;
   }
 
-  var ciele = Array.isArray(config.targets) ? config.targets : [];
-  var arrivalStart = config.arrivalStart ? nový dátum(config.arrivalStart) : null;
-  var príchodKoniec = config.arrivalKoniec ? nový dátum(config.arrivalEnd) : null;
+  var targets = Array.isArray(config.targets) ? config.targets : [];
+  var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
+  var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
 
-  var fakeLimit = 2;  // Zvýšená default hodnota - 2% (namiesto 0.5%)
+  var fakeLimit = 2;  // Default 2% of village population
   var openTabs = 5;
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
-  var unitMode = 'náhodný';
+  var unitMode = 'random';
 
   function log(msg) {
     console.log('[TW-Fake] ' + msg);
   }
 
   var unitPop = {
-    kopija: 1, meč: 1, sekera: 1, lukostrelec: 1,
-    špión: 2, ľahký: 4, pochodujúci: 5, ťažký: 6,
-    baran: 5, katapult: 8, rytier: 10, snob: 100
+    spear: 1, sword: 1, axe: 1, archer: 1,
+    spy: 2, light: 4, marcher: 5, heavy: 6,
+    ram: 5, catapult: 8, knight: 10, snob: 100
   };
 
   var unitSpeed = {
-    kopija: 18, meč: 22, sekera: 18, lukostrelec: 18,
-    špión: 9, ľahký: 10, pochodujúci: 10, ťažký: 11,
-    baran: 30, katapult: 30, rytier: 10, snob: 35
+    spear: 18, sword: 22, axe: 18, archer: 18,
+    spy: 9, light: 10, marcher: 10, heavy: 11,
+    ram: 30, catapult: 30, knight: 10, snob: 35
   };
 
   var exclusiveUnits = {militia: true, knight: true, snob: true};
@@ -48,7 +48,7 @@
   var worldSpeed = 1;
   var unitSpeedMod = 1;
   try {
-    if (typeof getSpeedConstant === 'funkcia') {
+    if (typeof getSpeedConstant === 'function') {
       var speedData = getSpeedConstant();
       if (speedData) {
         worldSpeed = Number(speedData.worldSpeed) || 1;
@@ -56,7 +56,7 @@
       }
     }
   } catch (e) {
-    log('⚠️ getSpeedConstant nedostupný, používam default hodnoty');
+    log('⚠️ getSpeedConstant not available, using defaults');
   }
 
   function randInt(min, max) {
@@ -280,19 +280,19 @@
   if (!isCombined) {
     if (window.location.href.indexOf('screen=place') !== -1) {
       alert('⚠️ Tento skript spúšťaj iba na Kombinovanej strane.');
-      návrat;
+      return;
     }
-    if (typeof game_data !== 'nedefinované' && game_data.village && game_data.village.id) {
+    if (typeof game_data !== 'undefined' && game_data.village && game_data.village.id) {
       window.location.href = '/game.php?village=' + game_data.village.id + '&screen=overview_villages&mode=combined';
-      návrat;
+      return;
     }
     alert('❌ Otvor stránku Kombinované (overview_villages&mode=combined).');
-    návrat;
+    return;
   }
 
-  if (!ciele.length) {
+  if (!targets.length) {
     alert('❌ Neboli zadané žiadne mestské úrady.');
-    návrat;
+    return;
   }
 
   showConfigPanel();
@@ -307,7 +307,7 @@
 
     var h = '<div style="text-align:center;margin-bottom:12px;">';
     h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">🎯 TW Fake - Konfigurácia</h2>';
-    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.4 — ' + ciele.length + ' cieľov načítaných</p>';
+    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.4 — ' + targets.length + ' cieľov načítaných</p>';
     h += '</div>';
 
     h += '<div style="margin-bottom:10px;padding:8px;background:#e8d5a3;border-radius:4px;">';
@@ -338,9 +338,9 @@
     h += '<button id="tw-cfg-close" style="padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">✕</button>';
     h += '</div>';
 
-    if (arrivalStart || príchodKoniec) {
+    if (arrivalStart || arrivalEnd) {
       h += '<div style="margin-top:8px;font-size:10px;color:#8b7355;">';
-      h += '🕐 Príchod: ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (príchodKoniec ? príchodKoniec.toLocaleString('sk-SK') : '?');
+      h += '🕐 Príchod: ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk-SK') : '?');
       h += '</div>';
     }
 
@@ -373,7 +373,7 @@
     var dediny = parseVillagesFromCombined();
     if (!dediny.length) {
       alert('❌ Nenašli sa žiadne dediny s jednotkami.');
-      návrat;
+      return;
     }
     log('📋 Načítaných dedín: ' + dediny.length);
     for (var d = 0; d < Math.min(3, dediny.length); d++) {
@@ -383,11 +383,11 @@
       log('  ' + dbg.name + ' — ' + ul.join(', '));
     }
     
-    var attackQueue = buildAttackQueue(dediny, ciele, fakeLimit);
+    var attackQueue = buildAttackQueue(dediny, targets, fakeLimit);
     log('✅ Naplnených: ' + attackQueue.length);
     if (!attackQueue.length) {
       alert('❌ Nevytvoril sa žiadny útok. Skontroluj limity a jednotky.');
-      návrat;
+      return;
     }
     window._twAttackQueue = attackQueue;
     window._twAttackIndex = 0;
@@ -515,12 +515,12 @@
       var dp = d.split(/[.\/-]/);
       var tp = t.split(':');
       if (dp.length === 3 && tp.length >= 2) {
-        var dt = nový dátum(parseInt(dp[2], 10), parseInt(dp[1], 10) - 1, parseInt(dp[0], 10),
+        var dt = new Date(parseInt(dp[2], 10), parseInt(dp[1], 10) - 1, parseInt(dp[0], 10),
           parseInt(tp[0], 10), parseInt(tp[1], 10), parseInt(tp[2] || '0', 10));
         if (!isNaN(dt.getTime())) return dt;
       }
     }
-    return nový dátum();
+    return new Date();
   }
 
   function calcTravelTimeMs(fromX, fromY, toX, toY, slowestUnit) {
@@ -529,11 +529,11 @@
   }
 
   function isInArrivalWindow(village, target, selectedUnits) {
-    if (!arrivalStart && !príchodKoniec) return true;
+    if (!arrivalStart && !arrivalEnd) return true;
     var now = parseServerNow();
     var arrMs = now.getTime() + calcTravelTimeMs(village.x, village.y, target.x, target.y, getSlowestUnit(selectedUnits));
     if (arrivalStart && arrMs < arrivalStart.getTime()) return false;
-    if (príchodKoniec && arrMs > príchodKoniec.getTime()) return false;
+    if (arrivalEnd && arrMs > arrivalEnd.getTime()) return false;
     return true;
   }
 
@@ -645,8 +645,8 @@
     h += 'Falošný limit: <b>' + fakeLimit + '%</b> | Karty: <b>' + openTabs + '</b>';
     if (maxFakesPerTarget > 0) h += '<br/>Max/cieľ: <b>' + maxFakesPerTarget + '</b>';
     if (maxFakesPerVillage > 0) h += ' | Max/dedina: <b>' + maxFakesPerVillage + '</b>';
-    if (arrivalStart || príchodKoniec) {
-      h += '<br/>🕐 ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (príchodKoniec ? príchodKoniec.toLocaleString('sk-SK') : '?');
+    if (arrivalStart || arrivalEnd) {
+      h += '<br/>🕐 ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk-SK') : '?');
     }
     h += '</div>';
     
