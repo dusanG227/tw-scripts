@@ -135,8 +135,9 @@
     if (!selected.ram && !selected.catapult) return {};
 
     // 3. Vyplnenie - všetky dostupné jednotky
-    var budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
-    budgetLimit = Math.max(budgetLimit, usedPop + 20);  // Minimálne 20 pop viac
+    // Rozpočet je AGRESÍVNEJŠÍ - až 5% populácie na fejk
+    var budgetLimit = Math.ceil(totalPop * Math.min(5, fakeLimitPct * 10));  // Minimálne 5% alebo 10x límit
+    budgetLimit = Math.max(budgetLimit, usedPop + 50);  // Minimálne 50 pop viac
     budgetLimit = Math.min(budgetLimit, totalPop);
 
     var fillers = [];
@@ -146,7 +147,7 @@
       if (availableUnits[unitName] > 0) fillers.push(unitName);
     }
 
-    // Vyplnenie všetkými jednotkami
+    // Vyplnenie všetkými jednotkami - AGRESÍVNY VÝBER
     for (var fi = 0; fi < fillers.length && usedPop < budgetLimit; fi++) {
       var fn = fillers[fi];
       var available = availableUnits[fn] || 0;
@@ -157,8 +158,10 @@
       var toAdd = Math.min(available, canAfford);
 
       if (toAdd > 0) {
-        // Náhodne 1-80% dostupných jednotiek
-        var randomAmount = randInt(1, Math.max(1, Math.floor(toAdd * 0.8)));
+        // AGRESÍVNY VÝBER: 40-100% dostupných jednotiek
+        var minAmount = Math.max(1, Math.floor(toAdd * 0.4));
+        var maxAmount = toAdd;
+        var randomAmount = randInt(minAmount, maxAmount);
         selected[fn] = randomAmount;
         usedPop += randomAmount * fp;
       }
@@ -214,11 +217,11 @@
       usedPop += unitPop.catapult * catCount;
     }
 
-    var budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
-    budgetLimit = Math.max(budgetLimit, usedPop + 20);
+    var budgetLimit = Math.ceil(totalPop * Math.min(5, fakeLimitPct * 10));  // Minimálne 5% alebo 10x límit
+    budgetLimit = Math.max(budgetLimit, usedPop + 50);
     budgetLimit = Math.min(budgetLimit, totalPop);
 
-    // 3. Vyplnenie podľa priority
+    // 3. Vyplnenie podľa priority - AGRESÍVNY VÝBER
     for (var i = 0; i < fakePriority.length && usedPop < budgetLimit; i++) {
       var un = fakePriority[i];
       var máš = availableUnits[un] || 0;
@@ -232,8 +235,10 @@
       var cnt = Math.min(máš, canTake);
       
       if (cnt > 0) {
-        // Náhodne 30-80% dostupného množstva
-        var randomAmount = randInt(1, Math.max(1, Math.floor(cnt * 0.8)));
+        // AGRESÍVNY VÝBER: 40-100% dostupného množstva
+        var minAmount = Math.max(1, Math.floor(cnt * 0.4));
+        var maxAmount = cnt;
+        var randomAmount = randInt(minAmount, maxAmount);
         selected[un] = randomAmount;
         usedPop += randomAmount * pop;
       }
