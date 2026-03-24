@@ -156,12 +156,17 @@
     return result;
   }
 
-  function selectUnitsForFake(availableUnits, fakeLimitPct) {
-    var hasSpy = (availableUnits.spy || 0) > 0;
-    var hasRam = (availableUnits.ram || 0) > 0;
-    var hasCat = (availableUnits.catapult || 0) > 0;
+  function randInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
 
-    if (!hasSpy || (!hasRam && !hasCat)) {
+  function selectUnitsForFake(availableUnits, fakeLimitPct) {
+    var spyCount = availableUnits.spy || 0;
+    var ramCount = availableUnits.ram || 0;
+    var catCount = availableUnits.catapult || 0;
+
+    // Must have spy AND (ram or catapult)
+    if (spyCount <= 0 || (ramCount <= 0 && catCount <= 0)) {
       return {};
     }
 
@@ -170,26 +175,63 @@
       totalPop += availableUnits[u] * (unitPop[u] || 1);
     }
 
-    var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
     var maxPop = Math.ceil(totalPop * (fakeLimitPct / 100));
-    if (maxPop < requiredPop) maxPop = requiredPop;
+
+    // Random spy count 3-6 (or max available)
+    var wantedSpy = randInt(3, 6);
+    var actualSpy = Math.min(wantedSpy, spyCount);
 
     var selected = {};
     var usedPop = 0;
 
-    selected.spy = 1;
-    usedPop += unitPop.spy;
+    selected.spy = actualSpy;
+    usedPop += actualSpy * unitPop.spy;
 
-    if (hasRam) {
-      selected.ram = 1;
-      usedPop += unitPop.ram;
+    // Pick a random template for siege units
+    var template = randInt(1, 5);
+    if (template === 1 && ramCount > 0) {
+      // Ram only
+      var r = Math.min(randInt(1, 3), ramCount);
+      selected.ram = r;
+      usedPop += r * unitPop.ram;
+    } else if (template === 2 && catCount > 0) {
+      // Catapult only
+      var c = Math.min(randInt(1, 3), catCount);
+      selected.catapult = c;
+      usedPop += c * unitPop.catapult;
+    } else if (template === 3 && ramCount > 0 && catCount > 0) {
+      // Both ram + catapult
+      var r2 = Math.min(randInt(1, 2), ramCount);
+      var c2 = Math.min(randInt(1, 2), catCount);
+      selected.ram = r2;
+      selected.catapult = c2;
+      usedPop += r2 * unitPop.ram + c2 * unitPop.catapult;
+    } else if (ramCount > 0) {
+      // Fallback ram
+      var r3 = Math.min(randInt(1, 2), ramCount);
+      selected.ram = r3;
+      usedPop += r3 * unitPop.ram;
     } else {
-      selected.catapult = 1;
-      usedPop += unitPop.catapult;
+      // Fallback catapult
+      var c3 = Math.min(randInt(1, 2), catCount);
+      selected.catapult = c3;
+      usedPop += c3 * unitPop.catapult;
     }
 
-    for (var i = 0; i < fakePriority.length && usedPop < maxPop; i++) {
-      var unitName = fakePriority[i];
+    // Ensure minimum pop is met
+    var minRequired = usedPop;
+    if (maxPop < minRequired) maxPop = minRequired;
+
+    // Fill remaining pop with filler units (randomized order)
+    var fillers = fakePriority.slice();
+    // Shuffle fillers for variety
+    for (var s = fillers.length - 1; s > 0; s--) {
+      var j = Math.floor(Math.random() * (s + 1));
+      var tmp = fillers[s]; fillers[s] = fillers[j]; fillers[j] = tmp;
+    }
+
+    for (var i = 0; i < fillers.length && usedPop < maxPop; i++) {
+      var unitName = fillers[i];
       var have = availableUnits[unitName] || 0;
       if (have <= 0) continue;
 
