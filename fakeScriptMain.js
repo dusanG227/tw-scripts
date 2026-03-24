@@ -1,4 +1,4 @@
-// TW Fake Executor v3 - Random šablóny + konfig UI + dva režimy
+// TW Fake Executor v3.2 - Slobodný random výber + fake limit pop budget
 // fakeScriptMain.js - načítava sa z GitHub cez bookmarklet
 
 (function() {
@@ -30,117 +30,7 @@
 
   function log(msg) { console.log('[TW-Fake] ' + msg); }
 
-  // ============ RANDOM ŠABLÓNY (8 kusov) ============
-  var fakeTemplates = [
-    // Šablóna 1: spy + ram + light filler
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(4, avail.spy || 0)),
-        ram: randInt(2, Math.min(6, avail.ram || 0)),
-        light: randInt(0, Math.min(3, avail.light || 0))
-      };
-    },
-    // Šablóna 2: spy + catapult + spear filler
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(4, avail.spy || 0)),
-        catapult: randInt(2, Math.min(6, avail.catapult || 0)),
-        spear: randInt(0, Math.min(5, avail.spear || 0))
-      };
-    },
-    // Šablóna 3: spy + ram + axe filler
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(3, avail.spy || 0)),
-        ram: randInt(2, Math.min(5, avail.ram || 0)),
-        axe: randInt(0, Math.min(4, avail.axe || 0))
-      };
-    },
-    // Šablóna 4: spy + catapult + heavy filler
-    function(avail) {
-      return {
-        spy: randInt(2, Math.min(4, avail.spy || 0)),
-        catapult: randInt(2, Math.min(4, avail.catapult || 0)),
-        heavy: randInt(0, Math.min(2, avail.heavy || 0))
-      };
-    },
-    // Šablóna 5: spy + ram + sword filler
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(2, avail.spy || 0)),
-        ram: randInt(3, Math.min(6, avail.ram || 0)),
-        sword: randInt(0, Math.min(4, avail.sword || 0))
-      };
-    },
-    // Šablóna 6: spy + catapult + light + axe mix
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(3, avail.spy || 0)),
-        catapult: randInt(2, Math.min(5, avail.catapult || 0)),
-        light: randInt(0, Math.min(2, avail.light || 0)),
-        axe: randInt(0, Math.min(2, avail.axe || 0))
-      };
-    },
-    // Šablóna 7: spy + ram + marcher filler
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(4, avail.spy || 0)),
-        ram: randInt(2, Math.min(4, avail.ram || 0)),
-        marcher: randInt(0, Math.min(3, avail.marcher || 0))
-      };
-    },
-    // Šablóna 8: spy + ram + catapult combo (oboje)
-    function(avail) {
-      return {
-        spy: randInt(1, Math.min(3, avail.spy || 0)),
-        ram: randInt(1, Math.min(3, avail.ram || 0)),
-        catapult: randInt(1, Math.min(3, avail.catapult || 0))
-      };
-    }
-  ];
-
-  // FIX #1: randInt vracia 0 keď max < min (napr. jednotka nie je dostupná)
-  function randInt(min, max) {
-    if (max <= 0) return 0;
-    if (max < min) return max;
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-
-  // FIX #2: šablóna sa volá LEN RAZ — výsledok sa uloží a rovnaký sa použije na validáciu aj ako výsledok
-  function selectRandomTemplate(availableUnits) {
-    var hasSpy = (availableUnits.spy || 0) >= 1;
-    var hasRam = (availableUnits.ram || 0) >= 1;
-    var hasCat = (availableUnits.catapult || 0) >= 1;
-
-    if (!hasSpy || (!hasRam && !hasCat)) return {};
-
-    // Generujeme výsledky raz, uložíme, validujeme na rovnakých výsledkoch
-    var validResults = [];
-    for (var i = 0; i < fakeTemplates.length; i++) {
-      var result = fakeTemplates[i](availableUnits);
-      // Odstrán nuly
-      var cleaned = {};
-      for (var u in result) {
-        if (result[u] > 0) cleaned[u] = result[u];
-      }
-      // Validuj: musí mať spy + (ram alebo catapult), a všetky jednotky musia byť dostupné
-      var valid = (cleaned.spy || 0) >= 1 && ((cleaned.ram || 0) >= 1 || (cleaned.catapult || 0) >= 1);
-      if (valid) {
-        // Overenie dostupnosti každej jednotky
-        var allAvail = true;
-        for (var k in cleaned) {
-          if (cleaned[k] > (availableUnits[k] || 0)) { allAvail = false; break; }
-        }
-        if (allAvail) validResults.push(cleaned);
-      }
-    }
-
-    if (!validResults.length) return {};
-
-    return validResults[Math.floor(Math.random() * validResults.length)];
-  }
-
-  // ============ MANUAL MODE ============
+  // ============ UNIT DATA ============
   var unitPop = {
     spear: 1, sword: 1, axe: 1, archer: 1,
     spy: 2, light: 4, marcher: 5, heavy: 6,
@@ -153,13 +43,12 @@
     ram: 30, catapult: 30, knight: 10, snob: 35
   };
 
-  var fakePriority = ['light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
+  // Paladín (knight) a šľachtic (snob) sú vylúčení
+  var excludedUnits = { militia: true, knight: true, snob: true };
 
   var allGameUnits = (typeof game_data !== 'undefined' && Array.isArray(game_data.units))
     ? game_data.units.slice()
     : ['spear', 'sword', 'axe', 'spy', 'light', 'heavy', 'ram', 'catapult'];
-
-  var excludedUnits = { militia: true, knight: true, snob: true };
 
   var worldSpeed = 1;
   var unitSpeedMod = 1;
@@ -173,6 +62,161 @@
     }
   } catch (e) {
     log('⚠️ getSpeedConstant nedostupný, používam default hodnoty');
+  }
+
+  // ============ RANDOM INT ============
+  function randInt(min, max) {
+    if (max <= 0) return 0;
+    if (max < min) return max;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  // ============ SLOBODNÝ RANDOM VÝBER ============
+  // Vyberá jednotky slobodne podľa pop budgetu z fake limitu.
+  // Povinné: aspoň 1 špeha + aspoň 1 baran ALEBO katapult (alebo oboje).
+  // Zvyšok budgetu sa náhodne rozdeľuje medzi dostupné jednotky.
+  function selectRandomUnits(availableUnits, fakeLimitPct) {
+    var hasSpy = (availableUnits.spy || 0) >= 1;
+    var hasRam = (availableUnits.ram || 0) >= 1;
+    var hasCat = (availableUnits.catapult || 0) >= 1;
+    if (!hasSpy || (!hasRam && !hasCat)) return {};
+
+    // Pop budget podľa fake limitu
+    var totalPop = 0;
+    for (var u in availableUnits) {
+      totalPop += availableUnits[u] * (unitPop[u] || 1);
+    }
+    var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
+    var popBudget = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired);
+
+    var selected = {};
+    var usedPop = 0;
+
+    // 1. Povinný špeha (1-4 náhodne, podľa dostupnosti a budgetu)
+    var maxSpy = Math.min(4, availableUnits.spy || 0, Math.floor((popBudget - minRequired + unitPop.spy) / unitPop.spy));
+    selected.spy = randInt(1, Math.max(1, maxSpy));
+    usedPop += selected.spy * unitPop.spy;
+
+    // 2. Baran a/alebo katapult — náhodne kombinácia
+    if (hasRam && hasCat) {
+      // Náhodne: len baran, len katapult, alebo oboje
+      var combo = randInt(0, 2);
+      if (combo !== 1 && usedPop + unitPop.ram <= popBudget) { // baran
+        var maxRam = Math.min(availableUnits.ram, Math.floor((popBudget - usedPop) / unitPop.ram));
+        selected.ram = randInt(1, Math.max(1, Math.min(6, maxRam)));
+        usedPop += selected.ram * unitPop.ram;
+      }
+      if (combo !== 0 && usedPop + unitPop.catapult <= popBudget) { // katapult
+        var maxCat = Math.min(availableUnits.catapult, Math.floor((popBudget - usedPop) / unitPop.catapult));
+        selected.catapult = randInt(1, Math.max(1, Math.min(6, maxCat)));
+        usedPop += selected.catapult * unitPop.catapult;
+      }
+    } else if (hasRam) {
+      var maxRam = Math.min(availableUnits.ram, Math.floor((popBudget - usedPop) / unitPop.ram));
+      selected.ram = randInt(1, Math.max(1, Math.min(6, maxRam)));
+      usedPop += selected.ram * unitPop.ram;
+    } else {
+      var maxCat = Math.min(availableUnits.catapult, Math.floor((popBudget - usedPop) / unitPop.catapult));
+      selected.catapult = randInt(1, Math.max(1, Math.min(6, maxCat)));
+      usedPop += selected.catapult * unitPop.catapult;
+    }
+
+    // Overenie: musíme mať aspoň ram alebo catapult
+    if (!selected.ram && !selected.catapult) return {};
+
+    // 3. Zvyšok budgetu rozdeliť náhodne medzi ostatné dostupné jednotky
+    // Zostavíme zoznam kandidátov (okrem spy, ram, catapult, knight, snob, militia)
+    var fillers = [];
+    for (var unitName in availableUnits) {
+      if (excludedUnits[unitName]) continue;
+      if (unitName === 'spy' || unitName === 'ram' || unitName === 'catapult') continue;
+      if ((availableUnits[unitName] || 0) > 0) fillers.push(unitName);
+    }
+
+    // Zamieš fillery náhodne
+    for (var f = fillers.length - 1; f > 0; f--) {
+      var swap = Math.floor(Math.random() * (f + 1));
+      var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
+    }
+
+    // Prideľ náhodné množstvo každého fillera v rámci budgetu
+    for (var fi = 0; fi < fillers.length && usedPop < popBudget; fi++) {
+      var fn = fillers[fi];
+      var fp = unitPop[fn] || 1;
+      var canAfford = Math.floor((popBudget - usedPop) / fp);
+      if (canAfford <= 0) continue;
+      var maxUnits = Math.min(availableUnits[fn], canAfford);
+      if (maxUnits <= 0) continue;
+      // Náhodne či vôbec pridáme (50% šanca), a koľko
+      if (Math.random() < 0.5) {
+        var count = randInt(1, maxUnits);
+        selected[fn] = count;
+        usedPop += count * fp;
+      }
+    }
+
+    // Validácia: žiadna jednotka nesmie presiahnuť dostupné množstvo
+    for (var k in selected) {
+      if (selected[k] > (availableUnits[k] || 0)) return {};
+    }
+
+    return selected;
+  }
+
+  // ============ MANUAL MODE (pôvodná logika, fake limit pop budget) ============
+  var fakePriority = ['light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
+
+  function selectManualUnits(availableUnits, fakeLimitPct) {
+    var hasSpy = (availableUnits.spy || 0) > 0;
+    var hasRam = (availableUnits.ram || 0) > 0;
+    var hasCat = (availableUnits.catapult || 0) > 0;
+    if (!hasSpy || (!hasRam && !hasCat)) return {};
+
+    var totalPop = 0;
+    for (var u in availableUnits) {
+      totalPop += availableUnits[u] * (unitPop[u] || 1);
+    }
+
+    var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
+    var maxPop = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop);
+
+    var selected = {};
+    var usedPop = 0;
+
+    selected.spy = 1;
+    usedPop += unitPop.spy;
+
+    if (hasRam) {
+      selected.ram = 1;
+      usedPop += unitPop.ram;
+    } else {
+      selected.catapult = 1;
+      usedPop += unitPop.catapult;
+    }
+
+    for (var i = 0; i < fakePriority.length && usedPop < maxPop; i++) {
+      var unitName = fakePriority[i];
+      var have = availableUnits[unitName] || 0;
+      if (have <= 0) continue;
+      var already = selected[unitName] || 0;
+      var remaining = have - already;
+      if (remaining <= 0) continue;
+      var pop = unitPop[unitName] || 1;
+      var canTake = Math.floor((maxPop - usedPop) / pop);
+      var count = Math.min(remaining, canTake);
+      if (count > 0) {
+        selected[unitName] = already + count;
+        usedPop += count * pop;
+      }
+    }
+    return selected;
+  }
+
+  function selectUnitsForFake(availableUnits, fakeLimitPct) {
+    if (unitMode === 'random') {
+      return selectRandomUnits(availableUnits, fakeLimitPct);
+    }
+    return selectManualUnits(availableUnits, fakeLimitPct);
   }
 
   // ============ CHECK PAGE ============
@@ -208,13 +252,13 @@
 
     var h = '<div style="text-align:center;margin-bottom:12px;">';
     h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake - Konfigurácia</h2>';
-    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.1 — ' + targets.length + ' cieľov načítaných</p>';
+    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.2 — ' + targets.length + ' cieľov načítaných</p>';
     h += '</div>';
 
     // Mode toggle
     h += '<div style="margin-bottom:10px;padding:8px;background:#e8d5a3;border-radius:4px;">';
     h += '<label style="font-weight:bold;">Režim jednotiek:</label><br/>';
-    h += '<label style="cursor:pointer;margin-right:12px;"><input type="radio" name="tw-mode" value="random" checked /> 🎲 Random šablóny</label>';
+    h += '<label style="cursor:pointer;margin-right:12px;"><input type="radio" name="tw-mode" value="random" checked /> 🎲 Random (odporúčané)</label>';
     h += '<label style="cursor:pointer;"><input type="radio" name="tw-mode" value="manual" /> ✏️ Manuálny</label>';
     h += '</div>';
 
@@ -222,7 +266,7 @@
     h += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">';
     h += '<tr><td style="padding:3px;font-weight:bold;">Fake limit (%):</td>';
     h += '<td><input id="tw-cfg-fakelimit" type="number" value="0.5" step="0.1" min="0.1" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div id="tw-manual-note" style="font-size:9px;color:#8b7355;">Používa sa len v manuálnom režime</div></td></tr>';
+    h += '<div style="font-size:9px;color:#8b7355;">% z populácie dediny = max veľkosť fake útoku</div></td></tr>';
 
     h += '<tr><td style="padding:3px;font-weight:bold;">Open tabs:</td>';
     h += '<td><input id="tw-cfg-opentabs" type="number" value="5" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
@@ -288,7 +332,7 @@
     showControlPanel(attackQueue);
   }
 
-  // ============ VILLAGE PARSING ============
+  // ============ VILLAGE PARSING (z Kombinovanej stránky) ============
   function parseVillagesFromCombined() {
     var result = [];
     var rows = document.querySelectorAll('#combined_table tr.row_a, #combined_table tr.row_b');
@@ -335,66 +379,6 @@
       }
     }
     return result;
-  }
-
-  // ============ UNIT SELECTION ============
-  function selectUnitsForFake(availableUnits, fakeLimitPct) {
-    if (unitMode === 'random') {
-      return selectRandomTemplate(availableUnits);
-    }
-
-    // Manual mode
-    var hasSpy = (availableUnits.spy || 0) > 0;
-    var hasRam = (availableUnits.ram || 0) > 0;
-    var hasCat = (availableUnits.catapult || 0) > 0;
-    if (!hasSpy || (!hasRam && !hasCat)) return {};
-
-    var totalPop = 0;
-    for (var u in availableUnits) {
-      totalPop += availableUnits[u] * (unitPop[u] || 1);
-    }
-
-    var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var maxPop = Math.ceil(totalPop * (fakeLimitPct / 100));
-    if (maxPop < requiredPop) maxPop = requiredPop;
-
-    var selected = {};
-    var usedPop = 0;
-
-    // Overenie: spy musí byť dostupný
-    if ((availableUnits.spy || 0) < 1) return {};
-    selected.spy = 1;
-    usedPop += unitPop.spy;
-
-    if (hasRam) {
-      if ((availableUnits.ram || 0) < 1) return {};
-      selected.ram = 1;
-      usedPop += unitPop.ram;
-    } else {
-      if ((availableUnits.catapult || 0) < 1) return {};
-      selected.catapult = 1;
-      usedPop += unitPop.catapult;
-    }
-
-    for (var i = 0; i < fakePriority.length && usedPop < maxPop; i++) {
-      var unitName = fakePriority[i];
-      var have = availableUnits[unitName] || 0;
-      if (have <= 0) continue;
-
-      var already = selected[unitName] || 0;
-      var remaining = have - already;
-      if (remaining <= 0) continue;
-
-      var pop = unitPop[unitName] || 1;
-      var canTake = Math.floor((maxPop - usedPop) / pop);
-      var count = Math.min(remaining, canTake);
-
-      if (count > 0) {
-        selected[unitName] = already + count;
-        usedPop += count * pop;
-      }
-    }
-    return selected;
   }
 
   // ============ HELPERS ============
@@ -455,20 +439,23 @@
   // ============ BUILD QUEUE ============
   function buildAttackQueue(villageList, targetList, fakeLimitPct) {
     var queue = [];
-    var preparedVillages = [];
 
+    // Pre random mode: filtrujeme dediny ktoré majú špion + baran/katapult
+    // Pre manual mode: predpočítame jednotky
+    var preparedVillages = [];
     for (var i = 0; i < villageList.length; i++) {
+      var v = villageList[i];
       if (unitMode === 'random') {
-        var hasSpy = (villageList[i].units.spy || 0) >= 1;
-        var hasRam = (villageList[i].units.ram || 0) >= 1;
-        var hasCat = (villageList[i].units.catapult || 0) >= 1;
+        var hasSpy = (v.units.spy || 0) >= 1;
+        var hasRam = (v.units.ram || 0) >= 1;
+        var hasCat = (v.units.catapult || 0) >= 1;
         if (hasSpy && (hasRam || hasCat)) {
-          preparedVillages.push({ village: villageList[i], units: null });
+          preparedVillages.push({ village: v, units: null });
         }
       } else {
-        var chosen = selectUnitsForFake(villageList[i].units, fakeLimitPct);
+        var chosen = selectUnitsForFake(v.units, fakeLimitPct);
         if (Object.keys(chosen).length) {
-          preparedVillages.push({ village: villageList[i], units: chosen });
+          preparedVillages.push({ village: v, units: chosen });
         }
       }
     }
@@ -501,9 +488,10 @@
           var tKey = target.x + '|' + target.y;
           if ((targetCounts[tKey] || 0) >= targetCap) continue;
 
+          // V random mode generujeme jednotky čerstvo pre každý útok
           var attackUnits;
           if (unitMode === 'random') {
-            attackUnits = selectRandomTemplate(pv.village.units);
+            attackUnits = selectUnitsForFake(pv.village.units, fakeLimitPct);
             if (!Object.keys(attackUnits).length) continue;
           } else {
             attackUnits = pv.units;
