@@ -1,11 +1,10 @@
-// TW Fake Launcher v3 - Coord Tabs + localStorage
-// Generuje bookmarklet s cieľmi, launcher len zbiera coordy
+// TW Fake Generator v3 - Generuje bookmarklet s GitHub executor URL
+// Coord Tabs + localStorage
 
 (function() {
   'use strict';
 
-  var MAIN_SCRIPT_CDN = 'https://cdn.jsdelivr.net/gh/dusanG227/tw-scripts@main/fakeScriptMain.js';
-  var MAIN_SCRIPT_RAW = 'https://raw.githubusercontent.com/dusanG227/tw-scripts/main/fakeScriptMain.js';
+  var EXECUTOR_URL = 'https://raw.githubusercontent.com/dusanG227/tw-scripts/main/fakeScriptMain.js';
   var LS_KEY = 'tw_fake_coord_tabs';
 
   var old = document.getElementById('tw-fake-launcher');
@@ -47,7 +46,7 @@
   function render() {
     var html = '<div style="text-align:center;margin-bottom:12px;">';
     html += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake Generator</h2>';
-    html += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.0 — coord tabs + random šablóny</p>';
+    html += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.1 — coord tabs + GitHub executor</p>';
     html += '</div>';
 
     // World ID
@@ -103,8 +102,8 @@
     html += '</div>';
 
     html += '<div style="margin-top:8px;padding:8px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:10px;">';
-    html += '<p style="margin:0;">✅ Konfigurácia (fake limit, tabs, max/cieľ...) sa nastavuje v <b>hlavnom paneli</b> po spustení.</p>';
-    html += '<p style="margin:2px 0 0;">🎲 Podporuje <b>random šablóny</b> aj <b>manuálny režim</b>.</p>';
+    html += '<p style="margin:0;">✅ Nastavenia (fake limit, tabs, max/cieľ...) sa nakonfigurujú v <b>hlavnom paneli</b> pri spustení.</p>';
+    html += '<p style="margin:2px 0 0;">🎲 Podporuje <b>random režim</b> aj <b>manuálny režim</b>.</p>';
     html += '</div>';
 
     panel.innerHTML = html;
@@ -125,7 +124,6 @@
     var tabNames = panel.querySelectorAll('.tw-tab-name');
     for (var i = 0; i < tabNames.length; i++) {
       tabNames[i].addEventListener('click', function() {
-        // Save current before switching
         saveCurrentCoords();
         activeTab = parseInt(this.getAttribute('data-tab'), 10);
         render();
@@ -247,17 +245,7 @@
 
     var loader = "(function(){" +
       "window._twFakeData='" + encoded + "';" +
-      "var cdn='" + MAIN_SCRIPT_CDN + "';" +
-      "var raw='" + MAIN_SCRIPT_RAW + "';" +
-      "var done=false;" +
-      "function fail(){if(done)return;done=true;alert('❌ Nepodarilo sa načítať fakeScriptMain.js');}" +
-      "function loadScript(url,onError){var s=document.createElement('script');s.src=url+'?v='+Date.now();s.async=true;s.onload=function(){done=true;};s.onerror=onError;document.head.appendChild(s);}" +
-      "loadScript(cdn,function(){" +
-        "fetch(raw+'?v='+Date.now())" +
-        ".then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();})" +
-        ".then(function(code){(0,eval)(code);done=true;})" +
-        ".catch(function(){loadScript(raw,fail);});" +
-      "});" +
+      "$.getScript('" + EXECUTOR_URL + "?' + Date.now());" +
     "})();";
 
     return 'javascript:' + loader + 'void(0);';
