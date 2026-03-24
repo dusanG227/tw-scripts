@@ -303,7 +303,7 @@
 
     var p = document.createElement('div');
     p.id = 'tw-fake-config';
-    p.style.cssText = 'pozícia:pevná;hore:50%;ľavý:50%;transformovať:preložiť(-50%,-50%);z-index:99999;pozadie:#f4e4bc;hranica:2px pevné #7d510f;hranica-polomer:8px;padding:20px;font-rodina:Verdana,sans-serif;font-veľkosť:12px;farba:#3e2b0d;šírka:440px;max-výška:90vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
+    p.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:20px;font-family:Verdana,sans-serif;font-size:12px;color:#3e2b0d;width:440px;max-height:90vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
 
     var h = '<div style="text-align:center;margin-bottom:12px;">';
     h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">🎯 TW Fake - Konfigurácia</h2>';
@@ -637,7 +637,7 @@
     
     var panel = document.createElement('div');
     panel.id = 'tw-fake-panel';
-    panel.style.cssText = 'pozícia:pevná;hore:10px;vpravo:10px;z-index:99999;pozadie:#f4e4bc;hranica:2px pevné #7d510f;hranica-polomer:8px;vyplnenie:15px;font-rodina:Verdana,sans-serif;font-veľkosť:11px;farba:#3e2b0d;šírka:420px;max-výška:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
+    panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:420px;max-height:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
     
     var h = '<div style="text-align:center;margin-bottom:8px;"><h3 style="margin:0;color:#7d510f;">🎯 Fake Attack Queue</h3></div>';
     h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px;">';
@@ -650,7 +650,7 @@
     }
     h += '</div>';
     
-    h += '<div style="max-výška:250px;overflow-y:auto;border:1px solid #d4a574;border-radius:4px;margin-bottom:8px;">';
+    h += '<div style="max-height:250px;overflow-y:auto;border:1px solid #d4a574;border-radius:4px;margin-bottom:8px;">';
     for (var i = 0; i < Math.min(queue.length, 30); i++) {
       var atk = queue[i];
       var uStr = Object.keys(atk.units).map(function(k) {
