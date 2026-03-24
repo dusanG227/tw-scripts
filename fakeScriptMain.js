@@ -21,7 +21,7 @@
   var arrivalStart = config.arrivalStart ? nový dátum(config.arrivalStart) : null;
   var príchodKoniec = config.arrivalKoniec ? nový dátum(config.arrivalEnd) : null;
 
-  var fakeLimit = 0.5;
+  var fakeLimit = 2;  // Zvýšená default hodnota - 2% (namiesto 0.5%)
   var openTabs = 5;
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
@@ -135,10 +135,11 @@
     if (!selected.ram && !selected.catapult) return {};
 
     // 3. Vyplnenie - všetky dostupné jednotky
-    // Rozpočet je AGRESÍVNEJŠÍ - až 5% populácie na fejk
-    var budgetLimit = Math.ceil(totalPop * Math.min(5, fakeLimitPct * 10));  // Minimálne 5% alebo 10x límit
-    budgetLimit = Math.max(budgetLimit, usedPop + 50);  // Minimálne 50 pop viac
-    budgetLimit = Math.min(budgetLimit, totalPop);
+    // OPRAVENÉ: budgetLimit počítame ako percento z populácie
+    // Minimálne 100 pop na fejk (3-6 spy + 1-3 ram/cat + ostatné)
+    var budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
+    if (budgetLimit < 100) budgetLimit = 100;  // Minimálne 100 pop
+    budgetLimit = Math.min(budgetLimit, totalPop);  // Maximálne dostupná populácia
 
     var fillers = [];
     for (var unitName in availableUnits) {
@@ -154,13 +155,23 @@
       if (available <= 0) continue;
 
       var fp = unitPop[fn] || 1;
-      var canAfford = Math.floor((budgetLimit - usedPop) / fp);
+      var remaining = budgetLimit - usedPop;  // Koľko pop ešte chýba
+      var canAfford = Math.floor(remaining / fp);
       var toAdd = Math.min(available, canAfford);
 
       if (toAdd > 0) {
-        // AGRESÍVNY VÝBER: 40-100% dostupných jednotiek
-        var minAmount = Math.max(1, Math.floor(toAdd * 0.4));
-        var maxAmount = toAdd;
+        // SMART FILLING: ak chýba málo, zoberieme všetko; ak chýba viac, náhodne 10-100%
+        var minAmount, maxAmount;
+        if (remaining <= fp * 5) {
+          // Ak chýba málo (max 5 jednotiek), zoberieme všetko čo chýba
+          minAmount = Math.max(1, Math.ceil(remaining / fp));
+          maxAmount = toAdd;
+        } else {
+          // Ak chýba viac, zoberieme 10-100% s náhodnosťou
+          minAmount = Math.max(1, Math.floor(toAdd * 0.1));
+          maxAmount = toAdd;
+        }
+        
         var randomAmount = randInt(minAmount, maxAmount);
         selected[fn] = randomAmount;
         usedPop += randomAmount * fp;
@@ -217,11 +228,11 @@
       usedPop += unitPop.catapult * catCount;
     }
 
-    var budgetLimit = Math.ceil(totalPop * Math.min(5, fakeLimitPct * 10));  // Minimálne 5% alebo 10x límit
-    budgetLimit = Math.max(budgetLimit, usedPop + 50);
+    var budgetLimit = Math.ceil(totalPop * (fakeLimitPct / 100));
+    if (budgetLimit < 100) budgetLimit = 100;  // Minimálne 100 pop
     budgetLimit = Math.min(budgetLimit, totalPop);
 
-    // 3. Vyplnenie podľa priority - AGRESÍVNY VÝBER
+    // 3. Vyplnenie podľa priority - SMART FILLING
     for (var i = 0; i < fakePriority.length && usedPop < budgetLimit; i++) {
       var un = fakePriority[i];
       var máš = availableUnits[un] || 0;
@@ -231,13 +242,23 @@
       if (selected[un]) continue;
       
       var pop = unitPop[un] || 1;
-      var canTake = Math.floor((budgetLimit - usedPop) / pop);
+      var remaining = budgetLimit - usedPop;  // Koľko pop ešte chýba
+      var canTake = Math.floor(remaining / pop);
       var cnt = Math.min(máš, canTake);
       
       if (cnt > 0) {
-        // AGRESÍVNY VÝBER: 40-100% dostupného množstva
-        var minAmount = Math.max(1, Math.floor(cnt * 0.4));
-        var maxAmount = cnt;
+        // SMART FILLING: ak chýba málo, zoberieme všetko; ak chýba viac, náhodne 10-100%
+        var minAmount, maxAmount;
+        if (remaining <= pop * 5) {
+          // Ak chýba málo (max 5 jednotiek), zoberieme všetko čo chýba
+          minAmount = Math.max(1, Math.ceil(remaining / pop));
+          maxAmount = cnt;
+        } else {
+          // Ak chýba viac, zoberieme 10-100% s náhodnosťou
+          minAmount = Math.max(1, Math.floor(cnt * 0.1));
+          maxAmount = cnt;
+        }
+        
         var randomAmount = randInt(minAmount, maxAmount);
         selected[un] = randomAmount;
         usedPop += randomAmount * pop;
@@ -297,8 +318,8 @@
 
     h += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">';
     h += '<tr><td style="padding:3px;font-weight:bold;">Falošný limit (%):</td>';
-    h += '<td><input id="tw-cfg-fakelimit" type="number" value="0.5" step="0.1" min="0.1" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">% z populácie dediny</div></td></tr>';
+    h += '<td><input id="tw-cfg-fakelimit" type="number" value="2" step="0.5" min="0.5" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
+    h += '<div style="font-size:9px;color:#8b7355;">% z populácie dediny na fejk</div></td></tr>';
     
     h += '<tr><td style="padding:3px;font-weight:bold;">Otvoriť karty:</td>';
     h += '<td><input id="tw-cfg-opentabs" type="number" value="5" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;"/></td></tr>';
@@ -331,7 +352,7 @@
     };
     
     document.getElementById('tw-cfg-start').onclick = function() {
-      fakeLimit = parseFloat(document.getElementById('tw-cfg-fakelimit').value) || 0.5;
+      fakeLimit = parseFloat(document.getElementById('tw-cfg-fakelimit').value) || 2;
       openTabs = parseInt(document.getElementById('tw-cfg-opentabs').value, 10) || 5;
       maxFakesPerTarget = parseInt(document.getElementById('tw-cfg-maxpertarget').value, 10) || 0;
       maxFakesPerVillage = parseInt(document.getElementById('tw-cfg-maxpervillage').value, 10) || 0;
