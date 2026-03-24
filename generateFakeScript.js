@@ -58,7 +58,7 @@
       dbName: dbName
     }))));
 
-    var bookmarklet = "javascript:var _twSetup='" + setupData + "';$.getScript('${executorUrl}');void(0);";
+    var bookmarklet = "javascript:var _twSetup='" + setupData + "';$.getScript('https://raw.githubusercontent.com/dusanG227/tw-scripts/refs/heads/main/fakeScriptMain.js');void(0);";
 
     document.getElementById('tw-output').style.display = 'block';
     document.getElementById('tw-result').value = bookmarklet;
