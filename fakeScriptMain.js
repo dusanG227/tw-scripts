@@ -92,39 +92,38 @@
     var selected = {};
     var usedPop = 0;
 
-    // 1. Povinný špeha (1-4 náhodne, podľa dostupnosti a budgetu)
+    // 1. Povinný špeha — prísne v rámci budgetu
     var maxSpy = Math.min(4, availableUnits.spy || 0, Math.floor((popBudget - minRequired + unitPop.spy) / unitPop.spy));
-    selected.spy = randInt(1, Math.max(1, maxSpy));
+    if (maxSpy < 1) return {};
+    selected.spy = randInt(1, maxSpy);
     usedPop += selected.spy * unitPop.spy;
 
-    // 2. Baran a/alebo katapult — náhodne kombinácia
+    // 2. Baran a/alebo katapult — prísne v rámci zostatkového budgetu
     if (hasRam && hasCat) {
-      // Náhodne: len baran, len katapult, alebo oboje
       var combo = randInt(0, 2);
-      if (combo !== 1 && usedPop + unitPop.ram <= popBudget) { // baran
-        var maxRam = Math.min(availableUnits.ram, Math.floor((popBudget - usedPop) / unitPop.ram));
-        selected.ram = randInt(1, Math.max(1, Math.min(6, maxRam)));
-        usedPop += selected.ram * unitPop.ram;
+      if (combo !== 1) { // baran
+        var maxRam = Math.min(availableUnits.ram, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.ram)));
+        if (maxRam >= 1) { selected.ram = randInt(1, maxRam); usedPop += selected.ram * unitPop.ram; }
       }
-      if (combo !== 0 && usedPop + unitPop.catapult <= popBudget) { // katapult
-        var maxCat = Math.min(availableUnits.catapult, Math.floor((popBudget - usedPop) / unitPop.catapult));
-        selected.catapult = randInt(1, Math.max(1, Math.min(6, maxCat)));
-        usedPop += selected.catapult * unitPop.catapult;
+      if (combo !== 0) { // katapult
+        var maxCat = Math.min(availableUnits.catapult, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.catapult)));
+        if (maxCat >= 1) { selected.catapult = randInt(1, maxCat); usedPop += selected.catapult * unitPop.catapult; }
       }
     } else if (hasRam) {
-      var maxRam = Math.min(availableUnits.ram, Math.floor((popBudget - usedPop) / unitPop.ram));
-      selected.ram = randInt(1, Math.max(1, Math.min(6, maxRam)));
+      var maxRam = Math.min(availableUnits.ram, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.ram)));
+      if (maxRam < 1) return {};
+      selected.ram = randInt(1, maxRam);
       usedPop += selected.ram * unitPop.ram;
     } else {
-      var maxCat = Math.min(availableUnits.catapult, Math.floor((popBudget - usedPop) / unitPop.catapult));
-      selected.catapult = randInt(1, Math.max(1, Math.min(6, maxCat)));
+      var maxCat = Math.min(availableUnits.catapult, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.catapult)));
+      if (maxCat < 1) return {};
+      selected.catapult = randInt(1, maxCat);
       usedPop += selected.catapult * unitPop.catapult;
     }
 
     // Overenie: musíme mať aspoň ram alebo catapult
     if (!selected.ram && !selected.catapult) return {};
 
-    // 3. Zvyšok budgetu rozdeliť náhodne medzi ostatné dostupné jednotky
     // Zostavíme zoznam kandidátov (okrem spy, ram, catapult, knight, snob, militia)
     var fillers = [];
     for (var unitName in availableUnits) {
