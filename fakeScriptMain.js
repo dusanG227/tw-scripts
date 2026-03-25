@@ -139,7 +139,7 @@
       var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
     }
 
-    // Prideľ náhodné množstvo každého fillera v rámci budgetu
+    // Vyplň budget čo najbližšie k fake limitu — vždy pridaj jednotky, náhodné poradie zaručí variáciu
     for (var fi = 0; fi < fillers.length && usedPop < popBudget; fi++) {
       var fn = fillers[fi];
       var fp = unitPop[fn] || 1;
@@ -147,12 +147,24 @@
       if (canAfford <= 0) continue;
       var maxUnits = Math.min(availableUnits[fn], canAfford);
       if (maxUnits <= 0) continue;
-      // Náhodne či vôbec pridáme (50% šanca), a koľko
-      if (Math.random() < 0.5) {
-        var count = randInt(1, maxUnits);
-        selected[fn] = count;
-        usedPop += count * fp;
-      }
+      // Vždy pridaj — náhodne koľko (1 až max), ale vždy aspoň 1
+      var count = randInt(1, maxUnits);
+      selected[fn] = count;
+      usedPop += count * fp;
+    }
+
+    // Ak ešte ostáva budget, skús doplniť náhodné jednotky na maximum
+    for (var fi2 = 0; fi2 < fillers.length && usedPop < popBudget; fi2++) {
+      var fn2 = fillers[fi2];
+      var fp2 = unitPop[fn2] || 1;
+      var already2 = selected[fn2] || 0;
+      var remaining2 = (availableUnits[fn2] || 0) - already2;
+      if (remaining2 <= 0) continue;
+      var canAfford2 = Math.floor((popBudget - usedPop) / fp2);
+      if (canAfford2 <= 0) continue;
+      var add = Math.min(remaining2, canAfford2);
+      selected[fn2] = already2 + add;
+      usedPop += add * fp2;
     }
 
     // Validácia: žiadna jednotka nesmie presiahnuť dostupné množstvo
