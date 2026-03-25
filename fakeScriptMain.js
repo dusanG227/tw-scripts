@@ -25,7 +25,7 @@
   var openTabs = 5;
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
-  var unitMode = 'random';
+  var unitMode = 'min'; // Single mode: all units are set to minimum (Costache-like)
 
   function log(msg) {
     console.log('[TW-Fake] ' + msg);
@@ -39,7 +39,7 @@
 
   var unitSpeed = {
     spear: 18, sword: 22, axe: 18, archer: 18,
-    spy: 9, light: 10, marcher: 10, heavy: 11,
+    spy: 9, light: 4, marcher: 10, heavy: 11,
     ram: 30, catapult: 30, knight: 10, snob: 35
   };
 
@@ -281,7 +281,77 @@
     return selected;
   }
 
+  function selectMinUnits(availableUnits, fakeLimitPct, villagePoints) {
+    if (!availableUnits || (availableUnits.spy || 0) < 3) return {};
+
+    var selected = {};
+    var usedPop = 0;
+
+    // 1. Špehovia (minimálne 3)
+    var spyCount = 3;
+    selected.spy = spyCount;
+    usedPop += spyCount * unitPop.spy;
+
+    // 2. Katapult (minimálne 3) ak sú dostupné, inak ram 1
+    if ((availableUnits.catapult || 0) >= 3) {
+      selected.catapult = 3;
+      usedPop += 3 * unitPop.catapult;
+    } else if ((availableUnits.ram || 0) >= 1) {
+      selected.ram = 1;
+      usedPop += 1 * unitPop.ram;
+    } else if ((availableUnits.catapult || 0) >= 1) {
+      selected.catapult = availableUnits.catapult;
+      usedPop += selected.catapult * unitPop.catapult;
+    } else {
+      return {}; // Nemôžeme robiť fake bez ram/katapult
+    }
+
+    // 3. Budget limit (z bodov dediny alebo populácie)
+    var budgetLimit;
+    if (villagePoints && villagePoints > 0) {
+      budgetLimit = Math.ceil(villagePoints * (fakeLimitPct / 100));
+    } else {
+      budgetLimit = Math.ceil(Object.keys(availableUnits).reduce(function(sum, u) {
+        return sum + (availableUnits[u] || 0) * (unitPop[u] || 1);
+      }, 0) * (fakeLimitPct / 100));
+    }
+    if (budgetLimit < 100) budgetLimit = 100;
+    budgetLimit = Math.min(budgetLimit, Object.keys(availableUnits).reduce(function(sum, u) {
+      return sum + (availableUnits[u] || 0) * (unitPop[u] || 1);
+    }, 0));
+
+    // 4. Vyplnenie limitu s minimálnym počtom jednotiek (podľa priority, bez baranu)
+    var fillers = ['kopija', 'meč', 'sekera', 'lukostrelec', 'ľahký', 'pochodujúci', 'ťažký', 'katapult'];
+    for (var i = 0; i < fillers.length && usedPop < budgetLimit; i++) {
+      var unit = fillers[i];
+      if (exclusiveUnits[unit] || unit === 'spy' || unit === 'ram') continue; // baran nie je súčasťou min režimu
+      var available = availableUnits[unit] || 0;
+      if (available <= 0) continue;
+
+      var popPerUnit = unitPop[unit] || 1;
+      var remainingPop = budgetLimit - usedPop;
+      var maxCanTake = Math.floor(remainingPop / popPerUnit);
+      var toTake = Math.min(available, maxCanTake);
+
+      if (toTake > 0) {
+        selected[unit] = toTake;
+        usedPop += toTake * popPerUnit;
+      }
+    }
+
+    // Finálna validácia
+    for (var k in selected) {
+      if (selected[k] > (availableUnits[k] || 0)) return {};
+      if (selected[k] <= 0) delete selected[k];
+    }
+
+    return selected;
+  }
+
   function selectUnitsForFake(availableUnits, fakeLimitPct, targetPoints, villagePoints) {
+    if (unitMode === 'min') {
+      return selectMinUnits(availableUnits, fakeLimitPct, villagePoints);
+    }
     if (unitMode === 'náhodný') {
       return selectRandomUnits(availableUnits, fakeLimitPct, targetPoints, villagePoints);
     }
@@ -350,9 +420,7 @@
     h += '</div>';
 
     h += '<div style="margin-bottom:10px;padding:8px;background:#e8d5a3;border-radius:4px;">';
-    h += '<label style="font-weight:bold;">Režim jednotiek:</label><br/>';
-    h += '<label style="cursor:pointer;margin-right:12px;"><input type="radio" name="tw-mode" value="náhodný" checked /> 🎲 Náhodný (odporúčané)</label>';
-    h += '<label style="cursor:pointer;"><input type="radio" name="tw-mode" value="manuálny" /> ⚙️ Manuálny</label>';
+    h += '<b>Režim jednotiek:</b> min (fixné, Costache štýl)';
     h += '</div>';
 
     h += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">';
@@ -396,13 +464,7 @@
       maxFakesPerTarget = parseInt(document.getElementById('tw-cfg-maxpertarget').value, 10) || 0;
       maxFakesPerVillage = parseInt(document.getElementById('tw-cfg-maxpervillage').value, 10) || 0;
       
-      var modeRadios = document.querySelectorAll('input[name="tw-mode"]');
-      for (var i = 0; i < modeRadios.length; i++) {
-        if (modeRadios[i].checked) {
-          unitMode = modeRadios[i].value;
-          break;
-        }
-      }
+      // režim 'min' je pevný a nastavený v globalnej premennej
       p.remove();
       runFakeAttacks();
     };
@@ -512,7 +574,7 @@
       if (cells.length <= bodovIndex) continue;
 
       // Nájdi ID dediny - zwäčša v href atribúte
-      var villageLink = row.querySelector('a[href*="dedina="], a[href*="village="]');
+      var villageLink = row.querySelector('.quickedit-content a[href*="dedina="], a[href*="dedina="]');
       var villageId = null;
       
       if (villageLink) {
@@ -691,7 +753,7 @@
     for (var i = 0; i < villageList.length; i++) {
       var v = villageList[i];
       if (unitMode === 'náhodný') {
-        // Kontrola: dedina má minimálne 3 špionov a aspoň ram alebo katapult
+        // Kontrola: dedina má minimálne 3 špehovia a aspoň ram alebo katapult
         if ((v.units.spy || 0) >= 3 && ((v.units.ram || 0) >= 1 || (v.units.catapult || 0) >= 1)) {
           preparedVillages.push({village: v, units: null});
         }
@@ -747,6 +809,9 @@
             }
             attackUnits = best || {};
             if (!Object.keys(attackUnits).length) continue;
+          } else if (unitMode === 'min') {
+            attackUnits = selectMinUnits(pv.village.units, fakeLimitPct, pv.village.points);
+            if (!Object.keys(attackUnits).length) continue;
           } else {
             attackUnits = pv.units;
           }
@@ -788,7 +853,7 @@
     
     var h = '<div style="text-align:center;margin-bottom:8px;"><h3 style="margin:0;color:#7d510f;">🎯 Fake Attack Queue</h3></div>';
     h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px;">';
-    h += '<b>' + queue.length + '</b> útokov | <b>' + (unitMode === 'náhodný' ? '🎲 Náhodný' : '⚙️ Manuálny') + '</b><br/>';
+    h += '<b>' + queue.length + '</b> útokov | <b>🔻 Min (fikčná verzia)</b><br/>';
     h += 'Falošný limit: <b>' + fakeLimit + '%</b> z bodov | Karty: <b>' + openTabs + '</b>';
     if (maxFakesPerTarget > 0) h += '<br/>Max/cieľ: <b>' + maxFakesPerTarget + '</b>';
     if (maxFakesPerVillage > 0) h += ' | Max/dedina: <b>' + maxFakesPerVillage + '</b>';
