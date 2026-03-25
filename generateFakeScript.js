@@ -1,10 +1,10 @@
-// TW Fake Generator v3 - Generuje bookmarklet s GitHub executor URL
-// Coord Tabs + localStorage
+// TW Fake Launcher v3 - Coord Tabs + localStorage
+// Generuje bookmarklet s cieľmi, launcher len zbiera coordy
 
 (function() {
   'use strict';
 
-  var EXECUTOR_URL = 'https://raw.githubusercontent.com/dusanG227/tw-scripts/main/fakeScriptMain.js';
+  var MAIN_SCRIPT_RAW = 'https://raw.githubusercontent.com/dusanG227/tw-scripts/main/fakeScriptMain.js';
   var LS_KEY = 'tw_fake_coord_tabs';
 
   var old = document.getElementById('tw-fake-launcher');
@@ -46,7 +46,7 @@
   function render() {
     var html = '<div style="text-align:center;margin-bottom:12px;">';
     html += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake Generator</h2>';
-    html += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.1 — coord tabs + GitHub executor</p>';
+    html += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.2 — coord tabs + slobodný random výber</p>';
     html += '</div>';
 
     // World ID
@@ -102,8 +102,8 @@
     html += '</div>';
 
     html += '<div style="margin-top:8px;padding:8px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:10px;">';
-    html += '<p style="margin:0;">✅ Nastavenia (fake limit, tabs, max/cieľ...) sa nakonfigurujú v <b>hlavnom paneli</b> pri spustení.</p>';
-    html += '<p style="margin:2px 0 0;">🔻 Režim jednotiek: min (Costache-style fixed minimal units).</p>';
+    html += '<p style="margin:0;">✅ Konfigurácia (fake limit, tabs, max/cieľ...) sa nastavuje v <b>hlavnom paneli</b> po spustení.</p>';
+    html += '<p style="margin:2px 0 0;">🎲 Slobodný random výber jednotiek — paladín a šľachtic sú vylúčení.</p>';
     html += '</div>';
 
     panel.innerHTML = html;
@@ -191,7 +191,6 @@
       saveTabs();
 
       var allCoords = [];
-      // Collect coords from ALL tabs
       for (var t = 0; t < coordTabs.length; t++) {
         var coordRegex = /(\d{3})\|(\d{3})/g;
         var m;
@@ -240,12 +239,16 @@
     }
   }
 
+  // OPRAVA: fetch+eval namiesto $.getScript — žiadne CORS problémy, žiadna závislosť na jQuery
   function makeBookmarklet(configObj) {
     var encoded = btoa(unescape(encodeURIComponent(JSON.stringify(configObj))));
 
     var loader = "(function(){" +
       "window._twFakeData='" + encoded + "';" +
-      "$.getScript('" + EXECUTOR_URL + "?' + Date.now());" +
+      "fetch('" + MAIN_SCRIPT_RAW + "?v='+Date.now())" +
+      ".then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();})" +
+      ".then(function(code){(0,eval)(code);})" +
+      ".catch(function(e){alert('\u274c Nepodarilo sa načítať fakeScriptMain.js: '+e.message);});" +
     "})();";
 
     return 'javascript:' + loader + 'void(0);';
