@@ -103,7 +103,7 @@
 
     html += '<div style="margin-top:8px;padding:8px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:10px;">';
     html += '<p style="margin:0;">✅ Nastavenia (fake limit, tabs, max/cieľ...) sa nakonfigurujú v <b>hlavnom paneli</b> pri spustení.</p>';
-    html += '<p style="margin:2px 0 0;">🎲 Podporuje <b>random režim</b> aj <b>manuálny režim</b>.</p>';
+    html += '<p style="margin:2px 0 0;">🔻 Režim jednotiek: min (Costache-style fixed minimal units).</p>';
     html += '</div>';
 
     panel.innerHTML = html;
