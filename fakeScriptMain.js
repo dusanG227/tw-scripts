@@ -81,13 +81,13 @@
     var hasCat = (availableUnits.catapult || 0) >= 1;
     if (!hasSpy || (!hasRam && !hasCat)) return {};
 
-    // Pop budget podľa fake limitu
+    // Pop budget = všetky dostupné jednotky v dedine
     var totalPop = 0;
     for (var u in availableUnits) {
       totalPop += availableUnits[u] * (unitPop[u] || 1);
     }
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var popBudget = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired);
+    var popBudget = Math.max(totalPop, minRequired);
 
     var selected = {};
     var usedPop = 0;
@@ -102,20 +102,20 @@
     if (hasRam && hasCat) {
       var combo = randInt(0, 2);
       if (combo !== 1) { // baran
-        var maxRam = Math.min(availableUnits.ram, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.ram)));
+        var maxRam = Math.min(availableUnits.ram, Math.min(4, Math.floor((popBudget - usedPop) / unitPop.ram)));
         if (maxRam >= 1) { selected.ram = randInt(1, maxRam); usedPop += selected.ram * unitPop.ram; }
       }
       if (combo !== 0) { // katapult
-        var maxCat = Math.min(availableUnits.catapult, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.catapult)));
+        var maxCat = Math.min(availableUnits.catapult, Math.min(4, Math.floor((popBudget - usedPop) / unitPop.catapult)));
         if (maxCat >= 1) { selected.catapult = randInt(1, maxCat); usedPop += selected.catapult * unitPop.catapult; }
       }
     } else if (hasRam) {
-      var maxRam = Math.min(availableUnits.ram, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.ram)));
+      var maxRam = Math.min(availableUnits.ram, Math.min(4, Math.floor((popBudget - usedPop) / unitPop.ram)));
       if (maxRam < 1) return {};
       selected.ram = randInt(1, maxRam);
       usedPop += selected.ram * unitPop.ram;
     } else {
-      var maxCat = Math.min(availableUnits.catapult, Math.min(6, Math.floor((popBudget - usedPop) / unitPop.catapult)));
+      var maxCat = Math.min(availableUnits.catapult, Math.min(4, Math.floor((popBudget - usedPop) / unitPop.catapult)));
       if (maxCat < 1) return {};
       selected.catapult = randInt(1, maxCat);
       usedPop += selected.catapult * unitPop.catapult;
