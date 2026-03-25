@@ -81,13 +81,13 @@
     var hasCat = (availableUnits.catapult || 0) >= 1;
     if (!hasSpy || (!hasRam && !hasCat)) return {};
 
-    // Pop budget = všetky dostupné jednotky v dedine
+    // Pop budget podľa fake limitu
     var totalPop = 0;
     for (var u in availableUnits) {
       totalPop += availableUnits[u] * (unitPop[u] || 1);
     }
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var popBudget = Math.max(totalPop, minRequired);
+    var popBudget = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired);
 
     var selected = {};
     var usedPop = 0;
@@ -138,32 +138,22 @@
       var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
     }
 
-    // Vyplň budget čo najbližšie k fake limitu — vždy pridaj jednotky, náhodné poradie zaručí variáciu
-    for (var fi = 0; fi < fillers.length && usedPop < popBudget; fi++) {
-      var fn = fillers[fi];
-      var fp = unitPop[fn] || 1;
-      var canAfford = Math.floor((popBudget - usedPop) / fp);
-      if (canAfford <= 0) continue;
-      var maxUnits = Math.min(availableUnits[fn], canAfford);
-      if (maxUnits <= 0) continue;
-      // Vždy pridaj — náhodne koľko (1 až max), ale vždy aspoň 1
-      var count = randInt(1, maxUnits);
-      selected[fn] = count;
-      usedPop += count * fp;
-    }
-
-    // Ak ešte ostáva budget, skús doplniť náhodné jednotky na maximum
-    for (var fi2 = 0; fi2 < fillers.length && usedPop < popBudget; fi2++) {
-      var fn2 = fillers[fi2];
-      var fp2 = unitPop[fn2] || 1;
-      var already2 = selected[fn2] || 0;
-      var remaining2 = (availableUnits[fn2] || 0) - already2;
-      if (remaining2 <= 0) continue;
-      var canAfford2 = Math.floor((popBudget - usedPop) / fp2);
-      if (canAfford2 <= 0) continue;
-      var add = Math.min(remaining2, canAfford2);
-      selected[fn2] = already2 + add;
-      usedPop += add * fp2;
+    // Rozdeľ zostatok budgetu rovnomerne medzi všetky fillery
+    var fillerBudget = popBudget - usedPop;
+    if (fillerBudget > 0 && fillers.length > 0) {
+      var perFiller = Math.floor(fillerBudget / fillers.length);
+      for (var fi = 0; fi < fillers.length; fi++) {
+        var fn = fillers[fi];
+        var fp = unitPop[fn] || 1;
+        var myBudget = (fi === fillers.length - 1)
+          ? (popBudget - usedPop)  // posledný dostane zvyok
+          : perFiller;
+        var maxUnits = Math.min(availableUnits[fn] || 0, Math.floor(myBudget / fp));
+        if (maxUnits <= 0) continue;
+        var count = randInt(1, maxUnits);
+        selected[fn] = count;
+        usedPop += count * fp;
+      }
     }
 
     // Validácia: žiadna jednotka nesmie presiahnuť dostupné množstvo
