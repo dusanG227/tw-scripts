@@ -201,7 +201,7 @@
       if (remaining <= 0) continue;
       var pop = unitPop[unitName] || 1;
       var canTake = Math.floor((maxPop - usedPop) / pop);
-      var count = Math.min(remaining, canTake);
+      var count = Math.min(10, remaining, canTake);
       if (count > 0) {
         selected[unitName] = already + count;
         usedPop += count * pop;
