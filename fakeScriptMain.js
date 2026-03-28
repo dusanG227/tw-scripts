@@ -87,7 +87,7 @@
       totalPop += availableUnits[u] * (unitPop[u] || 1);
     }
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var popBudget = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired);
+    var popBudget = Math.min(51, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired));
 
     var selected = {};
     var usedPop = 0;
@@ -138,22 +138,17 @@
       var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
     }
 
-    // Rozdeľ zostatok budgetu rovnomerne medzi všetky fillery
-    var fillerBudget = popBudget - usedPop;
-    if (fillerBudget > 0 && fillers.length > 0) {
-      var perFiller = Math.floor(fillerBudget / fillers.length);
-      for (var fi = 0; fi < fillers.length; fi++) {
-        var fn = fillers[fi];
-        var fp = unitPop[fn] || 1;
-        var myBudget = (fi === fillers.length - 1)
-          ? (popBudget - usedPop)  // posledný dostane zvyok
-          : perFiller;
-        var maxUnits = Math.min(availableUnits[fn] || 0, Math.floor(myBudget / fp));
-        if (maxUnits <= 0) continue;
-        var count = randInt(1, maxUnits);
-        selected[fn] = count;
-        usedPop += count * fp;
-      }
+    // Rozdeľ zostatok budgetu — každý filler dostane čo zostalo
+    for (var fi = 0; fi < fillers.length; fi++) {
+      var fn = fillers[fi];
+      var fp = unitPop[fn] || 1;
+      var remaining = popBudget - usedPop;
+      if (remaining < fp) break;
+      var maxUnits = Math.min(availableUnits[fn] || 0, Math.floor(remaining / fp));
+      if (maxUnits <= 0) continue;
+      var count = randInt(1, maxUnits);
+      selected[fn] = count;
+      usedPop += count * fp;
     }
 
     // Validácia: žiadna jednotka nesmie presiahnuť dostupné množstvo
@@ -179,7 +174,7 @@
     }
 
     var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var maxPop = Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop);
+    var maxPop = Math.min(51, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop));
 
     var selected = {};
     var usedPop = 0;
