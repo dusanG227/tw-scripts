@@ -87,7 +87,7 @@
       totalPop += availableUnits[u] * (unitPop[u] || 1);
     }
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var popBudget = Math.min(51, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired));
+    var popBudget = Math.min(52, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired));
 
     var selected = {};
     var usedPop = 0;
@@ -176,7 +176,7 @@
     }
 
     var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var maxPop = Math.min(51, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop));
+    var maxPop = Math.min(52, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop));
 
     var selected = {};
     var usedPop = 0;
