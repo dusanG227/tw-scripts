@@ -75,7 +75,7 @@
   // Vyberá jednotky slobodne podľa pop budgetu z fake limitu.
   // Povinné: aspoň 1 špeha + aspoň 1 baran ALEBO katapult (alebo oboje).
   // Zvyšok budgetu sa náhodne rozdeľuje medzi dostupné jednotky.
-  function selectRandomUnits(availableUnits, fakeLimitPct) {
+  function selectRandomUnits(availableUnits, fakeLimitPct, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) >= 1;
     var hasRam = (availableUnits.ram || 0) >= 1;
     var hasCat = (availableUnits.catapult || 0) >= 1;
@@ -87,7 +87,8 @@
       totalPop += availableUnits[u] * (unitPop[u] || 1);
     }
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var popBudget = Math.min(52, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), minRequired));
+    var pointBased = villagePoints > 0 ? Math.ceil(villagePoints * (fakeLimitPct / 100)) : 0;
+    var popBudget = Math.max(minRequired, pointBased || 52);
 
     var selected = {};
     var usedPop = 0;
@@ -164,7 +165,7 @@
   // ============ MANUAL MODE (pôvodná logika, fake limit pop budget) ============
   var fakePriority = ['light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
 
-  function selectManualUnits(availableUnits, fakeLimitPct) {
+  function selectManualUnits(availableUnits, fakeLimitPct, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) > 0;
     var hasRam = (availableUnits.ram || 0) > 0;
     var hasCat = (availableUnits.catapult || 0) > 0;
@@ -176,7 +177,8 @@
     }
 
     var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var maxPop = Math.min(52, Math.max(Math.ceil(totalPop * (fakeLimitPct / 100)), requiredPop));
+    var pointBased2 = villagePoints > 0 ? Math.ceil(villagePoints * (fakeLimitPct / 100)) : 0;
+    var maxPop = Math.max(requiredPop, pointBased2 || 52);
 
     var selected = {};
     var usedPop = 0;
@@ -210,11 +212,11 @@
     return selected;
   }
 
-  function selectUnitsForFake(availableUnits, fakeLimitPct) {
+  function selectUnitsForFake(availableUnits, fakeLimitPct, villagePoints) {
     if (unitMode === 'random') {
-      return selectRandomUnits(availableUnits, fakeLimitPct);
+      return selectRandomUnits(availableUnits, fakeLimitPct, villagePoints);
     }
-    return selectManualUnits(availableUnits, fakeLimitPct);
+    return selectManualUnits(availableUnits, fakeLimitPct, villagePoints);
   }
 
   // ============ CHECK PAGE ============
@@ -352,6 +354,13 @@
       var vx = parseInt(coordMatch[1], 10);
       var vy = parseInt(coordMatch[2], 10);
 
+      // Parse village points
+      var pointsEl = row.querySelector('.points') || row.querySelector('td[class*="point"]');
+      var villagePoints = 0;
+      if (pointsEl) {
+        villagePoints = parseInt((pointsEl.textContent || '').replace(/\D+/g, ''), 10) || 0;
+      }
+
       var unitCells = row.querySelectorAll('td.unit-item');
       if (!unitCells.length) continue;
 
@@ -372,7 +381,7 @@
         result.push({
           id: villageId, x: vx, y: vy,
           name: (coordSource.textContent || '').trim(),
-          units: units, totalPop: totalPop
+          units: units, totalPop: totalPop, points: villagePoints
         });
       }
     }
@@ -451,7 +460,7 @@
           preparedVillages.push({ village: v, units: null });
         }
       } else {
-        var chosen = selectUnitsForFake(v.units, fakeLimitPct);
+        var chosen = selectUnitsForFake(v.units, fakeLimitPct, v.points);
         if (Object.keys(chosen).length) {
           preparedVillages.push({ village: v, units: chosen });
         }
@@ -489,7 +498,7 @@
           // V random mode generujeme jednotky čerstvo pre každý útok
           var attackUnits;
           if (unitMode === 'random') {
-            attackUnits = selectUnitsForFake(pv.village.units, fakeLimitPct);
+            attackUnits = selectUnitsForFake(pv.village.units, fakeLimitPct, pv.village.points);
             if (!Object.keys(attackUnits).length) continue;
           } else {
             attackUnits = pv.units;
