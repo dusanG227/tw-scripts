@@ -138,15 +138,17 @@
       var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
     }
 
-    // Rozdeľ zostatok budgetu — každý filler dostane čo zostalo
+    // Rozdeľ zostatok budgetu — každý filler dostane čo zostalo, max 10 jednotiek jedného typu
     for (var fi = 0; fi < fillers.length; fi++) {
       var fn = fillers[fi];
       var fp = unitPop[fn] || 1;
       var remaining = popBudget - usedPop;
       if (remaining < fp) break;
-      var maxUnits = Math.min(availableUnits[fn] || 0, Math.floor(remaining / fp));
+      var maxUnits = Math.min(10, availableUnits[fn] || 0, Math.floor(remaining / fp));
       if (maxUnits <= 0) continue;
-      var count = randInt(1, maxUnits);
+      // Vyber náhodne ale aspoň polovicu maxima, aby sa budget naplnil
+      var minCount = Math.max(1, Math.floor(maxUnits / 2));
+      var count = randInt(minCount, maxUnits);
       selected[fn] = count;
       usedPop += count * fp;
     }
