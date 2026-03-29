@@ -135,7 +135,7 @@
       if (available1.length > 0) {
         var filler1 = available1[randInt(0, available1.length - 1)];
         var pop1 = unitPop[filler1] || 1;
-        var maxTake1 = Math.min(availableUnits[filler1], Math.floor(remainingPop / pop1));
+        var maxTake1 = Math.min(10, availableUnits[filler1], Math.floor(remainingPop / pop1));
         if (maxTake1 >= 1) {
           var take1 = randInt(1, maxTake1);
           selected[filler1] = (selected[filler1] || 0) + take1;
@@ -153,7 +153,7 @@
       if (available2.length > 0) {
         var filler2 = available2[randInt(0, available2.length - 1)];
         var pop2 = unitPop[filler2] || 1;
-        var maxTake2 = Math.min((availableUnits[filler2] || 0) - (selected[filler2] || 0), Math.floor(remainingPop / pop2));
+        var maxTake2 = Math.min(10, (availableUnits[filler2] || 0) - (selected[filler2] || 0), Math.floor(remainingPop / pop2));
         if (maxTake2 >= 1) {
           var take2 = randInt(1, maxTake2);
           selected[filler2] = (selected[filler2] || 0) + take2;
