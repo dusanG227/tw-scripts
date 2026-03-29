@@ -145,9 +145,11 @@
       }
     }
 
-    // Druhý filler — len ak treba
+    // Druhý filler — len ak treba, VYLÚČI jednotku z prvého fillera
     if (remainingPop > 0) {
+      var usedFiller1 = typeof filler1 !== "undefined" ? filler1 : null;
       var available2 = fillerUnits.filter(function(u) {
+        if (u === usedFiller1) return false;
         return (availableUnits[u] || 0) > (selected[u] || 0) && (unitPop[u] || 1) <= remainingPop;
       });
       if (available2.length > 0) {
