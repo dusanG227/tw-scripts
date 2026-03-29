@@ -1,5 +1,5 @@
-// TW Fake Executor v3.6 - Dynamický budget podľa bodov cieľa + dvojitý filler prechod
-// fakeScriptMain.js
+// TW Fake Executor v3.2 - Slobodný random výber + fake limit pop budget
+// fakeScriptMain.js - načítava sa z GitHub cez bookmarklet
 
 (function() {
   'use strict';
@@ -21,14 +21,16 @@
   var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
   var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
 
+  // Defaults - user can change in UI
   var fakeLimit = 0.5;
   var openTabs = 5;
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
-  var unitMode = 'random';
+  var unitMode = 'random'; // 'random' or 'manual'
 
   function log(msg) { console.log('[TW-Fake] ' + msg); }
 
+  // ============ UNIT DATA ============
   var unitPop = {
     spear: 1, sword: 1, axe: 1, archer: 1,
     spy: 2, light: 4, marcher: 5, heavy: 6,
@@ -41,6 +43,7 @@
     ram: 30, catapult: 30, knight: 10, snob: 35
   };
 
+  // Paladín (knight) a šľachtic (snob) sú vylúčení
   var excludedUnits = { militia: true, knight: true, snob: true };
 
   var allGameUnits = (typeof game_data !== 'undefined' && Array.isArray(game_data.units))
@@ -58,63 +61,51 @@
       }
     }
   } catch (e) {
-    log('⚠️ getSpeedConstant nedostupný');
+    log('⚠️ getSpeedConstant nedostupný, používam default hodnoty');
   }
 
+  // ============ RANDOM INT ============
   function randInt(min, max) {
     if (max <= 0) return 0;
     if (max < min) return max;
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
-  // ============ DRUHÝ PRECHOD — doplní zostatok do budgetu lacnými jednotkami ============
-  function fillRemainingPop(selected, availableUnits, usedPop, popBudget) {
-    var fillOrder = ['spear', 'axe', 'archer', 'sword', 'spy', 'light', 'marcher', 'heavy'];
-    for (var fi = 0; fi < fillOrder.length; fi++) {
-      var fn = fillOrder[fi];
-      if (excludedUnits[fn]) continue;
-      var available = (availableUnits[fn] || 0) - (selected[fn] || 0);
-      if (available <= 0) continue;
-      var fp = unitPop[fn] || 1;
-      var remaining = popBudget - usedPop;
-      if (remaining < fp) continue;
-      var canTake = Math.min(available, Math.floor(remaining / fp));
-      if (canTake <= 0) continue;
-      selected[fn] = (selected[fn] || 0) + canTake;
-      usedPop += canTake * fp;
-      if (usedPop >= popBudget) break;
-    }
-    return usedPop;
-  }
+  // ============ SLOBODNÝ RANDOM VÝBER ============
+  var fillerUnits = ['light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
 
-  // ============ RANDOM MODE ============
-  function selectRandomUnits(availableUnits, fakeLimitPct, targetPoints) {
+  function selectRandomUnits(availableUnits, fakeLimitPct, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) >= 1;
     var hasRam = (availableUnits.ram || 0) >= 1;
     var hasCat = (availableUnits.catapult || 0) >= 1;
     if (!hasSpy || (!hasRam && !hasCat)) return {};
 
+    // Pop budget podľa fake limitu
+    var totalPop = 0;
+    for (var u in availableUnits) {
+      totalPop += availableUnits[u] * (unitPop[u] || 1);
+    }
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var pointBased = (targetPoints > 0) ? Math.ceil(targetPoints * (fakeLimitPct / 100)) : 52;
-    var popBudget = Math.max(minRequired, pointBased);
+    var pointBased = villagePoints > 0 ? Math.ceil(villagePoints * (fakeLimitPct / 100)) : 0;
+    var popBudget = Math.max(minRequired, pointBased || 52);
 
     var selected = {};
     var usedPop = 0;
 
-    // 1. Povinný špeha
+    // 1. Povinný špeha — prísne v rámci budgetu
     var maxSpy = Math.min(4, availableUnits.spy || 0, Math.floor((popBudget - minRequired + unitPop.spy) / unitPop.spy));
     if (maxSpy < 1) return {};
     selected.spy = randInt(1, maxSpy);
     usedPop += selected.spy * unitPop.spy;
 
-    // 2. Baran a/alebo katapult
+    // 2. Baran a/alebo katapult — prísne v rámci zostatkového budgetu
     if (hasRam && hasCat) {
       var combo = randInt(0, 2);
-      if (combo !== 1) {
+      if (combo !== 1) { // baran
         var maxRam = Math.min(availableUnits.ram, Math.min(4, Math.floor((popBudget - usedPop) / unitPop.ram)));
         if (maxRam >= 1) { selected.ram = randInt(1, maxRam); usedPop += selected.ram * unitPop.ram; }
       }
-      if (combo !== 0) {
+      if (combo !== 0) { // katapult
         var maxCat = Math.min(availableUnits.catapult, Math.min(4, Math.floor((popBudget - usedPop) / unitPop.catapult)));
         if (maxCat >= 1) { selected.catapult = randInt(1, maxCat); usedPop += selected.catapult * unitPop.catapult; }
       }
@@ -130,90 +121,110 @@
       usedPop += selected.catapult * unitPop.catapult;
     }
 
+    // Overenie: musíme mať aspoň ram alebo catapult
     if (!selected.ram && !selected.catapult) return {};
 
-    // 3. Prvý prechod — náhodné fillery
-    var fillers = [];
-    for (var unitName in availableUnits) {
-      if (excludedUnits[unitName]) continue;
-      if (unitName === 'spy' || unitName === 'ram' || unitName === 'catapult') continue;
-      if ((availableUnits[unitName] || 0) > 0) fillers.push(unitName);
-    }
-    for (var f = fillers.length - 1; f > 0; f--) {
-      var swap = Math.floor(Math.random() * (f + 1));
-      var tmp = fillers[f]; fillers[f] = fillers[swap]; fillers[swap] = tmp;
-    }
-    for (var fi2 = 0; fi2 < fillers.length; fi2++) {
-      var fn2 = fillers[fi2];
-      var fp2 = unitPop[fn2] || 1;
-      var rem2 = popBudget - usedPop;
-      if (rem2 < fp2) continue;
-      var maxU = Math.min(10, availableUnits[fn2] || 0, Math.floor(rem2 / fp2));
-      if (maxU <= 0) continue;
-      var minC = Math.max(1, Math.floor(maxU / 2));
-      selected[fn2] = randInt(minC, maxU);
-      usedPop += selected[fn2] * fp2;
+    // 3. Fillery — dopĺňame pop budget
+    var remainingPop = popBudget - usedPop;
+
+    // Prvý filler
+    if (remainingPop > 0) {
+      var available1 = fillerUnits.filter(function(u) {
+        return (availableUnits[u] || 0) > 0 && (unitPop[u] || 1) <= remainingPop;
+      });
+      if (available1.length > 0) {
+        var filler1 = available1[randInt(0, available1.length - 1)];
+        var pop1 = unitPop[filler1] || 1;
+        var maxTake1 = Math.min(availableUnits[filler1], Math.floor(remainingPop / pop1));
+        if (maxTake1 >= 1) {
+          var take1 = randInt(1, maxTake1);
+          selected[filler1] = (selected[filler1] || 0) + take1;
+          usedPop += take1 * pop1;
+          remainingPop = popBudget - usedPop;
+        }
+      }
     }
 
-    // 4. Druhý prechod — doplní zostatok
-    if (usedPop < popBudget) {
-      usedPop = fillRemainingPop(selected, availableUnits, usedPop, popBudget);
+    // Druhý filler — len ak treba
+    if (remainingPop > 0) {
+      var available2 = fillerUnits.filter(function(u) {
+        return (availableUnits[u] || 0) > (selected[u] || 0) && (unitPop[u] || 1) <= remainingPop;
+      });
+      if (available2.length > 0) {
+        var filler2 = available2[randInt(0, available2.length - 1)];
+        var pop2 = unitPop[filler2] || 1;
+        var maxTake2 = Math.min((availableUnits[filler2] || 0) - (selected[filler2] || 0), Math.floor(remainingPop / pop2));
+        if (maxTake2 >= 1) {
+          var take2 = randInt(1, maxTake2);
+          selected[filler2] = (selected[filler2] || 0) + take2;
+          usedPop += take2 * pop2;
+        }
+      }
     }
 
-    // Validácia
+    // Validácia: žiadna jednotka nesmie presiahnuť dostupné množstvo
     for (var k in selected) {
       if (selected[k] > (availableUnits[k] || 0)) return {};
     }
 
-    log('Random fake: ' + usedPop + '/' + popBudget + ' pop (cieľ: ' + targetPoints + ' bodov)');
     return selected;
   }
 
-  // ============ MANUAL MODE ============
+  // ============ MANUAL MODE (pôvodná logika, fake limit pop budget) ============
   var fakePriority = ['light', 'spear', 'axe', 'archer', 'marcher', 'heavy', 'sword'];
 
-  function selectManualUnits(availableUnits, fakeLimitPct, targetPoints) {
+  function selectManualUnits(availableUnits, fakeLimitPct, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) > 0;
     var hasRam = (availableUnits.ram || 0) > 0;
     var hasCat = (availableUnits.catapult || 0) > 0;
     if (!hasSpy || (!hasRam && !hasCat)) return {};
 
+    var totalPop = 0;
+    for (var u in availableUnits) {
+      totalPop += availableUnits[u] * (unitPop[u] || 1);
+    }
+
     var requiredPop = unitPop.spy + (hasRam ? unitPop.ram : unitPop.catapult);
-    var pointBased = (targetPoints > 0) ? Math.ceil(targetPoints * (fakeLimitPct / 100)) : 52;
-    var maxPop = Math.max(requiredPop, pointBased);
+    var pointBased2 = villagePoints > 0 ? Math.ceil(villagePoints * (fakeLimitPct / 100)) : 0;
+    var maxPop = Math.max(requiredPop, pointBased2 || 52);
 
     var selected = {};
     var usedPop = 0;
 
-    selected.spy = 1; usedPop += unitPop.spy;
-    if (hasRam) { selected.ram = 1; usedPop += unitPop.ram; }
-    else { selected.catapult = 1; usedPop += unitPop.catapult; }
+    selected.spy = 1;
+    usedPop += unitPop.spy;
 
-    // Prvý prechod podľa priority
+    if (hasRam) {
+      selected.ram = 1;
+      usedPop += unitPop.ram;
+    } else {
+      selected.catapult = 1;
+      usedPop += unitPop.catapult;
+    }
+
     for (var i = 0; i < fakePriority.length && usedPop < maxPop; i++) {
-      var un = fakePriority[i];
-      var have = availableUnits[un] || 0;
+      var unitName = fakePriority[i];
+      var have = availableUnits[unitName] || 0;
       if (have <= 0) continue;
-      var already = selected[un] || 0;
-      var rem = have - already;
-      if (rem <= 0) continue;
-      var pop = unitPop[un] || 1;
-      var canTake = Math.min(10, rem, Math.floor((maxPop - usedPop) / pop));
-      if (canTake > 0) { selected[un] = already + canTake; usedPop += canTake * pop; }
+      var already = selected[unitName] || 0;
+      var remaining = have - already;
+      if (remaining <= 0) continue;
+      var pop = unitPop[unitName] || 1;
+      var canTake = Math.floor((maxPop - usedPop) / pop);
+      var count = Math.min(10, remaining, canTake);
+      if (count > 0) {
+        selected[unitName] = already + count;
+        usedPop += count * pop;
+      }
     }
-
-    // Druhý prechod — doplní zostatok
-    if (usedPop < maxPop) {
-      usedPop = fillRemainingPop(selected, availableUnits, usedPop, maxPop);
-    }
-
-    log('Manual fake: ' + usedPop + '/' + maxPop + ' pop (cieľ: ' + targetPoints + ' bodov)');
     return selected;
   }
 
-  function selectUnitsForFake(availableUnits, fakeLimitPct, targetPoints) {
-    if (unitMode === 'random') return selectRandomUnits(availableUnits, fakeLimitPct, targetPoints);
-    return selectManualUnits(availableUnits, fakeLimitPct, targetPoints);
+  function selectUnitsForFake(availableUnits, fakeLimitPct, villagePoints) {
+    if (unitMode === 'random') {
+      return selectRandomUnits(availableUnits, fakeLimitPct, villagePoints);
+    }
+    return selectManualUnits(availableUnits, fakeLimitPct, villagePoints);
   }
 
   // ============ CHECK PAGE ============
@@ -236,6 +247,7 @@
     return;
   }
 
+  // ============ SHOW CONFIG UI ============
   showConfigPanel();
 
   function showConfigPanel() {
@@ -248,19 +260,21 @@
 
     var h = '<div style="text-align:center;margin-bottom:12px;">';
     h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake - Konfigurácia</h2>';
-    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.6 — ' + targets.length + ' cieľov načítaných</p>';
+    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v3.2 — ' + targets.length + ' cieľov načítaných</p>';
     h += '</div>';
 
+    // Mode toggle
     h += '<div style="margin-bottom:10px;padding:8px;background:#e8d5a3;border-radius:4px;">';
     h += '<label style="font-weight:bold;">Režim jednotiek:</label><br/>';
-    h += '<label style="cursor:pointer;margin-right:12px;"><input type="radio" name="tw-mode" value="random" checked /> 🎲 Random</label>';
+    h += '<label style="cursor:pointer;margin-right:12px;"><input type="radio" name="tw-mode" value="random" checked /> 🎲 Random (odporúčané)</label>';
     h += '<label style="cursor:pointer;"><input type="radio" name="tw-mode" value="manual" /> ✏️ Manuálny</label>';
     h += '</div>';
 
+    // Config fields
     h += '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">';
     h += '<tr><td style="padding:3px;font-weight:bold;">Fake limit (%):</td>';
     h += '<td><input id="tw-cfg-fakelimit" type="number" value="0.5" step="0.1" min="0.1" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">% z bodov cieľovej dediny = max pop fejku</div></td></tr>';
+    h += '<div style="font-size:9px;color:#8b7355;">% z populácie dediny = max veľkosť fake útoku</div></td></tr>';
 
     h += '<tr><td style="padding:3px;font-weight:bold;">Open tabs:</td>';
     h += '<td><input id="tw-cfg-opentabs" type="number" value="5" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
@@ -274,6 +288,7 @@
     h += '<div style="font-size:9px;color:#8b7355;">0 = bez limitu</div></td></tr>';
     h += '</table>';
 
+    // Buttons
     h += '<div style="display:flex;gap:8px;">';
     h += '<button id="tw-cfg-start" style="flex:1;padding:10px;background:#4a7c3f;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;">⚔️ Spustiť</button>';
     h += '<button id="tw-cfg-close" style="padding:10px 14px;background:#c0392b;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">✕</button>';
@@ -281,7 +296,7 @@
 
     if (arrivalStart || arrivalEnd) {
       h += '<div style="margin-top:8px;font-size:10px;color:#8b7355;">';
-      h += '🕐 ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk-SK') : '?');
+      h += '🕐 Arrival: ' + (arrivalStart ? arrivalStart.toLocaleString('sk-SK') : '?') + ' – ' + (arrivalEnd ? arrivalEnd.toLocaleString('sk-SK') : '?');
       h += '</div>';
     }
 
@@ -294,10 +309,12 @@
       openTabs = parseInt(document.getElementById('tw-cfg-opentabs').value, 10) || 5;
       maxFakesPerTarget = parseInt(document.getElementById('tw-cfg-maxpertarget').value, 10) || 0;
       maxFakesPerVillage = parseInt(document.getElementById('tw-cfg-maxpervillage').value, 10) || 0;
+
       var modeRadios = document.querySelectorAll('input[name="tw-mode"]');
       for (var i = 0; i < modeRadios.length; i++) {
         if (modeRadios[i].checked) { unitMode = modeRadios[i].value; break; }
       }
+
       p.remove();
       runFakeAttacks();
     };
@@ -309,13 +326,12 @@
       alert('⚠️ Nenašli sa žiadne dediny s jednotkami.');
       return;
     }
-    log('📋 Dedín: ' + villages.length);
 
     var attackQueue = buildAttackQueue(villages, targets, fakeLimit);
-    log('⚔️ Naplánovaných: ' + attackQueue.length);
+    log('⚔️ Naplánovaných útokov: ' + attackQueue.length + ' (režim: ' + unitMode + ')');
 
     if (!attackQueue.length) {
-      alert('⚠️ Nevytvoril sa žiadny útok.');
+      alert('⚠️ Nevytvoril sa žiadny útok. Skontroluj limity a jednotky.');
       return;
     }
 
@@ -324,73 +340,56 @@
     showControlPanel(attackQueue);
   }
 
-  // ============ VILLAGE PARSING ============
+  // ============ VILLAGE PARSING (z Kombinovanej stránky) ============
   function parseVillagesFromCombined() {
     var result = [];
-    var unitColumnOrder = [];
-    var table = document.getElementById('combined_table');
-    if (!table) {
-      var tables = document.querySelectorAll('table');
-      for (var t = 0; t < tables.length; t++) {
-        if (tables[t].querySelector('td.unit-item')) { table = tables[t]; break; }
-      }
-    }
-
-    if (table) {
-      var allRows = table.querySelectorAll('tr');
-      for (var ri = 0; ri < allRows.length; ri++) {
-        if (allRows[ri].querySelectorAll('img[src*="unit_"]').length >= 3) {
-          var hCells = allRows[ri].querySelectorAll('th, td');
-          for (var hi = 0; hi < hCells.length; hi++) {
-            var img = hCells[hi].querySelector('img[src*="unit_"]');
-            if (img) {
-              var m = (img.getAttribute('src') || '').match(/unit_(\w+)/);
-              if (m) unitColumnOrder.push(m[1]);
-            }
-          }
-          break;
-        }
-      }
-    }
-
-    if (unitColumnOrder.length === 0) {
-      unitColumnOrder = allGameUnits.slice();
-      log('ℹ️ Fallback poradie jednotiek');
-    } else {
-      log('✅ Poradie: ' + unitColumnOrder.join(', '));
-    }
-
-    var rows = table
-      ? table.querySelectorAll('tr.row_a, tr.row_b')
-      : document.querySelectorAll('tr.row_a, tr.row_b');
+    var rows = document.querySelectorAll('#combined_table tr.row_a, #combined_table tr.row_b');
+    if (!rows.length) rows = document.querySelectorAll('tr.row_a, tr.row_b');
 
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
-      var vLink = row.querySelector('.quickedit-content a[href*="village="]') || row.querySelector('a[href*="village="]');
-      var cSrc = row.querySelector('.quickedit-label') || vLink;
-      if (!vLink || !cSrc) continue;
-      var idM = (vLink.href || '').match(/village=(\d+)/);
-      if (!idM) continue;
-      var cM = (cSrc.textContent || '').match(/(\d{3})\|(\d{3})/);
-      if (!cM) continue;
+      var villageLink = row.querySelector('.quickedit-content a[href*="village="]') || row.querySelector('a[href*="village="]');
+      var coordSource = row.querySelector('.quickedit-label') || villageLink;
+      if (!villageLink || !coordSource) continue;
+
+      var idMatch = (villageLink.href || '').match(/village=(\d+)/);
+      if (!idMatch) continue;
+
+      var coordMatch = (coordSource.textContent || '').match(/(\d{3})\|(\d{3})/);
+      if (!coordMatch) continue;
+
+      var villageId = idMatch[1];
+      var vx = parseInt(coordMatch[1], 10);
+      var vy = parseInt(coordMatch[2], 10);
+
+      // Parse village points
+      var pointsEl = row.querySelector('.points') || row.querySelector('td[class*="point"]');
+      var villagePoints = 0;
+      if (pointsEl) {
+        villagePoints = parseInt((pointsEl.textContent || '').replace(/\D+/g, ''), 10) || 0;
+      }
 
       var unitCells = row.querySelectorAll('td.unit-item');
       if (!unitCells.length) continue;
 
       var units = {};
-      for (var j = 0; j < unitCells.length && j < unitColumnOrder.length; j++) {
-        var un = unitColumnOrder[j];
-        if (excludedUnits[un]) continue;
-        var val = parseInt((unitCells[j].textContent || '').trim().replace(/\D+/g, ''), 10) || 0;
-        if (val > 0) units[un] = val;
+      for (var j = 0; j < unitCells.length && j < allGameUnits.length; j++) {
+        var unitName = allGameUnits[j];
+        if (excludedUnits[unitName]) continue;
+        var val = parseInt((unitCells[j].textContent || '').replace(/\D+/g, ''), 10) || 0;
+        if (val > 0) units[unitName] = val;
       }
 
       var totalPop = 0;
-      for (var u in units) totalPop += units[u] * (unitPop[u] || 1);
+      for (var u in units) {
+        totalPop += units[u] * (unitPop[u] || 1);
+      }
+
       if (totalPop > 0) {
         result.push({
-          id: idM[1], x: parseInt(cM[1], 10), y: parseInt(cM[2], 10),
-          name: (cSrc.textContent || '').trim(), units: units, totalPop: totalPop
+          id: villageId, x: vx, y: vy,
+          name: (coordSource.textContent || '').trim(),
+          units: units, totalPop: totalPop, points: villagePoints
         });
       }
     }
@@ -401,87 +400,126 @@
   function calcDistance(x1, y1, x2, y2) {
     return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
   }
+
   function getSlowestUnit(units) {
-    var slowest = 'ram', slowestVal = 0;
+    var slowest = 'ram';
+    var slowestValue = 0;
     for (var u in units) {
       if (!units[u] || units[u] <= 0) continue;
       var spd = unitSpeed[u] || 0;
-      if (spd > slowestVal) { slowestVal = spd; slowest = u; }
+      if (spd > slowestValue) { slowestValue = spd; slowest = u; }
     }
     return slowest;
   }
+
   function parseServerNow() {
     var timeEl = document.getElementById('serverTime');
     var dateEl = document.getElementById('serverDate');
     if (timeEl && dateEl) {
-      var t = (timeEl.textContent || '').trim(), d = (dateEl.textContent || '').trim();
-      var dp = d.split(/[.\/-]/), tp = t.split(':');
-      if (dp.length === 3 && tp.length >= 2) {
-        var dt = new Date(parseInt(dp[2], 10), parseInt(dp[1], 10) - 1, parseInt(dp[0], 10),
-                          parseInt(tp[0], 10), parseInt(tp[1], 10), parseInt(tp[2] || '0', 10));
+      var t = (timeEl.textContent || '').trim();
+      var d = (dateEl.textContent || '').trim();
+      var dateParts = d.split(/[.\/-]/);
+      var timeParts = t.split(':');
+      if (dateParts.length === 3 && timeParts.length >= 2) {
+        var dd = parseInt(dateParts[0], 10);
+        var mm = parseInt(dateParts[1], 10) - 1;
+        var yy = parseInt(dateParts[2], 10);
+        var hh = parseInt(timeParts[0], 10);
+        var mi = parseInt(timeParts[1], 10);
+        var ss = parseInt(timeParts[2] || '0', 10);
+        var dt = new Date(yy, mm, dd, hh, mi, ss);
         if (!isNaN(dt.getTime())) return dt;
       }
     }
     return new Date();
   }
+
   function calcTravelTimeMs(fromX, fromY, toX, toY, slowestUnit) {
-    return calcDistance(fromX, fromY, toX, toY) * (unitSpeed[slowestUnit] || 30) * 60000 / (worldSpeed * unitSpeedMod);
+    var dist = calcDistance(fromX, fromY, toX, toY);
+    var minutesPerField = unitSpeed[slowestUnit] || 30;
+    var msPerField = minutesPerField * 60 * 1000 / (worldSpeed * unitSpeedMod);
+    return dist * msPerField;
   }
+
   function isInArrivalWindow(village, target, selectedUnits) {
     if (!arrivalStart && !arrivalEnd) return true;
     var now = parseServerNow();
-    var arrMs = now.getTime() + calcTravelTimeMs(village.x, village.y, target.x, target.y, getSlowestUnit(selectedUnits));
-    if (arrivalStart && arrMs < arrivalStart.getTime()) return false;
-    if (arrivalEnd && arrMs > arrivalEnd.getTime()) return false;
+    var slowest = getSlowestUnit(selectedUnits);
+    var arrivalMs = now.getTime() + calcTravelTimeMs(village.x, village.y, target.x, target.y, slowest);
+    if (arrivalStart && arrivalMs < arrivalStart.getTime()) return false;
+    if (arrivalEnd && arrivalMs > arrivalEnd.getTime()) return false;
     return true;
   }
 
   // ============ BUILD QUEUE ============
   function buildAttackQueue(villageList, targetList, fakeLimitPct) {
     var queue = [];
-    var preparedVillages = [];
 
+    var preparedVillages = [];
     for (var i = 0; i < villageList.length; i++) {
       var v = villageList[i];
-      if ((v.units.spy || 0) >= 1 && ((v.units.ram || 0) >= 1 || (v.units.catapult || 0) >= 1)) {
-        preparedVillages.push({ village: v });
+      if (unitMode === 'random') {
+        var hasSpy = (v.units.spy || 0) >= 1;
+        var hasRam = (v.units.ram || 0) >= 1;
+        var hasCat = (v.units.catapult || 0) >= 1;
+        if (hasSpy && (hasRam || hasCat)) {
+          preparedVillages.push({ village: v, units: null });
+        }
+      } else {
+        var chosen = selectUnitsForFake(v.units, fakeLimitPct, v.points);
+        if (Object.keys(chosen).length) {
+          preparedVillages.push({ village: v, units: chosen });
+        }
       }
     }
+
     if (!preparedVillages.length) return queue;
 
     var targetCap = maxFakesPerTarget > 0 ? maxFakesPerTarget : preparedVillages.length;
     var villageCap = maxFakesPerVillage > 0 ? maxFakesPerVillage : targetList.length;
-    var targetCounts = {}, villageCounts = {}, targetCursor = 0;
+
+    var targetCounts = {};
+    var villageCounts = {};
+    var targetCursor = 0;
     var maxTotal = targetList.length * targetCap;
     var safety = maxTotal * Math.max(1, preparedVillages.length) + 100;
 
     while (queue.length < maxTotal && safety-- > 0) {
       var progressed = false;
-      for (var v2 = 0; v2 < preparedVillages.length; v2++) {
-        var pv = preparedVillages[v2];
+
+      for (var v = 0; v < preparedVillages.length; v++) {
+        var pv = preparedVillages[v];
         var vKey = pv.village.id;
         if ((villageCounts[vKey] || 0) >= villageCap) continue;
 
         var tries = 0;
         while (tries < targetList.length) {
           var target = targetList[targetCursor % targetList.length];
-          targetCursor++; tries++;
+          targetCursor++;
+          tries++;
 
           var tKey = target.x + '|' + target.y;
           if ((targetCounts[tKey] || 0) >= targetCap) continue;
 
-          var attackUnits = selectUnitsForFake(pv.village.units, fakeLimitPct, target.points || 0);
-          if (!Object.keys(attackUnits).length) continue;
+          // V random mode generujeme jednotky čerstvo pre každý útok
+          var attackUnits;
+          if (unitMode === 'random') {
+            attackUnits = selectUnitsForFake(pv.village.units, fakeLimitPct, pv.village.points);
+            if (!Object.keys(attackUnits).length) continue;
+          } else {
+            attackUnits = pv.units;
+          }
+
           if (!isInArrivalWindow(pv.village, target, attackUnits)) continue;
 
-          var atkPop = 0;
-          for (var au in attackUnits) atkPop += attackUnits[au] * (unitPop[au] || 1);
-
           queue.push({
-            villageId: pv.village.id, villageName: pv.village.name,
-            villageX: pv.village.x, villageY: pv.village.y,
-            targetX: target.x, targetY: target.y,
-            units: attackUnits, totalPop: atkPop
+            villageId: pv.village.id,
+            villageName: pv.village.name,
+            villageX: pv.village.x,
+            villageY: pv.village.y,
+            targetX: target.x,
+            targetY: target.y,
+            units: attackUnits
           });
 
           targetCounts[tKey] = (targetCounts[tKey] || 0) + 1;
@@ -502,11 +540,15 @@
 
     var panel = document.createElement('div');
     panel.id = 'tw-fake-panel';
-    panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:420px;max-height:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
+    panel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#f4e4bc;border:2px solid #7d510f;border-radius:8px;padding:15px;font-family:Verdana,sans-serif;font-size:11px;color:#3e2b0d;width:400px;max-height:80vh;overflow-y:auto;box-shadow:0 5px 30px rgba(0,0,0,0.5);';
 
-    var h = '<div style="text-align:center;margin-bottom:8px;"><h3 style="margin:0;color:#7d510f;">⚔️ Fake Attack Queue</h3></div>';
-    h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;">';
-    h += '<b>' + queue.length + '</b> útokov | <b>' + (unitMode === 'random' ? '🎲 Random' : '✏️ Manuálny') + '</b> | Limit: <b>' + fakeLimit + '%</b> | Tabs: <b>' + openTabs + '</b>';
+    var h = '<div style="text-align:center;margin-bottom:8px;">';
+    h += '<h3 style="margin:0;color:#7d510f;">⚔️ Fake Attack Queue</h3>';
+    h += '</div>';
+
+    h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px;">';
+    h += '<b>' + queue.length + '</b> útokov | Režim: <b>' + (unitMode === 'random' ? '🎲 Random' : '✏️ Manuálny') + '</b><br/>';
+    h += 'Fake limit: <b>' + fakeLimit + '%</b> | Tabs: <b>' + openTabs + '</b>';
     if (maxFakesPerTarget > 0) h += '<br/>Max/cieľ: <b>' + maxFakesPerTarget + '</b>';
     if (maxFakesPerVillage > 0) h += ' | Max/dedina: <b>' + maxFakesPerVillage + '</b>';
     if (arrivalStart || arrivalEnd) {
@@ -517,12 +559,12 @@
     h += '<div style="max-height:250px;overflow-y:auto;border:1px solid #d4a574;border-radius:4px;margin-bottom:8px;">';
     for (var i = 0; i < Math.min(queue.length, 30); i++) {
       var atk = queue[i];
-      var uStr = Object.keys(atk.units).map(function(k) { return k + ':' + atk.units[k]; }).join(', ');
+      var unitStr = Object.keys(atk.units).map(function(k) { return k + ':' + atk.units[k]; }).join(', ');
       var bg = i % 2 === 0 ? '#fff8e7' : '#f4e4bc';
       h += '<div style="padding:4px 8px;background:' + bg + ';border-bottom:1px solid #e6d5b8;font-size:10px;">';
       h += '<b>' + atk.villageName.substring(0, 22) + '</b> → ' + atk.targetX + '|' + atk.targetY;
-      h += ' <span style="color:#4a7c3f;font-weight:bold;">[' + atk.totalPop + ' pop]</span>';
-      h += '<br/><span style="color:#8b7355;">' + uStr + '</span></div>';
+      h += '<br/><span style="color:#8b7355;">' + unitStr + '</span>';
+      h += '</div>';
     }
     if (queue.length > 30) {
       h += '<div style="padding:4px 8px;text-align:center;font-size:10px;color:#8b7355;">...a ďalších ' + (queue.length - 30) + '</div>';
@@ -536,6 +578,7 @@
 
     panel.innerHTML = h;
     document.body.appendChild(panel);
+
     document.getElementById('tw-close-panel').onclick = function() { panel.remove(); };
     document.getElementById('tw-start-btn').onclick = launchAttacks;
   }
@@ -544,29 +587,48 @@
     var queue = window._twAttackQueue || [];
     var idx = window._twAttackIndex || 0;
     var tabsToOpen = Math.min(openTabs, queue.length - idx);
-    if (tabsToOpen <= 0) { alert('✅ Všetky útoky už boli otvorené.'); return; }
+
+    if (tabsToOpen <= 0) {
+      alert('✅ Všetky útoky už boli otvorené.');
+      return;
+    }
 
     for (var i = 0; i < tabsToOpen; i++) {
       var attack = queue[idx + i];
       if (!attack) break;
+
       var params = [
-        'village=' + encodeURIComponent(attack.villageId), 'screen=place',
-        'x=' + encodeURIComponent(attack.targetX), 'y=' + encodeURIComponent(attack.targetY)
+        'village=' + encodeURIComponent(attack.villageId),
+        'screen=place',
+        'x=' + encodeURIComponent(attack.targetX),
+        'y=' + encodeURIComponent(attack.targetY)
       ];
-      Object.keys(attack.units).forEach(function(un) {
-        if (attack.units[un] > 0) params.push(encodeURIComponent(un) + '=' + encodeURIComponent(attack.units[un]));
+
+      Object.keys(attack.units).forEach(function(unitName) {
+        var count = attack.units[unitName];
+        if (count > 0) {
+          params.push(encodeURIComponent(unitName) + '=' + encodeURIComponent(count));
+        }
       });
-      window.open('/game.php?' + params.join('&'), '_blank');
+
+      var url = '/game.php?' + params.join('&');
+      window.open(url, '_blank');
     }
 
     window._twAttackIndex = idx + tabsToOpen;
+
     var btn = document.getElementById('tw-start-btn');
     var remaining = queue.length - window._twAttackIndex;
     if (btn) {
-      if (remaining > 0) btn.textContent = '▶ Ďalších ' + Math.min(openTabs, remaining) + ' (zostáva ' + remaining + ')';
-      else { btn.textContent = '✅ Hotovo!'; btn.disabled = true; btn.style.background = '#95a5a6'; }
+      if (remaining > 0) {
+        btn.textContent = '▶ Ďalších ' + Math.min(openTabs, remaining) + ' (zostáva ' + remaining + ')';
+      } else {
+        btn.textContent = '✅ Hotovo!';
+        btn.disabled = true;
+        btn.style.background = '#95a5a6';
+      }
     }
-    log('📑 Otvorených ' + tabsToOpen + ', zostáva ' + remaining);
+    log('📑 Otvorených ' + tabsToOpen + ' tabov, zostáva ' + remaining);
   }
 
 })();
