@@ -1,4 +1,4 @@
-// TW Fake Launcher v4 - Minimálny launcher
+// TW Fake Launcher v4
 (function() {
   'use strict';
 
@@ -6,9 +6,6 @@
   if (old) old.remove();
 
   var detectedWorld = '';
-  var detectedSpeed = '';
-  var detectedUnitSpeed = '';
-
   if (typeof game_data !== 'undefined') {
     detectedWorld = game_data.world || '';
   }
@@ -29,7 +26,7 @@
 
     html += '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;">';
 
-    html += '<tr><td style="padding:5px;font-weight:bold;width:130px;">Číslo sveta:</td>';
+    html += '<tr><td style="padding:5px;font-weight:bold;width:140px;">Číslo sveta:</td>';
     html += '<td style="padding:5px;">';
     html += '<div style="display:flex;gap:6px;align-items:center;">';
     html += '<input id="tw-world" type="text" value="' + detectedWorld + '" placeholder="napr. sk10" style="flex:1;padding:4px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
@@ -68,14 +65,10 @@
   }
 
   function fetchWorldSpeed() {
-    var worldId = document.getElementById('tw-world').value.trim();
-    if (!worldId) { alert('Zadaj číslo sveta!'); return; }
-
     var fetchBtn = document.getElementById('tw-fetch-speed');
     fetchBtn.textContent = '⏳';
     fetchBtn.disabled = true;
 
-    // TW config API
     fetch('/interface.php?func=get_config')
       .then(function(r) { return r.text(); })
       .then(function(xml) {
@@ -151,17 +144,11 @@
         alert('📋 Skopírované!');
       };
     }
-
-    // Auto-fetch ak je world detekovaný
-    if (detectedWorld && !document.getElementById('tw-speed').value) {
-      fetchWorldSpeed();
-    }
   }
 
   document.body.appendChild(panel);
   render(null);
 
-  // Auto-trigger fetch po renderi ak máme world
   if (detectedWorld) {
     setTimeout(function() {
       var btn = document.getElementById('tw-fetch-speed');
@@ -170,23 +157,3 @@
   }
 
 })();
-A v hlavnom skripte treba upraviť načítanie worldSpeed a unitSpeedMod z configu namiesto getSpeedConstant. Zmeň tieto riadky v hlavnom skripte:
-
-// NAHRAĎ tento blok:
-var worldSpeed = 1;
-var unitSpeedMod = 1;
-try {
-  if (typeof getSpeedConstant === 'function') {
-    var speedData = getSpeedConstant();
-    if (speedData) {
-      worldSpeed = Number(speedData.worldSpeed) || 1;
-      unitSpeedMod = Number(speedData.unitSpeed) || 1;
-    }
-  }
-} catch (e) {
-  log('⚠️ getSpeedConstant nedostupný, používam default hodnoty');
-}
-
-// NA TOTO:
-var worldSpeed = Number(config.worldSpeed) || 1;
-var unitSpeedMod = Number(config.unitSpeedMod) || 1;
