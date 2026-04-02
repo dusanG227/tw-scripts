@@ -378,7 +378,6 @@ window.FarmGod.Main = (function (Library, Translation) {
   let botDetected = false;
 
   const checkBotProtection = function () {
-    // TW bot checks typically show up as #bot_check_target, .bot-check, or td#bot_check in the left nav/sidebar
     const botSelectors = [
       '#bot_check_target',
       '#bot_check',
@@ -394,7 +393,6 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const startBotObserver = function () {
-    // Watch the left sidebar (#menu_row or #sidebar) for bot check injection
     const target = document.querySelector('#menu_row') || document.querySelector('#sidebar') || document.body;
 
     const observer = new MutationObserver(function () {
@@ -430,7 +428,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           executeSend($icon);
         }
       }
-    }, 50); // check every 50ms for precision
+    }, 50);
   };
 
   const stopSendQueue = function () {
@@ -482,7 +480,6 @@ window.FarmGod.Main = (function (Library, Translation) {
                 UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
                 $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
 
-                // Start bot observer and send queue after table is built
                 startBotObserver();
                 startSendQueue();
               });
@@ -535,12 +532,10 @@ window.FarmGod.Main = (function (Library, Translation) {
       });
   };
 
-  // Enqueue a farm icon for sending (respects rate limit)
   const enqueueSend = function ($icon) {
     sendQueue.push($icon);
   };
 
-  // Actually execute the POST request — no farmBusy lock
   const executeSend = function ($this) {
     let $pb = $('#FarmGodProgessbar');
 
