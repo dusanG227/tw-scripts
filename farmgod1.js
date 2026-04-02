@@ -17,7 +17,7 @@ window.FarmGod.Library = (function () {
       queues: null,
       init: function () {
         if (this.queues === null) {
-          this.queues = this.queueLib.createQueues(5);
+          this.queues = this.queueLib.createQueues(20);
         }
       },
       queueLib: {
@@ -437,7 +437,7 @@ window.FarmGod.Core = (function () {
           $(\`#FarmGod_row_\${farm.villageId}\`).css('background', '#FFB6C1');
         });
       }, delay);
-      delay += options.time * 60 * 1000;
+      delay += 250; // 4 attacks per second (250ms fixed delay)
     });
   };
 
@@ -518,7 +518,7 @@ export default function FarmGodScript() {
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-2xl font-bold mb-2">FarmGod Script - Opravená verzia</h1>
-        <p className="text-gray-400 mb-6">Opravy: ScriptAPI bezpečnostná kontrola + UTF-8 encoding fix (maďarčina)</p>
+        <p className="text-gray-400 mb-6">Úprava: 4 útoky za sekundu (250ms delay), 20 paralelných frontov</p>
 
         <div className="flex gap-3 mb-6">
           <Button onClick={handleDownload} className="bg-green-600 hover:bg-green-700">
