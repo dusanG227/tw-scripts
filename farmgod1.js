@@ -268,8 +268,7 @@ window.FarmGod.Translation = (function () {
       missingFeatures: 'Script vereist een premium account en farm assistent!',
       options: {
         title: 'FarmGod Opties',
-        warning:
-          '<b>Waarschuwingen:</b><br>- Zorg dat A is ingesteld als je standaard microfarm en B als een grotere microfarm<br>- Zorg dat de farm filters correct zijn ingesteld voor je het script gebruikt',
+        warning: '<b>Waarschuwingen:</b><br>- Zorg dat A is ingesteld als je standaard microfarm en B als een grotere microfarm<br>- Zorg dat de farm filters correct zijn ingesteld voor je het script gebruikt',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters.png',
         group: 'Uit welke groep moet er gefarmd worden:',
         distance: 'Maximaal aantal velden dat farms mogen lopen:',
@@ -297,8 +296,7 @@ window.FarmGod.Translation = (function () {
       missingFeatures: 'A scriptnek szÃ¼ksÃ©ge van PrÃ©mium fiÃ³kra Ã©s FarmkezelÅ're!',
       options: {
         title: 'FarmGod opciÃ³k',
-        warning:
-          '<b>Figyelem:</b><br>- Bizonyosodj meg rÃ³la, hogy az "A" sablon az alapÃ©rtelmezett Ã©s a "B" egy nagyobb mennyisÃ©gÅ± mikrÃ³-farm<br>- Bizonyosodj meg rÃ³la, hogy a farm-filterek megfelelÅ'en vannak beÃ¡llÃ­tva mielÅ'tt hasznÃ¡lod a sctiptet',
+        warning: '<b>Figyelem:</b><br>- Bizonyosodj meg rÃ³la, hogy az "A" sablon az alapÃ©rtelmezett Ã©s a "B" egy nagyobb mennyisÃ©gÅ± mikrÃ³-farm<br>- Bizonyosodj meg rÃ³la, hogy a farm-filterek megfelelÅ'en vannak beÃ¡llÃ­tva mielÅ'tt hasznÃ¡lod a sctiptet', "A" sablon az alapÃ©rtelmezett Ã©s a "B" egy nagyobb mennyisÃ©gÅ± mikrÃ³-farm<br>- Bizonyosodj meg rÃ³la, hogy a farm-filterek megfelelÅ'en vannak beÃ¡llÃ­tva mielÅ'tt hasznÃ¡lod a sctiptet',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters_HU.png',
         group: 'EbbÅ'l a csoportbÃ³l kÃ¼ldje:',
         distance: 'MaximÃ¡lis mezÅ' tÃ¡volsÃ¡g:',
@@ -326,8 +324,7 @@ window.FarmGod.Translation = (function () {
       missingFeatures: 'Script requires a premium account and loot assistent!',
       options: {
         title: 'FarmGod Options',
-        warning:
-          '<b>Warning:</b><br>- Make sure A is set as your default microfarm and B as a larger microfarm<br>- Make sure the farm filters are set correctly before using the script',
+        warning: '<b>Warning:</b><br>- Make sure A is set as your default microfarm and B as a larger microfarm<br>- Make sure the farm filters are set correctly before using the script',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters.png',
         group: 'Send farms from group:',
         distance: 'Maximum fields for farms:',
