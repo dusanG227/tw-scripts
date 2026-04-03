@@ -450,6 +450,14 @@ window.FarmGod.Main = (function (Library, Translation) {
         }
       });
 
+    $(document)
+      .off('keydown')
+      .on('keydown', (event) => {
+        if ((event.keyCode || event.which) == 13) {
+          let $first = $('.farmGod_icon').first();
+          if ($first.length) enqueueSend($first);
+        }
+      });
 
     $('.switchVillage')
       .off('click')
