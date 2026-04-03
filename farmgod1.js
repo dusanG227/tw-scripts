@@ -365,11 +365,9 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Rate limiter: max 4 sends per second ──────────────────────────────────
-  const SEND_INTERVAL_MIN = 230;
-  const SEND_INTERVAL_MAX = 280;
-  let nextSendDelay = SEND_INTERVAL_MIN;
-  let lastSendTime = 0;
+  // ── Burst sender: 4 attacks per second, each at a random ms offset ────────
+  const BURST_SIZE = 4;
+  const BURST_EVERY_MS = 1000;
   let sendQueue = [];
   let sendTimer = null;
 
@@ -413,21 +411,39 @@ window.FarmGod.Main = (function (Library, Translation) {
     observer.observe(target, { childList: true, subtree: true });
   };
 
-  // ── Send queue processor ──────────────────────────────────────────────────
-  const startSendQueue = function () {
-    if (sendTimer) return;
-    sendTimer = setInterval(function () {
-      if (botDetected || sendQueue.length === 0) return;
-      let now = Date.now();
-      if (now - lastSendTime >= nextSendDelay) {
-        let $icon = sendQueue.shift();
-        if ($icon && $icon.closest('.farmRow').length) {
-          lastSendTime = now;
-          nextSendDelay = SEND_INTERVAL_MIN + Math.floor(Math.random() * (SEND_INTERVAL_MAX - SEND_INTERVAL_MIN));
+  // ── Send queue: burst of up to 4 per second, random offsets 0-950ms ──────
+  const fireBurst = function () {
+    if (botDetected || sendQueue.length === 0) return;
+
+    // Generate 4 unique random offsets within 1 second
+    let offsets = [];
+    while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
+      offsets.push(Math.floor(Math.random() * 950));
+    }
+    offsets.sort((a, b) => a - b);
+
+    offsets.forEach(function (delay, i) {
+      let $icon = sendQueue.shift();
+      if (!$icon) return;
+      setTimeout(function () {
+        if (botDetected) return;
+        if ($icon.closest('.farmRow').length) {
           executeSend($icon);
         }
+      }, delay);
+    });
+  };
+
+  const startSendQueue = function () {
+    if (sendTimer) return;
+    fireBurst(); // fire immediately on start
+    sendTimer = setInterval(function () {
+      if (sendQueue.length === 0) {
+        stopSendQueue();
+        return;
       }
-    }, 50);
+      fireBurst();
+    }, BURST_EVERY_MS);
   };
 
   const stopSendQueue = function () {
@@ -533,6 +549,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   const enqueueSend = function ($icon) {
     sendQueue.push($icon);
+    if (!sendTimer) startSendQueue();
   };
 
   const executeSend = function ($this) {
