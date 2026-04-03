@@ -2,7 +2,6 @@
 
 ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
 
-
 window.FarmGod = {};
 window.FarmGod.Library = (function () {
   /**** TribalWarsLibrary.js ****/
