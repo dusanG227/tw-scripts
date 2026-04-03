@@ -371,11 +371,37 @@ window.FarmGod.Main = (function (Library, Translation) {
   let sendQueue = [];
   let sendTimer = null;
 
+
+
+  // ── Send queue: burst of up to 5 per second, random offsets 0-1000ms ──────
+  const fireBurst = function () {
+    if (sendQueue.length === 0) return;
+
+    // Generate 5 unique random offsets within 1 second
+    let offsets = [];
+    while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
+      offsets.push(Math.floor(Math.random() * 950));
+    }
+    offsets.sort((a, b) => a - b);
+
+    offsets.forEach(function (delay, i) {
+      let $icon = sendQueue.shift();
+      if (!$icon) return;
+      setTimeout(function () {
+        if ($icon.closest('.farmRow').length) {
+          executeSend($icon);
+        }
+      }, delay);
+    });
+  };
+
   const startSendQueue = function () {
     if (sendTimer) return;
     fireBurst(); // fire immediately on start
     sendTimer = setInterval(function () {
       if (sendQueue.length === 0) {
+        clearInterval(sendTimer);
+        sendTimer = null;
         return;
       }
       fireBurst();
