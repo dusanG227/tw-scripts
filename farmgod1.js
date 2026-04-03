@@ -1,3 +1,10 @@
+FarmGod Script
+5 útokov za sekundu — náhodné ms offsety v rámci každej sekundy
+
+Stiahnuť farmgod1.js
+Kopírovať kód
+Bookmarklet (použiť na TW):
+javascript:(function(){if(typeof ScriptAPI==='undefined'){window.ScriptAPI={register:function(){}};}$.getScript('https://cdn.jsdelivr.net/gh/dusanG227/tw-scripts@main/farmgod1.js');})();
 // Hungarian translation provided by =Krumpli=
 
 if (typeof ScriptAPI !== 'undefined') {
@@ -295,31 +302,31 @@ window.FarmGod.Translation = (function () {
       },
     },
     hu_HU: {
-      missingFeatures: 'A scriptnek sz\u00FCks\u00E9ge van Pr\u00E9mium fi\u00F3kra \u00E9s FarmkezelÅ\u0151re!',
+      missingFeatures: 'A scriptnek szüksége van Prémium fiókra és FarmkezelÅőre!',
       options: {
-        title: 'FarmGod opci\u00F3k',
-        warning: '<b>Figyelem:</b><br>- Bizonyosodj meg r\u00F3la, hogy az "A" sablon az alap\u00E9rtelmezett \u00E9s a "B" egy nagyobb mennyis\u00E9g\u0171 mikr\u00F3-farm<br>- Bizonyosodj meg r\u00F3la, hogy a farm-filterek megfelel\u0151en vannak be\u00E1ll\u00EDtva miel\u0151tt haszn\u00E1lod a sctiptet',
+        title: 'FarmGod opciók',
+        warning: '<b>Figyelem:</b><br>- Bizonyosodj meg róla, hogy az "A" sablon az alapértelmezett és a "B" egy nagyobb mennyiségű mikró-farm<br>- Bizonyosodj meg róla, hogy a farm-filterek megfelelően vannak beállítva mielőtt használod a sctiptet',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters_HU.png',
-        group: 'Ebb\u0151l a csoportb\u00F3l k\u00FClje:',
-        distance: 'Maxim\u00E1lis mez\u0151 t\u00E1vols\u00E1g:',
-        time: 'Mekkora id\u0151intervallumban k\u00FClje a t\u00E1mad\u00E1sokat percben:',
-        losses: 'K\u00FCldj\u00F6n t\u00E1mad\u00E1st olyan falvakba ahol r\u00E9szleges vesztes\u00E9ggel j\u00E1rhat a t\u00E1mad\u00E1s:',
-        maxloot: 'A "B" sablont k\u00FClje abban az esetben, ha az el\u0151z\u0151 t\u00E1mad\u00E1s maxim\u00E1lis fosztogat\u00E1ssal j\u00E1rt:',
-        newbarbs: 'Adj hozz\u00E1 \u00FAj barb\u00E1r falukat:',
-        button: 'Farm megtervez\u00E9se',
+        group: 'Ebből a csoportból külje:',
+        distance: 'Maximális mező távolság:',
+        time: 'Mekkora időintervallumban külje a támadásokat percben:',
+        losses: 'Küldjön támadást olyan falvakba ahol részleges veszteséggel járhat a támadás:',
+        maxloot: 'A "B" sablont külje abban az esetben, ha az előző támadás maximális fosztogatással járt:',
+        newbarbs: 'Adj hozzá új barbár falukat:',
+        button: 'Farm megtervezése',
       },
       table: {
-        noFarmsPlanned: 'A jelenlegi be\u00E1ll\u00EDt\u00E1sokkal nem lehet \u00FAj t\u00E1mad\u00E1st kik\u00FCldeni.',
+        noFarmsPlanned: 'A jelenlegi beállításokkal nem lehet új támadást kiküldeni.',
         origin: 'Origin',
-        target: 'C\u00E9lpont',
-        fields: 'T\u00E1vols\u00E1g',
+        target: 'Célpont',
+        fields: 'Távolság',
         farm: 'Farm',
         goTo: 'Go to',
       },
       messages: {
-        villageChanged: 'Falu sikeresen megv\u00E1ltoztatva!',
-        villageError: 'Minden farm kiment a jelenlegi falub\u00F3l!',
-        sendError: 'Hiba: Farm nemvolt elk\u00FCldve!',
+        villageChanged: 'Falu sikeresen megváltoztatva!',
+        villageError: 'Minden farm kiment a jelenlegi faluból!',
+        sendError: 'Hiba: Farm nemvolt elküldve!',
       },
     },
     int: {
@@ -365,8 +372,8 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Burst sender: 4 attacks per second, each at a random ms offset ────────
-  const BURST_SIZE = 4;
+  // ── Burst sender: 5 attacks per second, each at a random ms offset ────────
+  const BURST_SIZE = 5;
   const BURST_EVERY_MS = 1000;
   let sendQueue = [];
   let sendTimer = null;
@@ -411,11 +418,11 @@ window.FarmGod.Main = (function (Library, Translation) {
     observer.observe(target, { childList: true, subtree: true });
   };
 
-  // ── Send queue: burst of up to 4 per second, random offsets 0-950ms ──────
+  // ── Send queue: burst of 5 per second, random offsets 0-950ms ────────────
   const fireBurst = function () {
     if (botDetected || sendQueue.length === 0) return;
 
-    // Generate 4 unique random offsets within 1 second
+    // Generate 5 unique random offsets within 1 second
     let offsets = [];
     while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
       offsets.push(Math.floor(Math.random() * 950));
@@ -758,7 +765,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           .map((i, el) => {
             let $el = $(el);
             return (data.farms.templates[
-              $el.prev('tr').find('a.farm_icon').first().attr('class').match(/farm_icon_(.*)\s/)[1]
+              $el.prev('tr').find('a.farm_icon').first().attr('class').match(/farm_icon_(.*)s/)[1]
             ] = {
               id: $el.find('input[type="hidden"][name*="template"][name*="[id]"]').first().val().toNumber(),
               units: $el
