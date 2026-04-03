@@ -1,12 +1,3 @@
-FarmGod Script
-5 útokov za sekundu — náhodné ms offsety v rámci každej sekundy
-
-Stiahnuť farmgod1.js
-Kopírovať kód
-Bookmarklet (použiť na TW):
-javascript:(function(){if(typeof ScriptAPI==='undefined'){window.ScriptAPI={register:function(){}};}$.getScript('https://cdn.jsdelivr.net/gh/dusanG227/tw-scripts@main/farmgod1.js');})();
-// Hungarian translation provided by =Krumpli=
-
 if (typeof ScriptAPI !== 'undefined') {
   ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
 }
