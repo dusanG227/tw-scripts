@@ -371,87 +371,17 @@ window.FarmGod.Main = (function (Library, Translation) {
   let sendQueue = [];
   let sendTimer = null;
 
-  // ── Bot protection detection ──────────────────────────────────────────────
-  let botDetected = false;
-
-  const checkBotProtection = function () {
-    const botSelectors = [
-      '#bot_check_target',
-      '#bot_check',
-      '.bot-check',
-      'td[id*="bot"]',
-      'form[action*="bot_check"]',
-      'input[name*="bot_check"]',
-    ];
-    for (let sel of botSelectors) {
-      if (document.querySelector(sel)) return true;
-    }
-    return false;
-  };
-
-  const startBotObserver = function () {
-    const target = document.querySelector('#menu_row') || document.querySelector('#sidebar') || document.body;
-
-    const observer = new MutationObserver(function () {
-      if (checkBotProtection()) {
-        if (!botDetected) {
-          botDetected = true;
-          stopSendQueue();
-          UI.ErrorMessage('⚠️ FarmGod: Bot protection detected! Sending paused.');
-          console.warn('[FarmGod] Bot protection detected — sending stopped.');
-        }
-      } else {
-        if (botDetected) {
-          botDetected = false;
-          console.log('[FarmGod] Bot protection cleared.');
-        }
-      }
-    });
-
-    observer.observe(target, { childList: true, subtree: true });
-  };
-
-  // ── Send queue: burst of up to 5 per second, random offsets 0-1000ms ──────
-  const fireBurst = function () {
-    if (botDetected || sendQueue.length === 0) return;
-
-    // Generate 5 unique random offsets within 1 second
-    let offsets = [];
-    while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
-      offsets.push(Math.floor(Math.random() * 950));
-    }
-    offsets.sort((a, b) => a - b);
-
-    offsets.forEach(function (delay, i) {
-      let $icon = sendQueue.shift();
-      if (!$icon) return;
-      setTimeout(function () {
-        if (botDetected) return;
-        if ($icon.closest('.farmRow').length) {
-          executeSend($icon);
-        }
-      }, delay);
-    });
-  };
-
   const startSendQueue = function () {
     if (sendTimer) return;
     fireBurst(); // fire immediately on start
     sendTimer = setInterval(function () {
       if (sendQueue.length === 0) {
-        stopSendQueue();
         return;
       }
       fireBurst();
     }, BURST_EVERY_MS);
   };
 
-  const stopSendQueue = function () {
-    if (sendTimer) {
-      clearInterval(sendTimer);
-      sendTimer = null;
-    }
-  };
 
   const init = function () {
     if (
@@ -495,7 +425,6 @@ window.FarmGod.Main = (function (Library, Translation) {
                 UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
                 $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
 
-                startBotObserver();
                 startSendQueue();
               });
             });
@@ -514,10 +443,6 @@ window.FarmGod.Main = (function (Library, Translation) {
     $('.farmGod_icon')
       .off('click')
       .on('click', function () {
-        if (botDetected) {
-          UI.ErrorMessage('⚠️ Bot protection active — sending blocked!');
-          return;
-        }
         if (game_data.market != 'nl' || $(this).data('origin') == curVillage) {
           enqueueSend($(this));
         } else {
@@ -525,18 +450,6 @@ window.FarmGod.Main = (function (Library, Translation) {
         }
       });
 
-    $(document)
-      .off('keydown')
-      .on('keydown', (event) => {
-        if ((event.keyCode || event.which) == 13) {
-          if (botDetected) {
-            UI.ErrorMessage('⚠️ Bot protection active — sending blocked!');
-            return;
-          }
-          let $first = $('.farmGod_icon').first();
-          if ($first.length) enqueueSend($first);
-        }
-      });
 
     $('.switchVillage')
       .off('click')
