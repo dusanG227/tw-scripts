@@ -1,7 +1,7 @@
 // Hungarian translation provided by =Krumpli=
 
-if (typeof ScriptAPI !== 'undefined') {
-  ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
+ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
+
 
 window.FarmGod = {};
 window.FarmGod.Library = (function () {
