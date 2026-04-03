@@ -365,8 +365,8 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Burst sender: 4 attacks per second, each at a random ms offset ────────
-  const BURST_SIZE = 4;
+  // ── Burst sender: 5 attacks per second, each at a random ms offset ────────
+  const BURST_SIZE = 5;
   const BURST_EVERY_MS = 1000;
   let sendQueue = [];
   let sendTimer = null;
@@ -411,11 +411,11 @@ window.FarmGod.Main = (function (Library, Translation) {
     observer.observe(target, { childList: true, subtree: true });
   };
 
-  // ── Send queue: burst of up to 4 per second, random offsets 0-950ms ──────
+  // ── Send queue: burst of up to 5 per second, random offsets 0-1000ms ──────
   const fireBurst = function () {
     if (botDetected || sendQueue.length === 0) return;
 
-    // Generate 4 unique random offsets within 1 second
+    // Generate 5 unique random offsets within 1 second
     let offsets = [];
     while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
       offsets.push(Math.floor(Math.random() * 950));
