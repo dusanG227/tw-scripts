@@ -1,6 +1,8 @@
 // Hungarian translation provided by =Krumpli=
 
-ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
+if (typeof ScriptAPI !== 'undefined') {
+  ScriptAPI.register('FarmGod', true, 'Warre', 'nl.tribalwars@coma.innogames.de');
+}
 
 window.FarmGod = {};
 window.FarmGod.Library = (function () {
@@ -293,31 +295,31 @@ window.FarmGod.Translation = (function () {
       },
     },
     hu_HU: {
-      missingFeatures: 'A scriptnek szÃ¼ksÃ©ge van PrÃ©mium fiÃ³kra Ã©s FarmkezelÅ're!',
+      missingFeatures: 'A scriptnek sz\u00FCks\u00E9ge van Pr\u00E9mium fi\u00F3kra \u00E9s FarmkezelÅ\u0151re!',
       options: {
-        title: 'FarmGod opciÃ³k',
-        warning: '<b>Figyelem:</b><br>- Bizonyosodj meg rÃ³la, hogy az "A" sablon az alapÃ©rtelmezett Ã©s a "B" egy nagyobb mennyisÃ©gÅ± mikrÃ³-farm<br>- Bizonyosodj meg rÃ³la, hogy a farm-filterek megfelelÅ'en vannak beÃ¡llÃ­tva mielÅ'tt hasznÃ¡lod a sctiptet', "A" sablon az alapÃ©rtelmezett Ã©s a "B" egy nagyobb mennyisÃ©gÅ± mikrÃ³-farm<br>- Bizonyosodj meg rÃ³la, hogy a farm-filterek megfelelÅ'en vannak beÃ¡llÃ­tva mielÅ'tt hasznÃ¡lod a sctiptet',
+        title: 'FarmGod opci\u00F3k',
+        warning: '<b>Figyelem:</b><br>- Bizonyosodj meg r\u00F3la, hogy az "A" sablon az alap\u00E9rtelmezett \u00E9s a "B" egy nagyobb mennyis\u00E9g\u0171 mikr\u00F3-farm<br>- Bizonyosodj meg r\u00F3la, hogy a farm-filterek megfelel\u0151en vannak be\u00E1ll\u00EDtva miel\u0151tt haszn\u00E1lod a sctiptet',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters_HU.png',
-        group: 'EbbÅ'l a csoportbÃ³l kÃ¼ldje:',
-        distance: 'MaximÃ¡lis mezÅ' tÃ¡volsÃ¡g:',
-        time: 'Mekkora idÅ'intervallumban kÃ¼ldje a tÃ¡madÃ¡sokat percben:',
-        losses: 'KÃ¼ldjÃ¶n tÃ¡madÃ¡st olyan falvakba ahol rÃ©szleges vesztesÃ©ggel jÃ¡rhat a tÃ¡madÃ¡s:',
-        maxloot: 'A "B" sablont kÃ¼ldje abban az esetben, ha az elÅ'zÅ' tÃ¡madÃ¡s maximÃ¡lis fosztogatÃ¡ssal jÃ¡rt:',
-        newbarbs: 'Adj hozzÃ¡ Ãºj barbÃ¡r falukat:',
-        button: 'Farm megtervezÃ©se',
+        group: 'Ebb\u0151l a csoportb\u00F3l k\u00FClje:',
+        distance: 'Maxim\u00E1lis mez\u0151 t\u00E1vols\u00E1g:',
+        time: 'Mekkora id\u0151intervallumban k\u00FClje a t\u00E1mad\u00E1sokat percben:',
+        losses: 'K\u00FCldj\u00F6n t\u00E1mad\u00E1st olyan falvakba ahol r\u00E9szleges vesztes\u00E9ggel j\u00E1rhat a t\u00E1mad\u00E1s:',
+        maxloot: 'A "B" sablont k\u00FClje abban az esetben, ha az el\u0151z\u0151 t\u00E1mad\u00E1s maxim\u00E1lis fosztogat\u00E1ssal j\u00E1rt:',
+        newbarbs: 'Adj hozz\u00E1 \u00FAj barb\u00E1r falukat:',
+        button: 'Farm megtervez\u00E9se',
       },
       table: {
-        noFarmsPlanned: 'A jelenlegi beÃ¡llÃ­tÃ¡sokkal nem lehet Ãºj tÃ¡madÃ¡st kikÃ¼ldeni.',
+        noFarmsPlanned: 'A jelenlegi be\u00E1ll\u00EDt\u00E1sokkal nem lehet \u00FAj t\u00E1mad\u00E1st kik\u00FCldeni.',
         origin: 'Origin',
-        target: 'CÃ©lpont',
-        fields: 'TÃ¡volsÃ¡g',
+        target: 'C\u00E9lpont',
+        fields: 'T\u00E1vols\u00E1g',
         farm: 'Farm',
         goTo: 'Go to',
       },
       messages: {
-        villageChanged: 'Falu sikeresen megvÃ¡ltoztatva!',
-        villageError: 'Minden farm kiment a jelenlegi falubÃ³l!',
-        sendError: 'Hiba: Farm nemvolt elkÃ¼ldve!',
+        villageChanged: 'Falu sikeresen megv\u00E1ltoztatva!',
+        villageError: 'Minden farm kiment a jelenlegi falub\u00F3l!',
+        sendError: 'Hiba: Farm nemvolt elk\u00FCldve!',
       },
     },
     int: {
@@ -364,8 +366,8 @@ window.FarmGod.Main = (function (Library, Translation) {
   let curVillage = null;
 
   // ── Rate limiter: max 4 sends per second ──────────────────────────────────
-  const SEND_INTERVAL_MIN = 230; // jitter min ms (~4/sec)
-  const SEND_INTERVAL_MAX = 280; // jitter max ms (~4/sec)
+  const SEND_INTERVAL_MIN = 230;
+  const SEND_INTERVAL_MAX = 280;
   let nextSendDelay = SEND_INTERVAL_MIN;
   let lastSendTime = 0;
   let sendQueue = [];
