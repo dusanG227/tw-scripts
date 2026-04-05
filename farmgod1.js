@@ -371,13 +371,10 @@ window.FarmGod.Main = (function (Library, Translation) {
   let sendQueue = [];
   let sendTimer = null;
 
-
-
   // ── Send queue: burst of up to 5 per second, random offsets 0-1000ms ──────
   const fireBurst = function () {
     if (sendQueue.length === 0) return;
 
-    // Generate 5 unique random offsets within 1 second
     let offsets = [];
     while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
       offsets.push(Math.floor(Math.random() * 950));
@@ -397,7 +394,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   const startSendQueue = function () {
     if (sendTimer) return;
-    fireBurst(); // fire immediately on start
+    fireBurst();
     sendTimer = setInterval(function () {
       if (sendQueue.length === 0) {
         clearInterval(sendTimer);
@@ -407,7 +404,6 @@ window.FarmGod.Main = (function (Library, Translation) {
       fireBurst();
     }, BURST_EVERY_MS);
   };
-
 
   const init = function () {
     if (
@@ -451,6 +447,10 @@ window.FarmGod.Main = (function (Library, Translation) {
                 UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
                 $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
 
+                // Auto-enqueue all planned farm icons
+                $('.farmGod_icon').each(function () {
+                  sendQueue.push($(this));
+                });
                 startSendQueue();
               });
             });
@@ -466,25 +466,6 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const bindEventHandlers = function () {
-    $('.farmGod_icon')
-      .off('click')
-      .on('click', function () {
-        if (game_data.market != 'nl' || $(this).data('origin') == curVillage) {
-          enqueueSend($(this));
-        } else {
-          UI.ErrorMessage(t.messages.villageError);
-        }
-      });
-
-    $(document)
-      .off('keydown')
-      .on('keydown', (event) => {
-        if ((event.keyCode || event.which) == 13) {
-          let $first = $('.farmGod_icon').first();
-          if ($first.length) enqueueSend($first);
-        }
-      });
-
     $('.switchVillage')
       .off('click')
       .on('click', function () {
