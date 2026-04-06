@@ -491,6 +491,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const enqueueSend = function ($icon) {
+    $icon.closest('.farmRow').hide(); // okamžite skryj riadok, aby ďalší Enter vybral iný cieľ
     sendQueue.push($icon);
     if (!sendTimer) startSendQueue();
   };
