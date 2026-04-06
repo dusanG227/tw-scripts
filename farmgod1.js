@@ -365,9 +365,9 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Burst sender: 5 attacks per second, each at a random ms offset ────────
+  // ── Burst sender: 5 attacks per ~1100ms (~4.8/sec), random offsets ─────────
   const BURST_SIZE = 5;
-  const BURST_EVERY_MS = 1000;
+  const BURST_EVERY_MS = 1100;
   let sendQueue = [];
   let sendTimer = null;
 
@@ -447,11 +447,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                 UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
                 $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
 
-                // Auto-enqueue all planned farm icons
-                $('.farmGod_icon').each(function () {
-                  sendQueue.push($(this));
-                });
-                startSendQueue();
+
               });
             });
 
@@ -466,6 +462,25 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const bindEventHandlers = function () {
+    $('.farmGod_icon')
+      .off('click')
+      .on('click', function () {
+        if (game_data.market != 'nl' || $(this).data('origin') == curVillage) {
+          enqueueSend($(this));
+        } else {
+          UI.ErrorMessage(t.messages.villageError);
+        }
+      });
+
+    $(document)
+      .off('keydown')
+      .on('keydown', (event) => {
+        if ((event.keyCode || event.which) == 13) {
+          let $first = $('.farmGod_icon').first();
+          if ($first.length) enqueueSend($first);
+        }
+      });
+
     $('.switchVillage')
       .off('click')
       .on('click', function () {
