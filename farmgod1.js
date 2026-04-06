@@ -367,7 +367,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   // ── Burst sender: 5 attacks per second, each at a random ms offset ────────
   const BURST_SIZE = 5;
-  const BURST_EVERY_MS = 1000;
+  const BURST_EVERY_MS = 1050;
   let sendQueue = [];
   let sendTimer = null;
 
@@ -377,7 +377,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     let offsets = [];
     while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
-      offsets.push(Math.floor(Math.random() * 950));
+      offsets.push(Math.floor(Math.random() * 980));
     }
     offsets.sort((a, b) => a - b);
 
