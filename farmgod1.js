@@ -365,44 +365,28 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Burst sender: 4 attacks per second, each at a random ms offset ────────
-  const BURST_SIZE = 4;
-  const BURST_EVERY_MS = 1100;
+  // ── Send queue: one attack every 220-280ms randomly ──────────────────────
   let sendQueue = [];
   let sendTimer = null;
 
-  // ── Send queue: burst of up to 4 per second, random offsets 0-1000ms ──────
-  const fireBurst = function () {
-    if (sendQueue.length === 0) return;
-
-    let offsets = [];
-    while (offsets.length < BURST_SIZE && sendQueue.length > 0) {
-      offsets.push(Math.floor(Math.random() * 800));
+  const fireNext = function () {
+    if (sendQueue.length === 0) {
+      sendTimer = null;
+      return;
     }
-    offsets.sort((a, b) => a - b);
 
-    offsets.forEach(function (delay, i) {
-      let $icon = sendQueue.shift();
-      if (!$icon) return;
-      setTimeout(function () {
-        if ($icon.closest('.farmRow').length) {
-          executeSend($icon);
-        }
-      }, delay);
-    });
+    let $icon = sendQueue.shift();
+    if ($icon && $icon.closest('.farmRow').length) {
+      executeSend($icon);
+    }
+
+    let delay = 220 + Math.floor(Math.random() * 61); // 220-280ms
+    sendTimer = setTimeout(fireNext, delay);
   };
 
   const startSendQueue = function () {
     if (sendTimer) return;
-    fireBurst();
-    sendTimer = setInterval(function () {
-      if (sendQueue.length === 0) {
-        clearInterval(sendTimer);
-        sendTimer = null;
-        return;
-      }
-      fireBurst();
-    }, BURST_EVERY_MS);
+    fireNext();
   };
 
   const init = function () {
@@ -583,10 +567,10 @@ window.FarmGod.Main = (function (Library, Translation) {
         }
         plan[prop].forEach((val, i) => {
           html += `<tr class="farmRow row_${i % 2 == 0 ? 'a' : 'b'}">
-                    <td style="text-align:center;"><a href="${game_data.link_base_pure}info_village&id=${val.origin.id}">${val.origin.name} (${val.origin.coord})</a></td>
-                    <td style="text-align:center;"><a href="${game_data.link_base_pure}info_village&id=${val.target.id}">${val.target.coord}</a></td>
+                    <td style="text-align:center;"><a href__="${game_data.link_base_pure}info_village&id=${val.origin.id}">${val.origin.name} (${val.origin.coord})</a></td>
+                    <td style="text-align:center;"><a href__="${game_data.link_base_pure}info_village&id=${val.target.id}">${val.target.coord}</a></td>
                     <td style="text-align:center;">${val.fields.toFixed(2)}</td>
-                    <td style="text-align:center;"><a href="#" data-origin="${val.origin.id}" data-target="${val.target.id}" data-template="${val.template.id}" class="farmGod_icon farm_icon farm_icon_${val.template.name}" style="margin:auto;"></a></td>
+                    <td style="text-align:center;"><a href__="#" data-origin="${val.origin.id}" data-target="${val.target.id}" data-template="${val.template.id}" class="farmGod_icon farm_icon farm_icon_${val.template.name}" style="margin:auto;"></a></td>
                   </tr>`;
         });
       }
