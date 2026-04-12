@@ -365,7 +365,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Send queue: one attack every 170-210ms randomly ──────────────────────
+  // ── Send queue: one attack every 180-220ms randomly ──────────────────────
   let sendQueue = [];
   let sendTimer = null;
 
@@ -380,7 +380,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       executeSend($icon);
     }
 
-    let delay = 170 + Math.floor(Math.random() * 41); // 170-210ms
+    let delay = 180 + Math.floor(Math.random() * 41); // 180-220ms
     sendTimer = setTimeout(fireNext, delay);
   };
 
