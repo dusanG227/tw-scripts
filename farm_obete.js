@@ -1,31 +1,21 @@
 /*
- * Script Name: Clear Barbarian Walls
- * Version: v1.6.1
- * Last Updated: 2025-08-15
- * Author: RedAlert
- * Author URL: https://twscripts.dev/
- * Author Contact: redalert_tw (Discord)
- * Approved: N/A
- * Approved Date: 2021-04-21
- * Mod: JawJaw
+ * Local fixed variant of farm_obete.js
+ * Fixes the invalid UNITS_TO_SEND block so the script can be evaluated.
  */
 
-/* Copyright (c) RedAlert
-By uploading a user-generated mod (script) for use with Tribal Wars, you grant InnoGames a perpetual, irrevocable, worldwide, royalty-free, non-exclusive license to use, reproduce, distribute, publicly display, modify, and create derivative works of the mod. This license permits InnoGames to incorporate the mod into any aspect of the game and its related services, including promotional and commercial endeavors, without any requirement for compensation or attribution to you. InnoGames is entitled but not obligated to name you when exercising its rights. You represent and warrant that you have the legal right to grant this license and that the mod does not infringe upon any third-party rights. You are - with the exception of claims of infringement by third parties â€“ not liable for any usage of the mod by InnoGames. German law applies.
-*/
-
 /*
- javascript:var UNITS_TO_SEND = {
-    insertUnit(doc.forms[0].spy,1);
-    insertUnit(doc.forms[0].light,6);
-    insertUnit(doc.forms[0].ram,2);
-    insertUnit(doc.forms[0].catapult,6);
- };$.getScript('https://twscripts.dev/scripts/clearBarbarianWalls.js');
-*/
+ * Script Name: Clear Barbarian Walls
+ * Version: v1.6.1-fixed
+ * Last Updated: 2026-04-19
+ * Author: RedAlert
+ * Author URL: https://twscripts.dev/
+ * Mod: JawJaw
+ * Local Fix: Codex
+ */
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.6.0',
+    version: 'v1.6.1-fixed',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -36,10 +26,18 @@ var scriptData = {
 if (typeof DEBUG !== 'boolean') DEBUG = false; // enable/disable debug mode
 if (typeof UNITS_TO_SEND === 'undefined')
     UNITS_TO_SEND = {
-        insertUnit(doc.forms[0].spy,1);
-    insertUnit(doc.forms[0].light,6);
-    insertUnit(doc.forms[0].ram,2);
-    insertUnit(doc.forms[0].catapult,6);
+        0: '&spy=1&light=6&ram=2&catapult=6',
+        1: '&spy=1&light=6&ram=2&catapult=6',
+        2: '&spy=1&light=6&ram=2&catapult=6',
+        3: '&spy=1&light=6&ram=2&catapult=6',
+        4: '&spy=1&light=6&ram=2&catapult=6',
+        5: '&spy=1&light=6&ram=2&catapult=6',
+        6: '&spy=1&light=6&ram=2&catapult=6',
+        7: '&spy=1&light=6&ram=2&catapult=6',
+        8: '&spy=1&light=6&ram=2&catapult=6',
+        9: '&spy=1&light=6&ram=2&catapult=6',
+        10: '&spy=1&light=6&ram=2&catapult=6',
+        '?': '&spy=1&light=6&ram=2&catapult=6',
     };
 
 // Globals
@@ -132,19 +130,14 @@ async function initClearBarbarianWalls(store) {
     );
 }
 
-// Update map to include barbarians
 function updateMap(barbarians) {
     const barbCoords = barbarians.map((barbarian) => barbarian.coord);
-    // Show wall level of barbarian villages on the Map
     if (mapOverlay.mapHandler._spawnSector) {
-        //exists already, don't recreate
     } else {
-        //doesn't exist yet
         mapOverlay.mapHandler._spawnSector = mapOverlay.mapHandler.spawnSector;
     }
 
     TWMap.mapHandler.spawnSector = function (data, sector) {
-        // Override Map Sector Spawn
         mapOverlay.mapHandler._spawnSector(data, sector);
         var beginX = sector.x - data.x;
         var endX = beginX + mapOverlay.mapSubSectorSize;
@@ -152,15 +145,10 @@ function updateMap(barbarians) {
         var endY = beginY + mapOverlay.mapSubSectorSize;
         for (var x in data.tiles) {
             var x = parseInt(x, 10);
-            if (x < beginX || x >= endX) {
-                continue;
-            }
+            if (x < beginX || x >= endX) continue;
             for (var y in data.tiles[x]) {
                 var y = parseInt(y, 10);
-
-                if (y < beginY || y >= endY) {
-                    continue;
-                }
+                if (y < beginY || y >= endY) continue;
                 var xCoord = data.x + x;
                 var yCoord = data.y + y;
                 var v = mapOverlay.villages[xCoord * 1000 + yCoord];
@@ -204,7 +192,6 @@ function updateMap(barbarians) {
     mapOverlay.reload();
 }
 
-// Prepare content
 function prepareContent(villages, maxBarbsToShow) {
     if (villages.length) {
         const barbsTable = buildBarbsTable(villages, maxBarbsToShow);
@@ -232,7 +219,6 @@ function prepareContent(villages, maxBarbsToShow) {
     }
 }
 
-// Render UI
 function renderUI(body) {
     const content = `
         <div class="ra-clear-barbs-walls" id="raClearBarbWalls">
@@ -268,8 +254,6 @@ function renderUI(body) {
 			.ra-clear-barbs-walls-header h3 { margin: 0; padding: 0; line-height: 1; }
 			.ra-clear-barbs-walls-body p { font-size: 14px; }
             .ra-clear-barbs-walls-body label { display: block; font-weight: 600; margin-bottom: 6px; }
-            
-			/* Table Styling */
 			.ra-table-container { overflow-y: auto; overflow-x: hidden; height: auto; max-height: 312px;border: 1px solid #bc6e1f; }
 			.ra-table th { font-size: 14px; }
 			.ra-table th,
@@ -279,16 +263,10 @@ function renderUI(body) {
 			.ra-table a.btn:focus { color: #fff; }
 			.ra-table tr:nth-of-type(2n) td { background-color: #f0e2be }
 			.ra-table tr:nth-of-type(2n+1) td { background-color: #fff5da; }
-
-			/* Popup */
 			.ra-popup-content { width: 360px; }
 			.ra-popup-content * { box-sizing: border-box; }
 			.ra-popup-content input[type="text"] { padding: 3px; width: 100%; }
-
-			/* Helpers */
             .ra-mb15 { margin-bottom: 15px; }
-
-			/* Elements */
 			.already-sent-command { opacity: 0.6; }
         </style>
     `;
@@ -300,7 +278,6 @@ function renderUI(body) {
     }
 }
 
-// Action Handlers: Show Settings Panel
 function showSettingsPanel(store) {
     jQuery('#showSettingsPanel').on('click', function (e) {
         e.preventDefault();
@@ -352,7 +329,6 @@ function showSettingsPanel(store) {
     });
 }
 
-// Action Handlers: Save Settings
 function saveSettings() {
     jQuery('#saveSettingsBtn').on('click', function (e) {
         e.preventDefault();
@@ -367,13 +343,10 @@ function saveSettings() {
 
         writeStorage(data, readStorage(DEFAULT_STATE));
         UI.SuccessMessage(tt('Settings saved!'), 1000);
-
-        // Update UI to reflect new settings
         initClearBarbarianWalls(data);
     });
 }
 
-// Build barbs table
 function buildBarbsTable(villages, maxBarbsToShow) {
     villages = villages.slice(0, maxBarbsToShow);
 
@@ -381,37 +354,21 @@ function buildBarbsTable(villages, maxBarbsToShow) {
 		<table class="ra-table" width="100%">
 			<thead>
 				<tr>
-					<th>
-						#
-					</th>
-					<th>
-						${tt('Type')}
-					</th>
-					<th>
-						${tt('Barbarian')}
-					</th>
-					<th>
-						${tt('Report')}
-					</th>
-					<th>
-						${tt('Distance')}
-					</th>
-					<th>
-						${tt('Wall')}
-					</th>
-					<th>
-						${tt('Last Attack Time')}
-					</th>
-					<th>
-						${tt('Actions')}
-					</th>
+					<th>#</th>
+					<th>${tt('Type')}</th>
+					<th>${tt('Barbarian')}</th>
+					<th>${tt('Report')}</th>
+					<th>${tt('Distance')}</th>
+					<th>${tt('Wall')}</th>
+					<th>${tt('Last Attack Time')}</th>
+					<th>${tt('Actions')}</th>
 				</tr>
 			</thead>
 			<tbody>
 	`;
 
     villages.forEach((village, index) => {
-        index++; // update index so it starts at 1 instead of 0
+        index++;
         const { villageId, coord, wall, reportId, reportTime, type, distance } =
             village;
 
@@ -423,36 +380,14 @@ function buildBarbsTable(villages, maxBarbsToShow) {
 
         barbsTable += `
 			<tr>
-				<td>
-					${index}
-				</td>
-				<td>
-					<img src="${type}">
-				</td>
-				<td>
-					<a href="${villageUrl}" target="_blank" rel="noopener noreferrer">
-						${coord}
-					</a>
-				</td>
-				<td>
-					<a href="${reportUrl}" target="_blank" rel="noopener noreferrer">
-						<span class="icon header new_report"></span>
-					</a>
-				</td>
-				<td>
-					${distance}
-				</td>
-				<td>
-					${wall !== '?' ? wall : '<b style="color:red;">?</b>'}
-				</td>
-				<td>
-					${reportTime}
-				</td>
-				<td>
-					<a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_blank" rel="noopener noreferrer">
-						${tt('Attack')}
-					</a>
-				</td>
+				<td>${index}</td>
+				<td><img src="${type}"></td>
+				<td><a href="${villageUrl}" target="_blank" rel="noopener noreferrer">${coord}</a></td>
+				<td><a href="${reportUrl}" target="_blank" rel="noopener noreferrer"><span class="icon header new_report"></span></a></td>
+				<td>${distance}</td>
+				<td>${wall !== '?' ? wall : '<b style="color:red;">?</b>'}</td>
+				<td>${reportTime}</td>
+				<td><a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_blank" rel="noopener noreferrer">${tt('Attack')}</a></td>
 			</tr>
 		`;
     });
@@ -465,14 +400,12 @@ function buildBarbsTable(villages, maxBarbsToShow) {
     return barbsTable;
 }
 
-// Action Handler: Highlight Opened Commands
 function highlightOpenedCommands(element) {
     element.classList.add('btn-confirm-yes');
     element.classList.add('btn-already-sent');
     element.parentElement.parentElement.classList.add('already-sent-command');
 }
 
-// Helper: Get FA pages URLs for AJAX
 async function fetchFAPages(maxFAPagesToFetch) {
     const faPageURLs = await jQuery
         .get(game_data.link_base_pure + 'am_farm')
@@ -485,7 +418,6 @@ async function fetchFAPages(maxFAPagesToFetch) {
                 game_data.link_base_pure +
                 `am_farm&ajax=page_entries&Farm_page=0&class=&extended=1`;
 
-            // Getting amount of LA pages
             const faPageURLs = [firstFApage];
             jQuery(plunderListNav).each(function (index) {
                 index++;
@@ -513,7 +445,6 @@ async function fetchFAPages(maxFAPagesToFetch) {
     return faPageURLs;
 }
 
-// Helper: Get FA table rows for all pages
 function getFATableRows(pages) {
     let barbariansText = '';
     pages.forEach((page) => {
@@ -522,7 +453,6 @@ function getFATableRows(pages) {
     return jQuery.parseHTML(barbariansText);
 }
 
-// Helper: Get barbarian villages with wall bigger then 0
 function getFABarbarians(rows) {
     let barbarians = [];
 
@@ -558,7 +488,6 @@ function getFABarbarians(rows) {
         if (parseInt(wall) > 0 || wall === '?') {
             shouldAdd = true;
             if (isGreenReportWithUnknownWall) {
-                // do not show green reports with unknown wall on the table
                 shouldAdd = false;
             }
         }
@@ -579,7 +508,6 @@ function getFABarbarians(rows) {
     return barbarians;
 }
 
-// Helper: Calculate units to send based on wall level
 function calculateUnitsToSend(wall) {
     let wallToUnitAmounts = UNITS_TO_SEND;
 
@@ -590,16 +518,10 @@ function calculateUnitsToSend(wall) {
     }
 }
 
-// Helper: Make consecutive AJAX (GET) requests
-$.fetchAll = function (
-    urls, // array of URLs
-    onLoad, // called when any URL is loaded, params (index, data)
-    onDone, // called when all URLs successfully loaded, no params
-    onError // called when a URL load fails or if onLoad throws an exception, params (error)
-) {
+$.fetchAll = function (urls, onLoad, onDone, onError) {
     var numDone = 0;
     var lastRequestTime = 0;
-    var minWaitTime = 250; // ms between requests
+    var minWaitTime = 250;
     loadNext();
     function loadNext() {
         if (numDone == urls.length) {
@@ -631,7 +553,6 @@ $.fetchAll = function (
     }
 };
 
-// Helper: Progress bar UI
 function startProgressBar(total) {
     const width = jQuery('#contentContainer')[0].clientWidth;
     const preloaderContent = `
@@ -647,7 +568,6 @@ function startProgressBar(total) {
     $('#contentContainer').eq(0).prepend(preloaderContent);
 }
 
-// Helper: Updates progress bar
 function updateProgressBar(index, total) {
     jQuery('#progress').css('width', `${((index + 1) / total) * 100}%`);
     jQuery('.count').text(`${tt('Fetching')} ${index + 1}/${total}`);
@@ -657,7 +577,6 @@ function updateProgressBar(index, total) {
     }
 }
 
-// Helper: Read client-side storage
 function readStorage(defaultState) {
     let storedState = sessionStorage.getItem(STORAGE_KEY);
     if (!storedState) return defaultState;
@@ -666,7 +585,6 @@ function readStorage(defaultState) {
     return storedState;
 }
 
-// Helper: Write into client-side storage
 function writeStorage(data, initialState) {
     const dataToBeSaved = {
         ...initialState,
@@ -675,19 +593,16 @@ function writeStorage(data, initialState) {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(dataToBeSaved));
 }
 
-// Helper: Get parameter by name
 function getParameterByName(name, url = window.location.href) {
     return new URL(url).searchParams.get(name);
 }
 
-// Helper: Generates script info
 function scriptInfo() {
     return `[${scriptData.name} ${scriptData.version}]`;
 }
 
-// Helper: Prints universal debug information
 function initDebug() {
-    console.debug(`${scriptInfo()} It works đźš€!`);
+    console.debug(`${scriptInfo()} It works!`);
     console.debug(`${scriptInfo()} HELP:`, scriptData.helpLink);
     if (DEBUG) {
         console.debug(`${scriptInfo()} Market:`, game_data.market);
@@ -703,7 +618,6 @@ function initDebug() {
     }
 }
 
-// Helper: Text Translator
 function tt(string) {
     var gameLocale = game_data.locale;
 
@@ -714,7 +628,6 @@ function tt(string) {
     }
 }
 
-// Initialize Script
 (function () {
     if (
         game_data.features.FarmAssistent.active &&
