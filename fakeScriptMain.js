@@ -232,6 +232,35 @@
     return { selected: selected, usedPop: usedPop };
   }
 
+  function forceFillToMinimum(selected, availableUnits, usedPop, popBudget) {
+    var fillers = ['light', 'heavy', 'marcher', 'archer', 'axe', 'sword', 'spear'];
+    var maxPerUnit = 10;
+
+    while (usedPop < popBudget) {
+      var progressed = false;
+
+      for (var i = 0; i < fillers.length; i++) {
+        var unitName = fillers[i];
+        var pop = unitPop[unitName] || 1;
+        var already = selected[unitName] || 0;
+        var available = (availableUnits[unitName] || 0) - already;
+
+        if (available <= 0 || already >= maxPerUnit) continue;
+        if (usedPop + pop > popBudget) continue;
+
+        selected[unitName] = already + 1;
+        usedPop += pop;
+        progressed = true;
+
+        if (usedPop >= popBudget) break;
+      }
+
+      if (!progressed) break;
+    }
+
+    return { selected: selected, usedPop: usedPop };
+  }
+
   function selectRandomUnits(availableUnits, fakeLimitPct, villagePoints) {
     var hasSpy = (availableUnits.spy || 0) >= 1;
     var hasRam = (availableUnits.ram || 0) >= 2;
@@ -286,6 +315,15 @@
 
     var filled = smartFill(selected, availableUnits, usedPop, popBudget);
     selected = filled.selected;
+    usedPop = filled.usedPop;
+
+    if (usedPop < popBudget) {
+      filled = forceFillToMinimum(selected, availableUnits, usedPop, popBudget);
+      selected = filled.selected;
+      usedPop = filled.usedPop;
+    }
+
+    if (usedPop < popBudget) return {};
 
     for (var k in selected) {
       if (selected[k] > (availableUnits[k] || 0)) return {};
@@ -596,7 +634,7 @@
       arrivalStart = aStart ? new Date(aStart) : null;
       arrivalEnd = aEnd ? new Date(aEnd) : null;
 
-      fakeLimit = clampNumber(document.getElementById('tw-cfg-fakelimit').value, 0.1, 100, 0.5);
+        fakeLimit = clampNumber(document.getElementById('tw-cfg-fakelimit').value, 0.1, 100, 0.5);
       fakeLimitRounding = document.getElementById('tw-cfg-rounding').value || 'floor';
       openTabs = clampInt(document.getElementById('tw-cfg-opentabs').value, 1, 50, 5);
       openTabDelayMs = clampInt(document.getElementById('tw-cfg-tabdelay').value, 0, 60000, 0);
@@ -615,10 +653,10 @@
         arrivalStart: arrivalStart ? arrivalStart.toISOString() : '',
         arrivalEnd: arrivalEnd ? arrivalEnd.toISOString() : '',
         fakeLimit: fakeLimit,
-        openTabs: openTabs,
-        openTabDelayMs: openTabDelayMs,
+          openTabs: openTabs,
+          openTabDelayMs: openTabDelayMs,
         fakeLimitRounding: fakeLimitRounding,
-        maxFakesPerTarget: maxFakesPerTarget,
+          maxFakesPerTarget: maxFakesPerTarget,
         maxFakesPerVillage: maxFakesPerVillage,
         unitMode: unitMode,
         coordTables: coordTables,
