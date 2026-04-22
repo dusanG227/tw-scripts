@@ -22,6 +22,8 @@
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
   var unitMode = 'random';
+  var fakeLimitRounding = 'floor';
+  var villagePointsSource = 'combined';
 
   var arrivalStart = config.arrivalStart ? new Date(config.arrivalStart) : null;
   var arrivalEnd = config.arrivalEnd ? new Date(config.arrivalEnd) : null;
@@ -42,6 +44,9 @@
   if (persistedState.maxFakesPerTarget != null) maxFakesPerTarget = Math.max(0, parseInt(persistedState.maxFakesPerTarget, 10) || 0);
   if (persistedState.maxFakesPerVillage != null) maxFakesPerVillage = Math.max(0, parseInt(persistedState.maxFakesPerVillage, 10) || 0);
   if (persistedState.unitMode === 'manual' || persistedState.unitMode === 'random') unitMode = persistedState.unitMode;
+  if (persistedState.fakeLimitRounding === 'ceil' || persistedState.fakeLimitRounding === 'round' || persistedState.fakeLimitRounding === 'floor') {
+    fakeLimitRounding = persistedState.fakeLimitRounding;
+  }
 
   function log(msg) { console.log('[TW-Fake] ' + msg); }
 
@@ -130,6 +135,19 @@
       normalized.push({ x: x, y: y });
     }
     return normalized;
+  }
+
+  function getPointBasedFakePop(villagePoints, fakeLimitPct) {
+    var raw = villagePoints > 0 ? villagePoints * (fakeLimitPct / 100) : 0;
+    if (!raw) return 0;
+    if (fakeLimitRounding === 'ceil') return Math.ceil(raw);
+    if (fakeLimitRounding === 'round') return Math.round(raw);
+    return Math.floor(raw);
+  }
+
+  function getFakePopBudget(fakeLimitPct, villagePoints, minRequired) {
+    var pointBased = getPointBasedFakePop(villagePoints, fakeLimitPct);
+    return Math.max(minRequired, pointBased || 52);
   }
 
   function createTable(name, tableTargets) {
@@ -222,8 +240,7 @@
 
     var minRamCat = hasRam ? unitPop.ram * 2 : unitPop.catapult * 2;
     var minRequired = unitPop.spy + minRamCat;
-    var pointBased = villagePoints > 0 ? Math.ceil(villagePoints * (fakeLimitPct / 100)) : 0;
-    var popBudget = Math.max(minRequired, pointBased || 52);
+    var popBudget = getFakePopBudget(fakeLimitPct, villagePoints, minRequired);
 
     var selected = {};
     var usedPop = 0;
@@ -283,8 +300,7 @@
     if (!hasSpy || (!hasRam && !hasCat)) return {};
 
     var minRequired = unitPop.spy + (hasRam ? unitPop.ram * 2 : unitPop.catapult * 2);
-    var pointBased = villagePoints > 0 ? Math.ceil(villagePoints * (fakeLimitPct / 100)) : 0;
-    var maxPop = Math.max(minRequired, pointBased || 52);
+    var maxPop = getFakePopBudget(fakeLimitPct, villagePoints, minRequired);
 
     var selected = {};
     var usedPop = 0;
@@ -497,6 +513,13 @@
     h += '<td><input id="tw-cfg-fakelimit" type="number" value="' + fakeLimit + '" step="0.1" min="0.1" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
     h += '<div style="font-size:9px;color:#8b7355;">% z bodov dediny = max veľkosť fake útoku</div></td></tr>';
 
+    h += '<tr><td style="padding:3px;font-weight:bold;">Zaokrúhlenie fake:</td>';
+    h += '<td><select id="tw-cfg-rounding" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;">';
+    h += '<option value="floor"' + (fakeLimitRounding === 'floor' ? ' selected' : '') + '>floor (51.75 → 51)</option>';
+    h += '<option value="ceil"' + (fakeLimitRounding === 'ceil' ? ' selected' : '') + '>ceil (51.75 → 52)</option>';
+    h += '<option value="round"' + (fakeLimitRounding === 'round' ? ' selected' : '') + '>round (51.75 → 52)</option>';
+    h += '</select><div style="font-size:9px;color:#8b7355;">Počíta sa z bodov z Produkcie, ak sa ju podarí načítať</div></td></tr>';
+
     h += '<tr><td style="padding:3px;font-weight:bold;">Open tabs:</td>';
     h += '<td><input id="tw-cfg-opentabs" type="number" value="' + openTabs + '" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
 
@@ -574,6 +597,7 @@
       arrivalEnd = aEnd ? new Date(aEnd) : null;
 
       fakeLimit = clampNumber(document.getElementById('tw-cfg-fakelimit').value, 0.1, 100, 0.5);
+      fakeLimitRounding = document.getElementById('tw-cfg-rounding').value || 'floor';
       openTabs = clampInt(document.getElementById('tw-cfg-opentabs').value, 1, 50, 5);
       openTabDelayMs = clampInt(document.getElementById('tw-cfg-tabdelay').value, 0, 60000, 0);
       maxFakesPerTarget = Math.max(0, parseInt(document.getElementById('tw-cfg-maxpertarget').value, 10) || 0);
@@ -593,6 +617,7 @@
         fakeLimit: fakeLimit,
         openTabs: openTabs,
         openTabDelayMs: openTabDelayMs,
+        fakeLimitRounding: fakeLimitRounding,
         maxFakesPerTarget: maxFakesPerTarget,
         maxFakesPerVillage: maxFakesPerVillage,
         unitMode: unitMode,
@@ -605,12 +630,14 @@
     };
   }
 
-  function runFakeAttacks() {
+  async function runFakeAttacks() {
     var villages = parseVillagesFromCombined();
     if (!villages.length) {
       alert('⚠️ Nenašli sa žiadne dediny s jednotkami.');
       return;
     }
+
+    await enrichVillagesWithProductionPoints(villages);
 
     var viableVillages = filterViableVillages(villages, targets);
     if (!viableVillages.length) {
@@ -631,6 +658,95 @@
     window._twAttackIndex = 0;
     window._twLaunchInProgress = false;
     showControlPanel(attackQueue);
+  }
+
+  function getVillageKeyByCoords(village) {
+    return village.x + '|' + village.y;
+  }
+
+  function getProductionOverviewUrl() {
+    var link = document.querySelector('a[href*="screen=overview_villages"][href*="mode=prod"]');
+    if (link && link.href) return link.href;
+
+    var url = new URL(window.location.href, window.location.origin);
+    url.searchParams.set('screen', 'overview_villages');
+    url.searchParams.set('mode', 'prod');
+    return url.toString();
+  }
+
+  function parseVillagePointsFromDocument(doc) {
+    var result = {};
+    var rows = doc.querySelectorAll('#production_table tr.row_a, #production_table tr.row_b, #combined_table tr.row_a, #combined_table tr.row_b, tr.row_a, tr.row_b');
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var villageLink = row.querySelector('.quickedit-content a[href*="village="]') || row.querySelector('a[href*="village="]');
+      var coordSource = row.querySelector('.quickedit-label') || villageLink;
+      if (!villageLink || !coordSource) continue;
+
+      var idMatch = (villageLink.href || '').match(/village=(\d+)/);
+      var coordMatch = (coordSource.textContent || '').match(/(\d{3})\|(\d{3})/);
+      if (!coordMatch) continue;
+
+      var pointsEl = row.querySelector('.points') || row.querySelector('td[class*="point"]');
+      if (!pointsEl) continue;
+
+      var points = parseInt((pointsEl.textContent || '').replace(/\D+/g, ''), 10) || 0;
+      var entry = {
+        id: idMatch ? idMatch[1] : null,
+        key: coordMatch[1] + '|' + coordMatch[2],
+        points: points
+      };
+
+      if (entry.id) result['id:' + entry.id] = entry.points;
+      result['coord:' + entry.key] = entry.points;
+    }
+
+    return result;
+  }
+
+  async function fetchProductionPointsMap() {
+    var url = getProductionOverviewUrl();
+    var response = await window.fetch(url, {
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status);
+    }
+
+    var html = await response.text();
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(html, 'text/html');
+    return parseVillagePointsFromDocument(doc);
+  }
+
+  async function enrichVillagesWithProductionPoints(villages) {
+    villagePointsSource = 'combined';
+    try {
+      var pointsMap = await fetchProductionPointsMap();
+      var updated = 0;
+
+      for (var i = 0; i < villages.length; i++) {
+        var village = villages[i];
+        var byId = pointsMap['id:' + village.id];
+        var byCoord = pointsMap['coord:' + getVillageKeyByCoords(village)];
+        var points = typeof byId === 'number' ? byId : byCoord;
+        if (typeof points === 'number' && points > 0) {
+          village.points = points;
+          updated++;
+        }
+      }
+
+      if (updated > 0) {
+        villagePointsSource = 'production';
+        log('📊 Body načítané z Produkcie pre ' + updated + ' dedín.');
+      } else {
+        log('ℹ️ Produkcia sa načítala, ale body sa nepodarilo spárovať. Používam body z Kombinované.');
+      }
+    } catch (e) {
+      log('⚠️ Produkciu sa nepodarilo načítať: ' + e.message + '. Používam body z Kombinované.');
+    }
   }
 
   function parseVillagesFromCombined() {
@@ -890,7 +1006,8 @@
     h += '<div style="background:#fff3cd;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:11px;">';
     h += '<b>' + queue.length + '</b> útokov | Režim: <b>' + (unitMode === 'random' ? '🎲 Random' : '✏️ Manuálny') + '</b><br/>';
     h += 'Tabuľka: <b>' + escapeHtml(activeTable.name) + '</b> | Fake limit: <b>' + fakeLimit + '%</b><br/>';
-    h += 'Tabs: <b>' + openTabs + '</b> | Delay: <b>' + openTabDelayMs + ' ms</b>';
+    h += 'Tabs: <b>' + openTabs + '</b> | Delay: <b>' + openTabDelayMs + ' ms</b><br/>';
+    h += 'Body: <b>' + (villagePointsSource === 'production' ? 'Produkcia' : 'Kombinované') + '</b> | Zaokrúhlenie: <b>' + fakeLimitRounding + '</b>';
     if (maxFakesPerTarget > 0) h += '<br/>Max/cieľ: <b>' + maxFakesPerTarget + '</b>';
     if (maxFakesPerVillage > 0) h += ' | Max/dedina: <b>' + maxFakesPerVillage + '</b>';
     if (arrivalStart || arrivalEnd) {
