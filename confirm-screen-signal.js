@@ -11,9 +11,17 @@ if (typeof ScriptAPI !== 'undefined') {
   var STORAGE_LEAD = 'twConfirmSignal.lead';
   var STORAGE_ARMED = 'twConfirmSignal.armed';
   var TICK_KEY = '__twConfirmSignalTick';
+  var ALERT_ID = 'twConfirmSignalAlert';
 
   function removeOverlay() {
     var node = document.getElementById(OVERLAY_ID);
+    if (node) {
+      node.remove();
+    }
+  }
+
+  function removeAlert() {
+    var node = document.getElementById(ALERT_ID);
     if (node) {
       node.remove();
     }
@@ -138,30 +146,46 @@ if (typeof ScriptAPI !== 'undefined') {
     }
   }
 
-  function vibrateAndFlash() {
-    var overlay = document.getElementById(OVERLAY_ID);
+  function showBigAlert(text) {
+    removeAlert();
 
-    if (navigator.vibrate) {
-      navigator.vibrate([120, 80, 120]);
-    }
+    var alertBox = document.createElement('div');
+    alertBox.id = ALERT_ID;
+    alertBox.style.position = 'fixed';
+    alertBox.style.left = '0';
+    alertBox.style.right = '0';
+    alertBox.style.top = '0';
+    alertBox.style.bottom = '0';
+    alertBox.style.zIndex = '1000000';
+    alertBox.style.background = 'rgba(193,18,31,0.88)';
+    alertBox.style.display = 'flex';
+    alertBox.style.alignItems = 'center';
+    alertBox.style.justifyContent = 'center';
+    alertBox.style.textAlign = 'center';
+    alertBox.style.color = '#ffffff';
+    alertBox.style.fontFamily = 'Arial, sans-serif';
+    alertBox.style.fontWeight = '700';
+    alertBox.style.fontSize = '42px';
+    alertBox.style.lineHeight = '1.15';
+    alertBox.style.padding = '24px';
+    alertBox.style.boxSizing = 'border-box';
+    alertBox.innerHTML = '<div>' + text + '<br><span style="font-size:22px;">KLIKNI RUCNE</span></div>';
 
-    if (overlay) {
-      overlay.style.background = '#ffdfdf';
-      overlay.style.borderColor = '#c1121f';
-      overlay.style.boxShadow = '0 0 0 4px rgba(193,18,31,0.25), 0 12px 30px rgba(0,0,0,0.25)';
-      overlay.style.transform = 'scale(1.02)';
+    document.body.appendChild(alertBox);
 
-      window.setTimeout(function() {
-        if (!document.getElementById(OVERLAY_ID)) {
-          return;
-        }
-        overlay.style.background = '#fff8e7';
-        overlay.style.borderColor = '#c18b3b';
-        overlay.style.boxShadow = '0 12px 30px rgba(0,0,0,0.25)';
-        overlay.style.transform = 'scale(1)';
-      }, 400);
-    }
+    var blink = false;
+    var blinkTimer = window.setInterval(function() {
+      blink = !blink;
+      alertBox.style.background = blink ? 'rgba(193,18,31,0.95)' : 'rgba(255,140,0,0.92)';
+    }, 120);
 
+    window.setTimeout(function() {
+      clearInterval(blinkTimer);
+      removeAlert();
+    }, 1800);
+  }
+
+  function trySound() {
     try {
       var AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) {
@@ -171,9 +195,11 @@ if (typeof ScriptAPI !== 'undefined') {
       var ctx = new AudioContextClass();
       var oscillator = ctx.createOscillator();
       var gain = ctx.createGain();
+
       oscillator.type = 'square';
       oscillator.frequency.value = 880;
-      gain.gain.value = 0.03;
+      gain.gain.value = 0.06;
+
       oscillator.connect(gain);
       gain.connect(ctx.destination);
       oscillator.start();
@@ -181,9 +207,20 @@ if (typeof ScriptAPI !== 'undefined') {
       window.setTimeout(function() {
         oscillator.stop();
         ctx.close();
-      }, 180);
-    } catch (error) {
-      // Audio may be blocked on some devices until user gesture.
+      }, 250);
+    } catch (error) {}
+  }
+
+  function fireSignal(target) {
+    showBigAlert('KLIK TERAZ');
+    trySound();
+    setStatus('SIGNAL TERAZ | ciel ' + formatTime(target) + ' | klikni rucne', '#c1121f');
+
+    var panel = document.getElementById(OVERLAY_ID);
+    if (panel) {
+      panel.style.background = '#ffdfdf';
+      panel.style.borderColor = '#c1121f';
+      panel.style.boxShadow = '0 0 0 4px rgba(193,18,31,0.25), 0 12px 30px rgba(0,0,0,0.25)';
     }
   }
 
@@ -197,6 +234,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
   function armSignal(target, leadMs) {
     stopTick();
+    removeAlert();
     localStorage.setItem(STORAGE_TARGET, formatTime(target));
     localStorage.setItem(STORAGE_LEAD, String(leadMs));
     localStorage.setItem(STORAGE_ARMED, '1');
@@ -209,11 +247,7 @@ if (typeof ScriptAPI !== 'undefined') {
         var signalIn = triggerAt - now.getTime();
 
         if (signalIn <= 0) {
-          vibrateAndFlash();
-          setStatus(
-            'SIGNAL TERAZ | ciel ' + formatTime(target) + ' | klikni rucne',
-            '#c1121f'
-          );
+          fireSignal(target);
           stopTick();
           return;
         }
@@ -229,7 +263,7 @@ if (typeof ScriptAPI !== 'undefined') {
           signalIn <= 1000 ? '#a15c00' : '#17324d'
         );
 
-        window[TICK_KEY] = setTimeout(tick, signalIn > 200 ? 25 : 1);
+        window[TICK_KEY] = setTimeout(tick, signalIn > 300 ? 50 : signalIn > 80 ? 10 : 1);
       } catch (error) {
         stopTick();
         setStatus(error.message, '#b42318');
@@ -259,19 +293,19 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.style.padding = '14px';
     wrap.style.fontFamily = 'Arial, sans-serif';
     wrap.style.color = '#2b2117';
-    wrap.style.transition = 'transform 120ms ease, background 120ms ease, box-shadow 120ms ease, border-color 120ms ease';
+    wrap.style.transition = 'background 120ms ease, box-shadow 120ms ease, border-color 120ms ease';
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
       '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj cas ciela podla <b>serverTime</b>. Script iba signalizuje, neodosiela sam.</div>' +
       '<input id="' + INPUT_ID + '" type="text" inputmode="numeric" placeholder="12:34:56:700" value="' + savedTarget + '" style="width:100%;box-sizing:border-box;font-size:18px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:10px;color:#6b4f2a;">Predstih signalu v ms. Zacni na 200 ms a potom doladime podla tvojej reakcie.</div>' +
+      '<div style="font-size:12px;margin-bottom:10px;color:#6b4f2a;">Pises len cisla. Cas sa sam formatuje. Predstih zacni na 200 ms.</div>' +
       '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
+      '<button id="twConfirmSignalTest" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#b42318;color:#fff;font-weight:700;">Test</button>' +
       '<button id="twConfirmSignalStop" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#6b7280;color:#fff;font-weight:700;">Stop</button>' +
-      '<button id="twConfirmSignalClose" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#efe3d0;color:#2b2117;font-weight:700;">Zavriet</button>' +
       '</div>';
 
     document.body.appendChild(wrap);
@@ -299,13 +333,14 @@ if (typeof ScriptAPI !== 'undefined') {
       }
     };
 
-    document.getElementById('twConfirmSignalStop').onclick = function() {
-      stopTick();
-      setStatus('Signal zastaveny.', '#b42318');
+    document.getElementById('twConfirmSignalTest').onclick = function() {
+      fireSignal(new Date());
     };
 
-    document.getElementById('twConfirmSignalClose').onclick = function() {
-      wrap.remove();
+    document.getElementById('twConfirmSignalStop').onclick = function() {
+      stopTick();
+      removeAlert();
+      setStatus('Signal zastaveny.', '#b42318');
     };
   }
 
