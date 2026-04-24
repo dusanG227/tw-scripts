@@ -6,11 +6,13 @@ if (typeof ScriptAPI !== 'undefined') {
   var OVERLAY_ID = 'twConfirmSignalOverlay';
   var STATUS_ID = 'twConfirmSignalStatus';
   var DEBUG_ID = 'twConfirmSignalDebug';
-  var INPUT_ID = 'twConfirmSignalTime';
+  var HOUR_ID = 'twConfirmSignalHour';
+  var MINUTE_ID = 'twConfirmSignalMinute';
+  var SECOND_ID = 'twConfirmSignalSecond';
+  var MS_ID = 'twConfirmSignalMs';
   var LEAD_ID = 'twConfirmSignalLead';
-  var STORAGE_TARGET = 'twConfirmSignal.target';
+  var STORAGE_TARGET = 'twConfirmSignal.target.parts';
   var STORAGE_LEAD = 'twConfirmSignal.lead';
-  var STORAGE_ARMED = 'twConfirmSignal.armed';
   var TICK_KEY = '__twConfirmSignalTick';
   var ALERT_ID = 'twConfirmSignalAlert';
 
@@ -113,62 +115,6 @@ if (typeof ScriptAPI !== 'undefined') {
     );
   }
 
-  function normalizeTimeInput(value) {
-    var raw = String(value || '').trim();
-    var digits = raw.replace(/\D/g, '').slice(0, 9);
-
-    if (!digits) {
-      return '';
-    }
-
-    var hhmmss = '';
-    var ms = '';
-
-    if (digits.length <= 6) {
-      hhmmss = digits.padStart(6, '0');
-    } else {
-      hhmmss = digits.slice(0, digits.length - 3).padStart(6, '0').slice(-6);
-      ms = digits.slice(-3);
-    }
-
-    var parts = [
-      hhmmss.slice(0, 2),
-      hhmmss.slice(2, 4),
-      hhmmss.slice(4, 6)
-    ];
-
-    if (ms) {
-      parts.push(ms);
-    }
-
-    return parts.join(':');
-  }
-
-  function parseTarget(value) {
-    var input = normalizeTimeInput(value);
-    var match = input.match(/^(\d{2}):(\d{2}):(\d{2})(?::(\d{1,3}))?$/);
-    if (!match) {
-      throw new Error('Pouzi format HH:MM:SS alebo HH:MM:SS:MS, napr. 09:25:30 alebo 09:25:30:120.');
-    }
-
-    var now = getServerNow();
-    var target = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      Number(match[1]),
-      Number(match[2]),
-      Number(match[3]),
-      match[4] ? Number(match[4].padStart(3, '0')) : 0
-    );
-
-    if (target.getTime() < now.getTime()) {
-      target.setDate(target.getDate() + 1);
-    }
-
-    return target;
-  }
-
   function formatTime(date) {
     return [
       String(date.getHours()).padStart(2, '0'),
@@ -197,6 +143,94 @@ if (typeof ScriptAPI !== 'undefined') {
     }
 
     node.textContent = text;
+  }
+
+  function limitDigits(input, maxLen) {
+    input.addEventListener('input', function() {
+      var digits = input.value.replace(/\D/g, '').slice(0, maxLen);
+      if (input.value !== digits) {
+        input.value = digits;
+      }
+    });
+  }
+
+  function autoAdvance(current, next, maxLen) {
+    current.addEventListener('input', function() {
+      if (current.value.length >= maxLen && next) {
+        next.focus();
+        next.select();
+      }
+    });
+  }
+
+  function getFieldNumber(id, maxValue, label) {
+    var node = document.getElementById(id);
+    var raw = (node && node.value ? node.value : '').trim();
+
+    if (raw === '') {
+      return 0;
+    }
+
+    var num = Number(raw);
+    if (!Number.isFinite(num) || num < 0 || num > maxValue) {
+      throw new Error(label + ' ma neplatnu hodnotu.');
+    }
+
+    return num;
+  }
+
+  function getTargetParts() {
+    return {
+      hour: getFieldNumber(HOUR_ID, 23, 'Hodina'),
+      minute: getFieldNumber(MINUTE_ID, 59, 'Minuta'),
+      second: getFieldNumber(SECOND_ID, 59, 'Sekunda'),
+      ms: getFieldNumber(MS_ID, 999, 'Milisekundy')
+    };
+  }
+
+  function saveTargetParts(parts) {
+    localStorage.setItem(STORAGE_TARGET, JSON.stringify(parts));
+  }
+
+  function loadTargetParts() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_TARGET) || '{}');
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function fillFields(parts) {
+    document.getElementById(HOUR_ID).value =
+      parts.hour !== undefined ? String(parts.hour).padStart(2, '0') : '';
+    document.getElementById(MINUTE_ID).value =
+      parts.minute !== undefined ? String(parts.minute).padStart(2, '0') : '';
+    document.getElementById(SECOND_ID).value =
+      parts.second !== undefined ? String(parts.second).padStart(2, '0') : '';
+    document.getElementById(MS_ID).value =
+      parts.ms !== undefined ? String(parts.ms).padStart(3, '0') : '';
+  }
+
+  function parseTargetFromFields() {
+    var parts = getTargetParts();
+    var now = getServerNow();
+
+    var target = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      parts.hour,
+      parts.minute,
+      parts.second,
+      parts.ms
+    );
+
+    if (target.getTime() < now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+
+    saveTargetParts(parts);
+    return target;
   }
 
   function showBigAlert(text) {
@@ -282,15 +316,12 @@ if (typeof ScriptAPI !== 'undefined') {
       clearTimeout(window[TICK_KEY]);
       window[TICK_KEY] = null;
     }
-    localStorage.removeItem(STORAGE_ARMED);
   }
 
   function armSignal(target, leadMs) {
     stopTick();
     removeAlert();
-    localStorage.setItem(STORAGE_TARGET, formatTime(target));
     localStorage.setItem(STORAGE_LEAD, String(leadMs));
-    localStorage.setItem(STORAGE_ARMED, '1');
 
     function tick() {
       try {
@@ -331,7 +362,7 @@ if (typeof ScriptAPI !== 'undefined') {
   function buildOverlay() {
     removeOverlay();
 
-    var savedTarget = localStorage.getItem(STORAGE_TARGET) || '';
+    var savedParts = loadTargetParts();
     var savedLead = localStorage.getItem(STORAGE_LEAD) || '200';
 
     var wrap = document.createElement('div');
@@ -353,9 +384,14 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
       '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj cas ciela podla <b>serverTime</b>. Script iba signalizuje, neodosiela sam.</div>' +
-      '<input id="' + INPUT_ID + '" type="text" inputmode="numeric" placeholder="092530 alebo 092530120" value="' + savedTarget + '" style="width:100%;box-sizing:border-box;font-size:18px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
+      '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+      '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<input id="' + SECOND_ID + '" type="text" inputmode="numeric" placeholder="SS" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<input id="' + MS_ID + '" type="text" inputmode="numeric" placeholder="MS" style="flex:1.2;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
+      '</div>' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">Pises len cisla. Napr. 092530 = 09:25:30, 092530120 = 09:25:30:120.</div>' +
+      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">Cas zadavaj po poliach: hodina, minuta, sekunda, milisekundy. Predstih zacni na 200 ms.</div>' +
       '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Target: -</div>' +
       '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
@@ -366,17 +402,25 @@ if (typeof ScriptAPI !== 'undefined') {
 
     document.body.appendChild(wrap);
 
-    var timeInput = document.getElementById(INPUT_ID);
-    timeInput.addEventListener('input', function() {
-      var normalized = normalizeTimeInput(timeInput.value);
-      if (timeInput.value !== normalized) {
-        timeInput.value = normalized;
-      }
-    });
+    fillFields(savedParts);
+
+    var hourInput = document.getElementById(HOUR_ID);
+    var minuteInput = document.getElementById(MINUTE_ID);
+    var secondInput = document.getElementById(SECOND_ID);
+    var msInput = document.getElementById(MS_ID);
+
+    limitDigits(hourInput, 2);
+    limitDigits(minuteInput, 2);
+    limitDigits(secondInput, 2);
+    limitDigits(msInput, 3);
+
+    autoAdvance(hourInput, minuteInput, 2);
+    autoAdvance(minuteInput, secondInput, 2);
+    autoAdvance(secondInput, msInput, 2);
 
     document.getElementById('twConfirmSignalStart').onclick = function() {
       try {
-        var target = parseTarget(document.getElementById(INPUT_ID).value);
+        var target = parseTargetFromFields();
         var leadMs = Number(document.getElementById(LEAD_ID).value || 200);
 
         if (!Number.isFinite(leadMs) || leadMs < 0) {
