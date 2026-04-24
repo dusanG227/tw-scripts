@@ -11,8 +11,10 @@ if (typeof ScriptAPI !== 'undefined') {
   var SECOND_ID = 'twConfirmSignalSecond';
   var MS_ID = 'twConfirmSignalMs';
   var LEAD_ID = 'twConfirmSignalLead';
+  var CORRECTION_ID = 'twConfirmSignalCorrection';
   var STORAGE_TARGET = 'twConfirmSignal.target.parts';
   var STORAGE_LEAD = 'twConfirmSignal.lead';
+  var STORAGE_CORRECTION = 'twConfirmSignal.correction';
   var TICK_KEY = '__twConfirmSignalTick';
   var ALERT_ID = 'twConfirmSignalAlert';
 
@@ -227,6 +229,22 @@ if (typeof ScriptAPI !== 'undefined') {
     return num;
   }
 
+  function getSignedNumber(id, label) {
+    var node = document.getElementById(id);
+    var raw = (node && node.value ? node.value : '').trim();
+
+    if (raw === '') {
+      return 0;
+    }
+
+    var num = Number(raw);
+    if (!Number.isFinite(num)) {
+      throw new Error(label + ' musi byt cislo.');
+    }
+
+    return Math.round(num);
+  }
+
   function getTargetParts() {
     return {
       hour: getFieldNumber(HOUR_ID, 23, 'Hodina'),
@@ -296,20 +314,19 @@ if (typeof ScriptAPI !== 'undefined') {
     dot.style.boxShadow = '0 0 0 4px rgba(255,45,85,0.28), 0 0 18px rgba(255,45,85,0.85)';
     dot.style.zIndex = '1000000';
     dot.style.pointerEvents = 'none';
-    dot.style.transition = 'transform 90ms ease, opacity 90ms ease, background 90ms ease';
+    dot.style.transition = 'transform 90ms ease, opacity 90ms ease';
 
     document.body.appendChild(dot);
 
-    var blink = false;
-    var blinkTimer = window.setInterval(function() {
-      blink = !blink;
-      dot.style.opacity = blink ? '1' : '0.35';
-      dot.style.transform = blink ? 'scale(1.35)' : 'scale(0.92)';
-      dot.style.background = blink ? '#ff2d55' : '#ffd60a';
+    var pulse = false;
+    var pulseTimer = window.setInterval(function() {
+      pulse = !pulse;
+      dot.style.opacity = pulse ? '1' : '0.45';
+      dot.style.transform = pulse ? 'scale(1.35)' : 'scale(0.92)';
     }, 120);
 
     window.setTimeout(function() {
-      clearInterval(blinkTimer);
+      clearInterval(pulseTimer);
       removeAlert();
     }, 1800);
   }
@@ -327,7 +344,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
       oscillator.type = 'square';
       oscillator.frequency.value = 880;
-      gain.gain.value = 0.06;
+      gain.gain.value = 0.05;
 
       oscillator.connect(gain);
       gain.connect(ctx.destination);
@@ -336,14 +353,20 @@ if (typeof ScriptAPI !== 'undefined') {
       window.setTimeout(function() {
         oscillator.stop();
         ctx.close();
-      }, 250);
+      }, 220);
     } catch (error) {}
   }
 
-  function fireSignal(sendTime) {
+  function fireSignal(sendTime, actualTriggerTime) {
     showSignalDot();
     trySound();
-    setStatus('SIGNAL TERAZ | odosli o ' + formatTime(sendTime) + ' | klikni rucne', '#c1121f');
+    setStatus(
+      'KLIKNI PRI CERVENEJ BODKE | klik cas ' +
+        formatTime(sendTime) +
+        ' | signal ' +
+        formatTime(actualTriggerTime),
+      '#c1121f'
+    );
 
     var panel = document.getElementById(OVERLAY_ID);
     if (panel) {
@@ -360,40 +383,43 @@ if (typeof ScriptAPI !== 'undefined') {
     }
   }
 
-  function armSignal(desiredArrival, leadMs) {
+  function armSignal(desiredArrival, leadMs, correctionMs) {
     stopTick();
     removeAlert();
     localStorage.setItem(STORAGE_LEAD, String(leadMs));
+    localStorage.setItem(STORAGE_CORRECTION, String(correctionMs));
 
     var travelDurationMs = getTravelDurationMs();
     var sendTime = new Date(desiredArrival.getTime() - travelDurationMs);
+    var triggerTime = new Date(sendTime.getTime() - leadMs + correctionMs);
 
     function tick() {
       try {
         var now = getServerNow();
-        var triggerAt = sendTime.getTime() - leadMs;
-        var signalIn = triggerAt - now.getTime();
+        var signalIn = triggerTime.getTime() - now.getTime();
 
         setDebug(
           'Server now: ' + formatTime(now) +
           ' | Klik: ' + formatTime(sendTime) +
+          ' | Signal: ' + formatTime(triggerTime) +
           ' | Prichod: ' + formatTime(desiredArrival) +
           ' | Trvanie: ' + formatDuration(travelDurationMs)
         );
 
         if (signalIn <= 0) {
-          fireSignal(sendTime);
+          fireSignal(sendTime, triggerTime);
           stopTick();
           return;
         }
 
         setStatus(
-          'Prichod ' +
-            formatTime(desiredArrival) +
-            ' | klik za ' +
+          'Klikni pri cervenej bodke | signal za ' +
             signalIn +
-            ' ms | odoslanie o ' +
-            formatTime(sendTime),
+            ' ms | klik cas ' +
+            formatTime(sendTime) +
+            ' | korekcia ' +
+            correctionMs +
+            ' ms',
           signalIn <= 1000 ? '#a15c00' : '#17324d'
         );
 
@@ -412,6 +438,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
     var savedParts = loadTargetParts();
     var savedLead = localStorage.getItem(STORAGE_LEAD) || '200';
+    var savedCorrection = localStorage.getItem(STORAGE_CORRECTION) || '0';
     var travelText = '-';
     var arrivalText = '-';
 
@@ -441,7 +468,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
-      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Script odrata trvanie a signal da v case kliknutia.</div>' +
+      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. Oranzova uz nie je.</div>' +
       '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
       '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
       '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
@@ -449,8 +476,9 @@ if (typeof ScriptAPI !== 'undefined') {
       '<input id="' + MS_ID + '" type="text" inputmode="numeric" placeholder="MS" style="flex:1.2;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
       '</div>' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">Polia su prichod: hodina, minuta, sekunda, milisekundy. Trvanie z obrazovky: ' + travelText + '. Zobrazeny prichod v hre: ' + arrivalText + '.</div>' +
-      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Klik: - | Prichod: - | Trvanie: -</div>' +
+      '<input id="' + CORRECTION_ID + '" type="number" inputmode="numeric" placeholder="0" value="' + savedCorrection + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
+      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">1. pole navyse je predstih signalu v ms. 2. pole navyse je korekcia timing-u v ms. Ak to trias o 300 ms neskor, daj sem <b>300</b>. Ak skor, daj zaporne cislo. Trvanie: ' + travelText + '. Prichod v hre: ' + arrivalText + '.</div>' +
+      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: -</div>' +
       '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
@@ -479,27 +507,25 @@ if (typeof ScriptAPI !== 'undefined') {
     document.getElementById('twConfirmSignalStart').onclick = function() {
       try {
         var desiredArrival = parseArrivalFromFields();
-        var leadMs = Number(document.getElementById(LEAD_ID).value || 200);
+        var leadMs = getSignedNumber(LEAD_ID, 'Predstih');
+        var correctionMs = getSignedNumber(CORRECTION_ID, 'Korekcia');
 
-        if (!Number.isFinite(leadMs) || leadMs < 0) {
-          throw new Error('Predstih musi byt cislo 0 alebo viac.');
-        }
-
-        armSignal(desiredArrival, Math.round(leadMs));
+        armSignal(desiredArrival, leadMs, correctionMs);
       } catch (error) {
         setStatus(error.message, '#b42318');
       }
     };
 
     document.getElementById('twConfirmSignalTest').onclick = function() {
-      fireSignal(new Date());
+      showSignalDot();
+      setStatus('Test signalu: klikaj pri cervenej bodke.', '#c1121f');
     };
 
     document.getElementById('twConfirmSignalStop').onclick = function() {
       stopTick();
       removeAlert();
       setStatus('Signal zastaveny.', '#b42318');
-      setDebug('Server now: - | Klik: - | Prichod: - | Trvanie: -');
+      setDebug('Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: -');
     };
   }
 
