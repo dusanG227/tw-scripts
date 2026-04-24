@@ -48,6 +48,40 @@ if (typeof ScriptAPI !== 'undefined') {
     }, 1);
   }
 
+  function getServerDateParts() {
+    var serverDate = document.getElementById('serverDate');
+    if (!serverDate) {
+      var fallback = new Date();
+      return {
+        day: fallback.getDate(),
+        month: fallback.getMonth() + 1,
+        year: fallback.getFullYear()
+      };
+    }
+
+    var text = (serverDate.textContent || '').trim();
+    var match = text.match(/(\d{1,2})\D+(\d{1,2})\D+(\d{2,4})/);
+    if (!match) {
+      var fallbackDate = new Date();
+      return {
+        day: fallbackDate.getDate(),
+        month: fallbackDate.getMonth() + 1,
+        year: fallbackDate.getFullYear()
+      };
+    }
+
+    var a = Number(match[1]);
+    var b = Number(match[2]);
+    var c = Number(match[3]);
+    var year = c < 100 ? 2000 + c : c;
+
+    return {
+      day: a,
+      month: b,
+      year: year
+    };
+  }
+
   function getServerNow() {
     var serverTime = document.getElementById('serverTime');
     if (!serverTime) {
@@ -62,14 +96,16 @@ if (typeof ScriptAPI !== 'undefined') {
       throw new Error('Neviem precitat serverovy cas.');
     }
 
-    var now = new Date();
-    now.setHours(
+    var dateParts = getServerDateParts();
+    return new Date(
+      dateParts.year,
+      dateParts.month - 1,
+      dateParts.day,
       Number(match[1]),
       Number(match[2]),
       Number(match[3]),
       match[4] ? Number(match[4].padStart(3, '0')) : new Date().getMilliseconds()
     );
-    return now;
   }
 
   function normalizeTimeInput(value) {
@@ -110,8 +146,10 @@ if (typeof ScriptAPI !== 'undefined') {
     }
 
     var now = getServerNow();
-    var target = new Date(now.getTime());
-    target.setHours(
+    var target = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
       Number(match[1]),
       Number(match[2]),
       Number(match[3]),
