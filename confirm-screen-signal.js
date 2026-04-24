@@ -149,6 +149,7 @@ if (typeof ScriptAPI !== 'undefined') {
       overlay.style.background = '#ffdfdf';
       overlay.style.borderColor = '#c1121f';
       overlay.style.boxShadow = '0 0 0 4px rgba(193,18,31,0.25), 0 12px 30px rgba(0,0,0,0.25)';
+      overlay.style.transform = 'scale(1.02)';
 
       window.setTimeout(function() {
         if (!document.getElementById(OVERLAY_ID)) {
@@ -157,6 +158,7 @@ if (typeof ScriptAPI !== 'undefined') {
         overlay.style.background = '#fff8e7';
         overlay.style.borderColor = '#c18b3b';
         overlay.style.boxShadow = '0 12px 30px rgba(0,0,0,0.25)';
+        overlay.style.transform = 'scale(1)';
       }, 400);
     }
 
@@ -248,7 +250,7 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.style.position = 'fixed';
     wrap.style.left = '12px';
     wrap.style.right = '12px';
-    wrap.style.top = '12px';
+    wrap.style.bottom = '12px';
     wrap.style.zIndex = '999999';
     wrap.style.background = '#fff8e7';
     wrap.style.border = '2px solid #c18b3b';
@@ -257,6 +259,7 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.style.padding = '14px';
     wrap.style.fontFamily = 'Arial, sans-serif';
     wrap.style.color = '#2b2117';
+    wrap.style.transition = 'transform 120ms ease, background 120ms ease, box-shadow 120ms ease, border-color 120ms ease';
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
