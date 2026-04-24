@@ -281,37 +281,31 @@ if (typeof ScriptAPI !== 'undefined') {
     return arrival;
   }
 
-  function showBigAlert(text) {
+  function showSignalDot() {
     removeAlert();
 
-    var alertBox = document.createElement('div');
-    alertBox.id = ALERT_ID;
-    alertBox.style.position = 'fixed';
-    alertBox.style.left = '0';
-    alertBox.style.right = '0';
-    alertBox.style.top = '0';
-    alertBox.style.bottom = '0';
-    alertBox.style.zIndex = '1000000';
-    alertBox.style.background = 'rgba(193,18,31,0.88)';
-    alertBox.style.display = 'flex';
-    alertBox.style.alignItems = 'center';
-    alertBox.style.justifyContent = 'center';
-    alertBox.style.textAlign = 'center';
-    alertBox.style.color = '#ffffff';
-    alertBox.style.fontFamily = 'Arial, sans-serif';
-    alertBox.style.fontWeight = '700';
-    alertBox.style.fontSize = '42px';
-    alertBox.style.lineHeight = '1.15';
-    alertBox.style.padding = '24px';
-    alertBox.style.boxSizing = 'border-box';
-    alertBox.innerHTML = '<div>' + text + '<br><span style="font-size:22px;">KLIKNI RUCNE</span></div>';
+    var dot = document.createElement('div');
+    dot.id = ALERT_ID;
+    dot.style.position = 'fixed';
+    dot.style.top = '16px';
+    dot.style.right = '16px';
+    dot.style.width = '22px';
+    dot.style.height = '22px';
+    dot.style.borderRadius = '999px';
+    dot.style.background = '#ff2d55';
+    dot.style.boxShadow = '0 0 0 4px rgba(255,45,85,0.28), 0 0 18px rgba(255,45,85,0.85)';
+    dot.style.zIndex = '1000000';
+    dot.style.pointerEvents = 'none';
+    dot.style.transition = 'transform 90ms ease, opacity 90ms ease, background 90ms ease';
 
-    document.body.appendChild(alertBox);
+    document.body.appendChild(dot);
 
     var blink = false;
     var blinkTimer = window.setInterval(function() {
       blink = !blink;
-      alertBox.style.background = blink ? 'rgba(193,18,31,0.95)' : 'rgba(255,140,0,0.92)';
+      dot.style.opacity = blink ? '1' : '0.35';
+      dot.style.transform = blink ? 'scale(1.35)' : 'scale(0.92)';
+      dot.style.background = blink ? '#ff2d55' : '#ffd60a';
     }, 120);
 
     window.setTimeout(function() {
@@ -347,7 +341,7 @@ if (typeof ScriptAPI !== 'undefined') {
   }
 
   function fireSignal(sendTime) {
-    showBigAlert('KLIK TERAZ');
+    showSignalDot();
     trySound();
     setStatus('SIGNAL TERAZ | odosli o ' + formatTime(sendTime) + ' | klikni rucne', '#c1121f');
 
@@ -355,7 +349,7 @@ if (typeof ScriptAPI !== 'undefined') {
     if (panel) {
       panel.style.background = '#ffdfdf';
       panel.style.borderColor = '#c1121f';
-      panel.style.boxShadow = '0 0 0 4px rgba(193,18,31,0.25), 0 12px 30px rgba(0,0,0,0.25)';
+      panel.style.boxShadow = '0 0 0 4px rgba(193,18,31,0.18), 0 12px 30px rgba(0,0,0,0.25)';
     }
   }
 
@@ -378,7 +372,6 @@ if (typeof ScriptAPI !== 'undefined') {
       try {
         var now = getServerNow();
         var triggerAt = sendTime.getTime() - leadMs;
-        var remaining = sendTime.getTime() - now.getTime();
         var signalIn = triggerAt - now.getTime();
 
         setDebug(
