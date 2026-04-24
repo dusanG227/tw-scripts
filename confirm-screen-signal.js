@@ -5,6 +5,7 @@ if (typeof ScriptAPI !== 'undefined') {
 (function confirmScreenSignal() {
   var OVERLAY_ID = 'twConfirmSignalOverlay';
   var STATUS_ID = 'twConfirmSignalStatus';
+  var DEBUG_ID = 'twConfirmSignalDebug';
   var INPUT_ID = 'twConfirmSignalTime';
   var LEAD_ID = 'twConfirmSignalLead';
   var STORAGE_TARGET = 'twConfirmSignal.target';
@@ -75,11 +76,15 @@ if (typeof ScriptAPI !== 'undefined') {
     var c = Number(match[3]);
     var year = c < 100 ? 2000 + c : c;
 
-    return {
-      day: a,
-      month: b,
-      year: year
-    };
+    if (a > 12) {
+      return { day: a, month: b, year: year };
+    }
+
+    if (b > 12) {
+      return { day: b, month: a, year: year };
+    }
+
+    return { day: a, month: b, year: year };
   }
 
   function getServerNow() {
@@ -116,21 +121,22 @@ if (typeof ScriptAPI !== 'undefined') {
       return '';
     }
 
-    var parts = [];
-    var hh = digits.slice(0, 2);
-    var mm = digits.slice(2, 4);
-    var ss = digits.slice(4, 6);
-    var ms = digits.slice(6, 9);
+    var hhmmss = '';
+    var ms = '';
 
-    if (hh) {
-      parts.push(hh);
+    if (digits.length <= 6) {
+      hhmmss = digits.padStart(6, '0');
+    } else {
+      hhmmss = digits.slice(0, digits.length - 3).padStart(6, '0').slice(-6);
+      ms = digits.slice(-3);
     }
-    if (mm) {
-      parts.push(mm);
-    }
-    if (ss) {
-      parts.push(ss);
-    }
+
+    var parts = [
+      hhmmss.slice(0, 2),
+      hhmmss.slice(2, 4),
+      hhmmss.slice(4, 6)
+    ];
+
     if (ms) {
       parts.push(ms);
     }
@@ -140,9 +146,9 @@ if (typeof ScriptAPI !== 'undefined') {
 
   function parseTarget(value) {
     var input = normalizeTimeInput(value);
-    var match = input.match(/^(\d{1,2}):(\d{2}):(\d{2})(?::(\d{1,3}))?$/);
+    var match = input.match(/^(\d{2}):(\d{2}):(\d{2})(?::(\d{1,3}))?$/);
     if (!match) {
-      throw new Error('Pouzi format HH:MM:SS:MS, napr. 12:34:56:700.');
+      throw new Error('Pouzi format HH:MM:SS alebo HH:MM:SS:MS, napr. 09:25:30 alebo 09:25:30:120.');
     }
 
     var now = getServerNow();
@@ -182,6 +188,15 @@ if (typeof ScriptAPI !== 'undefined') {
     if (color) {
       node.style.color = color;
     }
+  }
+
+  function setDebug(text) {
+    var node = document.getElementById(DEBUG_ID);
+    if (!node) {
+      return;
+    }
+
+    node.textContent = text;
   }
 
   function showBigAlert(text) {
@@ -284,6 +299,8 @@ if (typeof ScriptAPI !== 'undefined') {
         var remaining = target.getTime() - now.getTime();
         var signalIn = triggerAt - now.getTime();
 
+        setDebug('Server now: ' + formatTime(now) + ' | Target: ' + formatTime(target));
+
         if (signalIn <= 0) {
           fireSignal(target);
           stopTick();
@@ -336,9 +353,10 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
       '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj cas ciela podla <b>serverTime</b>. Script iba signalizuje, neodosiela sam.</div>' +
-      '<input id="' + INPUT_ID + '" type="text" inputmode="numeric" placeholder="12:34:56:700" value="' + savedTarget + '" style="width:100%;box-sizing:border-box;font-size:18px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
+      '<input id="' + INPUT_ID + '" type="text" inputmode="numeric" placeholder="092530 alebo 092530120" value="' + savedTarget + '" style="width:100%;box-sizing:border-box;font-size:18px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:10px;color:#6b4f2a;">Pises len cisla. Cas sa sam formatuje. Predstih zacni na 200 ms.</div>' +
+      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">Pises len cisla. Napr. 092530 = 09:25:30, 092530120 = 09:25:30:120.</div>' +
+      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Target: -</div>' +
       '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
@@ -379,6 +397,7 @@ if (typeof ScriptAPI !== 'undefined') {
       stopTick();
       removeAlert();
       setStatus('Signal zastaveny.', '#b42318');
+      setDebug('Server now: - | Target: -');
     };
   }
 
