@@ -17,6 +17,8 @@ if (typeof ScriptAPI !== 'undefined') {
   var STORAGE_CORRECTION = 'twConfirmSignal.correction';
   var TICK_KEY = '__twConfirmSignalTick';
   var ALERT_ID = 'twConfirmSignalAlert';
+  var CLOCK_STATE_KEY = '__twConfirmSignalClockState';
+  var CLOCK_TIMER_KEY = '__twConfirmSignalClockTimer';
 
   function removeOverlay() {
     var node = document.getElementById(OVERLAY_ID);
@@ -32,25 +34,71 @@ if (typeof ScriptAPI !== 'undefined') {
     }
   }
 
-  function ensureMsClock() {
-    if (window.__twConfirmSignalMsClock) {
+  function getPerformanceNow() {
+    if (window.performance && typeof window.performance.now === 'function') {
+      return window.performance.now();
+    }
+    return Date.now();
+  }
+
+  function getSecondKey(hours, minutes, seconds) {
+    return [hours, minutes, seconds].join(':');
+  }
+
+  function ensureClockTracking() {
+    if (window[CLOCK_STATE_KEY]) {
       return;
     }
 
-    window.__twConfirmSignalMsClock = window.setInterval(function() {
+    window[CLOCK_STATE_KEY] = {
+      lastSecondKey: null,
+      secondStartedAtPerf: null,
+      displayedMs: 0
+    };
+
+    function track() {
       var serverTime = document.getElementById('serverTime');
       if (!serverTime) {
+        window[CLOCK_TIMER_KEY] = window.setTimeout(track, 50);
         return;
       }
 
-      var baseMatch = (serverTime.textContent || '').match(/^\d{1,2}:\d{2}:\d{2}/);
-      if (!baseMatch) {
+      var text = (serverTime.textContent || '').trim();
+      var match = text.match(/^(\d{1,2}):(\d{2}):(\d{2})/);
+      if (!match) {
+        window[CLOCK_TIMER_KEY] = window.setTimeout(track, 50);
         return;
       }
+
+      var hours = Number(match[1]);
+      var minutes = Number(match[2]);
+      var seconds = Number(match[3]);
+      var secondKey = getSecondKey(hours, minutes, seconds);
+      var state = window[CLOCK_STATE_KEY];
+      var perfNow = getPerformanceNow();
+
+      if (state.lastSecondKey !== secondKey) {
+        state.lastSecondKey = secondKey;
+        state.secondStartedAtPerf = perfNow;
+      }
+
+      if (state.secondStartedAtPerf === null) {
+        state.secondStartedAtPerf = perfNow;
+      }
+
+      var elapsed = Math.max(0, Math.min(999, Math.floor(perfNow - state.secondStartedAtPerf)));
+      state.displayedMs = elapsed;
 
       serverTime.textContent =
-        baseMatch[0] + ':' + String(new Date().getMilliseconds()).padStart(3, '0');
-    }, 1);
+        String(hours).padStart(2, '0') + ':' +
+        String(minutes).padStart(2, '0') + ':' +
+        String(seconds).padStart(2, '0') + ':' +
+        String(elapsed).padStart(3, '0');
+
+      window[CLOCK_TIMER_KEY] = window.setTimeout(track, 10);
+    }
+
+    track();
   }
 
   function getServerDateParts() {
@@ -106,6 +154,15 @@ if (typeof ScriptAPI !== 'undefined') {
     }
 
     var dateParts = getServerDateParts();
+    var ms = 0;
+    var state = window[CLOCK_STATE_KEY];
+
+    if (match[4]) {
+      ms = Number(match[4].padStart(3, '0'));
+    } else if (state && typeof state.displayedMs === 'number') {
+      ms = state.displayedMs;
+    }
+
     return new Date(
       dateParts.year,
       dateParts.month - 1,
@@ -113,7 +170,7 @@ if (typeof ScriptAPI !== 'undefined') {
       Number(match[1]),
       Number(match[2]),
       Number(match[3]),
-      match[4] ? Number(match[4].padStart(3, '0')) : new Date().getMilliseconds()
+      ms
     );
   }
 
@@ -468,7 +525,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
-      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. Oranzova uz nie je.</div>' +
+      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. Milisekundy sa teraz rataju od momentu, ked na serverTime preskoci sekunda.</div>' +
       '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
       '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
       '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
@@ -530,7 +587,7 @@ if (typeof ScriptAPI !== 'undefined') {
   }
 
   try {
-    ensureMsClock();
+    ensureClockTracking();
     buildOverlay();
   } catch (error) {
     alert('Chyba: ' + error.message);
