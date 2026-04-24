@@ -115,12 +115,60 @@ if (typeof ScriptAPI !== 'undefined') {
     );
   }
 
+  function findLabelRowValue(labelPattern) {
+    var rows = Array.prototype.slice.call(document.querySelectorAll('tr'));
+    for (var i = 0; i < rows.length; i += 1) {
+      var cells = rows[i].querySelectorAll('td, th');
+      if (cells.length < 2) {
+        continue;
+      }
+
+      var label = (cells[0].textContent || '').trim();
+      if (labelPattern.test(label)) {
+        return (cells[1].textContent || '').trim();
+      }
+    }
+    return '';
+  }
+
+  function getTravelDurationMs() {
+    var durationText = findLabelRowValue(/^(Trvanie|Doba pochodu|Duration|Travel time)\s*:/i);
+    var match = durationText.match(/(\d{1,2}):(\d{2}):(\d{2})/);
+
+    if (!match) {
+      throw new Error('Neviem najst Trvanie na obrazovke.');
+    }
+
+    return (
+      Number(match[1]) * 3600000 +
+      Number(match[2]) * 60000 +
+      Number(match[3]) * 1000
+    );
+  }
+
+  function getDisplayedArrivalText() {
+    return findLabelRowValue(/^(Pr[ií]chod|Arrival)\s*:/i) || '-';
+  }
+
   function formatTime(date) {
     return [
       String(date.getHours()).padStart(2, '0'),
       String(date.getMinutes()).padStart(2, '0'),
       String(date.getSeconds()).padStart(2, '0'),
       String(date.getMilliseconds()).padStart(3, '0')
+    ].join(':');
+  }
+
+  function formatDuration(ms) {
+    var totalSeconds = Math.floor(ms / 1000);
+    var hours = Math.floor(totalSeconds / 3600);
+    var minutes = Math.floor((totalSeconds % 3600) / 60);
+    var seconds = totalSeconds % 60;
+
+    return [
+      String(hours).padStart(2, '0'),
+      String(minutes).padStart(2, '0'),
+      String(seconds).padStart(2, '0')
     ].join(':');
   }
 
@@ -211,11 +259,11 @@ if (typeof ScriptAPI !== 'undefined') {
       parts.ms !== undefined ? String(parts.ms).padStart(3, '0') : '';
   }
 
-  function parseTargetFromFields() {
+  function parseArrivalFromFields() {
     var parts = getTargetParts();
     var now = getServerNow();
 
-    var target = new Date(
+    var arrival = new Date(
       now.getFullYear(),
       now.getMonth(),
       now.getDate(),
@@ -225,12 +273,12 @@ if (typeof ScriptAPI !== 'undefined') {
       parts.ms
     );
 
-    if (target.getTime() < now.getTime()) {
-      target.setDate(target.getDate() + 1);
+    if (arrival.getTime() < now.getTime()) {
+      arrival.setDate(arrival.getDate() + 1);
     }
 
     saveTargetParts(parts);
-    return target;
+    return arrival;
   }
 
   function showBigAlert(text) {
@@ -298,10 +346,10 @@ if (typeof ScriptAPI !== 'undefined') {
     } catch (error) {}
   }
 
-  function fireSignal(target) {
+  function fireSignal(sendTime) {
     showBigAlert('KLIK TERAZ');
     trySound();
-    setStatus('SIGNAL TERAZ | ciel ' + formatTime(target) + ' | klikni rucne', '#c1121f');
+    setStatus('SIGNAL TERAZ | odosli o ' + formatTime(sendTime) + ' | klikni rucne', '#c1121f');
 
     var panel = document.getElementById(OVERLAY_ID);
     if (panel) {
@@ -318,34 +366,41 @@ if (typeof ScriptAPI !== 'undefined') {
     }
   }
 
-  function armSignal(target, leadMs) {
+  function armSignal(desiredArrival, leadMs) {
     stopTick();
     removeAlert();
     localStorage.setItem(STORAGE_LEAD, String(leadMs));
 
+    var travelDurationMs = getTravelDurationMs();
+    var sendTime = new Date(desiredArrival.getTime() - travelDurationMs);
+
     function tick() {
       try {
         var now = getServerNow();
-        var triggerAt = target.getTime() - leadMs;
-        var remaining = target.getTime() - now.getTime();
+        var triggerAt = sendTime.getTime() - leadMs;
+        var remaining = sendTime.getTime() - now.getTime();
         var signalIn = triggerAt - now.getTime();
 
-        setDebug('Server now: ' + formatTime(now) + ' | Target: ' + formatTime(target));
+        setDebug(
+          'Server now: ' + formatTime(now) +
+          ' | Klik: ' + formatTime(sendTime) +
+          ' | Prichod: ' + formatTime(desiredArrival) +
+          ' | Trvanie: ' + formatDuration(travelDurationMs)
+        );
 
         if (signalIn <= 0) {
-          fireSignal(target);
+          fireSignal(sendTime);
           stopTick();
           return;
         }
 
         setStatus(
-          'Ciel ' +
-            formatTime(target) +
-            ' | signal za ' +
+          'Prichod ' +
+            formatTime(desiredArrival) +
+            ' | klik za ' +
             signalIn +
-            ' ms | do ciela ' +
-            remaining +
-            ' ms',
+            ' ms | odoslanie o ' +
+            formatTime(sendTime),
           signalIn <= 1000 ? '#a15c00' : '#17324d'
         );
 
@@ -364,6 +419,16 @@ if (typeof ScriptAPI !== 'undefined') {
 
     var savedParts = loadTargetParts();
     var savedLead = localStorage.getItem(STORAGE_LEAD) || '200';
+    var travelText = '-';
+    var arrivalText = '-';
+
+    try {
+      travelText = formatDuration(getTravelDurationMs());
+    } catch (error) {}
+
+    try {
+      arrivalText = getDisplayedArrivalText();
+    } catch (error) {}
 
     var wrap = document.createElement('div');
     wrap.id = OVERLAY_ID;
@@ -383,7 +448,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
-      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj cas ciela podla <b>serverTime</b>. Script iba signalizuje, neodosiela sam.</div>' +
+      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Script odrata trvanie a signal da v case kliknutia.</div>' +
       '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
       '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
       '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
@@ -391,8 +456,8 @@ if (typeof ScriptAPI !== 'undefined') {
       '<input id="' + MS_ID + '" type="text" inputmode="numeric" placeholder="MS" style="flex:1.2;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
       '</div>' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">Cas zadavaj po poliach: hodina, minuta, sekunda, milisekundy. Predstih zacni na 200 ms.</div>' +
-      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Target: -</div>' +
+      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">Polia su prichod: hodina, minuta, sekunda, milisekundy. Trvanie z obrazovky: ' + travelText + '. Zobrazeny prichod v hre: ' + arrivalText + '.</div>' +
+      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Klik: - | Prichod: - | Trvanie: -</div>' +
       '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
@@ -420,14 +485,14 @@ if (typeof ScriptAPI !== 'undefined') {
 
     document.getElementById('twConfirmSignalStart').onclick = function() {
       try {
-        var target = parseTargetFromFields();
+        var desiredArrival = parseArrivalFromFields();
         var leadMs = Number(document.getElementById(LEAD_ID).value || 200);
 
         if (!Number.isFinite(leadMs) || leadMs < 0) {
           throw new Error('Predstih musi byt cislo 0 alebo viac.');
         }
 
-        armSignal(target, Math.round(leadMs));
+        armSignal(desiredArrival, Math.round(leadMs));
       } catch (error) {
         setStatus(error.message, '#b42318');
       }
@@ -441,7 +506,7 @@ if (typeof ScriptAPI !== 'undefined') {
       stopTick();
       removeAlert();
       setStatus('Signal zastaveny.', '#b42318');
-      setDebug('Server now: - | Target: -');
+      setDebug('Server now: - | Klik: - | Prichod: - | Trvanie: -');
     };
   }
 
