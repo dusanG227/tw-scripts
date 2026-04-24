@@ -43,7 +43,7 @@ if (typeof ScriptAPI !== 'undefined') {
   function getServerNow() {
     var serverTime = document.getElementById('serverTime');
     if (!serverTime) {
-      throw new Error('Nenašiel som #serverTime.');
+      throw new Error('Nenasiel som #serverTime.');
     }
 
     var match = (serverTime.textContent || '').trim().match(
@@ -51,7 +51,7 @@ if (typeof ScriptAPI !== 'undefined') {
     );
 
     if (!match) {
-      throw new Error('Neviem prečítať serverový čas.');
+      throw new Error('Neviem precitat serverovy cas.');
     }
 
     var now = new Date();
@@ -64,11 +64,41 @@ if (typeof ScriptAPI !== 'undefined') {
     return now;
   }
 
+  function normalizeTimeInput(value) {
+    var raw = String(value || '').trim();
+    var digits = raw.replace(/\D/g, '').slice(0, 9);
+
+    if (!digits) {
+      return '';
+    }
+
+    var parts = [];
+    var hh = digits.slice(0, 2);
+    var mm = digits.slice(2, 4);
+    var ss = digits.slice(4, 6);
+    var ms = digits.slice(6, 9);
+
+    if (hh) {
+      parts.push(hh);
+    }
+    if (mm) {
+      parts.push(mm);
+    }
+    if (ss) {
+      parts.push(ss);
+    }
+    if (ms) {
+      parts.push(ms);
+    }
+
+    return parts.join(':');
+  }
+
   function parseTarget(value) {
-    var input = String(value || '').trim();
+    var input = normalizeTimeInput(value);
     var match = input.match(/^(\d{1,2}):(\d{2}):(\d{2})(?::(\d{1,3}))?$/);
     if (!match) {
-      throw new Error('Použi formát HH:MM:SS:MS, napr. 12:34:56:700.');
+      throw new Error('Pouzi format HH:MM:SS:MS, napr. 12:34:56:700.');
     }
 
     var now = getServerNow();
@@ -92,7 +122,7 @@ if (typeof ScriptAPI !== 'undefined') {
       String(date.getHours()).padStart(2, '0'),
       String(date.getMinutes()).padStart(2, '0'),
       String(date.getSeconds()).padStart(2, '0'),
-      String(date.getMilliseconds()).padStart(3, '0'),
+      String(date.getMilliseconds()).padStart(3, '0')
     ].join(':');
   }
 
@@ -145,12 +175,13 @@ if (typeof ScriptAPI !== 'undefined') {
       oscillator.connect(gain);
       gain.connect(ctx.destination);
       oscillator.start();
+
       window.setTimeout(function() {
         oscillator.stop();
         ctx.close();
       }, 180);
     } catch (error) {
-      // Audio may be blocked on some devices until user gesture; vibration/flash still help.
+      // Audio may be blocked on some devices until user gesture.
     }
   }
 
@@ -178,7 +209,7 @@ if (typeof ScriptAPI !== 'undefined') {
         if (signalIn <= 0) {
           vibrateAndFlash();
           setStatus(
-            'SIGNAL TERAZ | cieľ ' + formatTime(target) + ' | klikni ručne',
+            'SIGNAL TERAZ | ciel ' + formatTime(target) + ' | klikni rucne',
             '#c1121f'
           );
           stopTick();
@@ -186,11 +217,11 @@ if (typeof ScriptAPI !== 'undefined') {
         }
 
         setStatus(
-          'Cieľ ' +
+          'Ciel ' +
             formatTime(target) +
             ' | signal za ' +
             signalIn +
-            ' ms | do cieľa ' +
+            ' ms | do ciela ' +
             remaining +
             ' ms',
           signalIn <= 1000 ? '#a15c00' : '#17324d'
@@ -229,18 +260,26 @@ if (typeof ScriptAPI !== 'undefined') {
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
-      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj čas cieľa podľa <b>serverTime</b>. Script iba signalizuje, neodosiela sám.</div>' +
+      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj cas ciela podla <b>serverTime</b>. Script iba signalizuje, neodosiela sam.</div>' +
       '<input id="' + INPUT_ID + '" type="text" inputmode="numeric" placeholder="12:34:56:700" value="' + savedTarget + '" style="width:100%;box-sizing:border-box;font-size:18px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:10px;color:#6b4f2a;">Predstih signálu v ms. Začni na 200 ms a potom doladíme podľa tvojej reakcie.</div>' +
-      '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravené.</div>' +
+      '<div style="font-size:12px;margin-bottom:10px;color:#6b4f2a;">Predstih signalu v ms. Zacni na 200 ms a potom doladime podla tvojej reakcie.</div>' +
+      '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
-      '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustiť</button>' +
+      '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
       '<button id="twConfirmSignalStop" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#6b7280;color:#fff;font-weight:700;">Stop</button>' +
-      '<button id="twConfirmSignalClose" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#efe3d0;color:#2b2117;font-weight:700;">Zavrieť</button>' +
+      '<button id="twConfirmSignalClose" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#efe3d0;color:#2b2117;font-weight:700;">Zavriet</button>' +
       '</div>';
 
     document.body.appendChild(wrap);
+
+    var timeInput = document.getElementById(INPUT_ID);
+    timeInput.addEventListener('input', function() {
+      var normalized = normalizeTimeInput(timeInput.value);
+      if (timeInput.value !== normalized) {
+        timeInput.value = normalized;
+      }
+    });
 
     document.getElementById('twConfirmSignalStart').onclick = function() {
       try {
@@ -248,7 +287,7 @@ if (typeof ScriptAPI !== 'undefined') {
         var leadMs = Number(document.getElementById(LEAD_ID).value || 200);
 
         if (!Number.isFinite(leadMs) || leadMs < 0) {
-          throw new Error('Predstih musí byť číslo 0 alebo viac.');
+          throw new Error('Predstih musi byt cislo 0 alebo viac.');
         }
 
         armSignal(target, Math.round(leadMs));
@@ -259,7 +298,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
     document.getElementById('twConfirmSignalStop').onclick = function() {
       stopTick();
-      setStatus('Signal zastavený.', '#b42318');
+      setStatus('Signal zastaveny.', '#b42318');
     };
 
     document.getElementById('twConfirmSignalClose').onclick = function() {
