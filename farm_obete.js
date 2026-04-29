@@ -53,6 +53,7 @@ var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
 };
+var OPEN_TARGET_DELAY_MS = 3000;
 
 // Translations
 var translations = {
@@ -87,6 +88,9 @@ var translations = {
         'Settings saved!': 'Settings saved!',
         'Include reports with partial losses':
             'Include reports with partial losses',
+        'Open all targets': 'Open all targets',
+        'Opening targets...': 'Opening targets...',
+        'Finished opening targets!': 'Finished opening targets!',
     },
 };
 
@@ -122,6 +126,7 @@ async function initClearBarbarianWalls(store) {
 
             // event handlers
             showSettingsPanel(store);
+            bindOpenAllTargetsButton();
         },
         function (error) {
             UI.ErrorMessage('Error fetching FA pages!');
@@ -206,10 +211,16 @@ function prepareContent(villages, maxBarbsToShow) {
         )}</em>
 				</p>
 			</div>
-			<div class="ra-table-container">
-				${barbsTable}
-			</div>
-		`;
+            <div class="ra-table-container">
+                ${barbsTable}
+            </div>
+            <div class="ra-open-targets-controls">
+                <a href="javascript:void(0);" id="openAllTargetsBtn" class="btn">
+                    ${tt('Open all targets')}
+                </a>
+                <span id="openAllTargetsStatus"></span>
+            </div>
+        `;
 
         return content;
     } else {
@@ -265,9 +276,11 @@ function renderUI(body) {
 			.ra-table tr:nth-of-type(2n+1) td { background-color: #fff5da; }
 			.ra-popup-content { width: 360px; }
 			.ra-popup-content * { box-sizing: border-box; }
-			.ra-popup-content input[type="text"] { padding: 3px; width: 100%; }
+            .ra-popup-content input[type="text"] { padding: 3px; width: 100%; }
             .ra-mb15 { margin-bottom: 15px; }
-			.already-sent-command { opacity: 0.6; }
+            .ra-open-targets-controls { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+            #openAllTargetsStatus { font-weight: 600; }
+            .already-sent-command { opacity: 0.6; }
         </style>
     `;
 
@@ -326,6 +339,44 @@ function showSettingsPanel(store) {
         Dialog.show('SettingsPanel', content);
 
         saveSettings();
+    });
+}
+
+function bindOpenAllTargetsButton() {
+    jQuery('#openAllTargetsBtn').off('click').on('click', function (e) {
+        e.preventDefault();
+        openGeneratedTargets();
+    });
+}
+
+function openGeneratedTargets() {
+    const links = Array.from(
+        document.querySelectorAll('.ra-clear-barb-wall-btn')
+    ).filter((link) => !link.classList.contains('btn-already-sent'));
+    const button = document.querySelector('#openAllTargetsBtn');
+    const status = document.querySelector('#openAllTargetsStatus');
+
+    if (!links.length) return;
+
+    if (button) {
+        button.classList.add('btn-disabled');
+        button.textContent = tt('Opening targets...');
+    }
+
+    links.forEach((link, index) => {
+        setTimeout(() => {
+            window.open(link.href, '_blank', 'noopener,noreferrer');
+            highlightOpenedCommands(link);
+
+            if (status) {
+                status.textContent = `${index + 1}/${links.length}`;
+            }
+
+            if (index + 1 === links.length && button) {
+                button.classList.remove('btn-disabled');
+                button.textContent = tt('Finished opening targets!');
+            }
+        }, index * OPEN_TARGET_DELAY_MS);
     });
 }
 
