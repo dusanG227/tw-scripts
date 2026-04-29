@@ -575,27 +575,13 @@
         var totalWood = parseInt(wood, 10);
         var totalStone = parseInt(stone, 10);
         var totalIron = parseInt(iron, 10);
-        var sendWood = Math.floor(totalWood * sendPercent / 100);
-        var sendStone = Math.floor(totalStone * sendPercent / 100);
-        var sendIron = Math.floor(totalIron * sendPercent / 100);
-        var remainingWood = totalWood - sendWood;
-        var remainingStone = totalStone - sendStone;
-        var remainingIron = totalIron - sendIron;
+        var availableWood = Math.max(0, totalWood - leaveBehindRes);
+        var availableStone = Math.max(0, totalStone - leaveBehindRes);
+        var availableIron = Math.max(0, totalIron - leaveBehindRes);
+        var sendWood = Math.floor(availableWood * sendPercent / 100);
+        var sendStone = Math.floor(availableStone * sendPercent / 100);
+        var sendIron = Math.floor(availableIron * sendPercent / 100);
         var totalToSend = sendWood + sendStone + sendIron;
-
-        if (remainingWood < leaveBehindRes) {
-            sendWood = Math.max(0, totalWood - leaveBehindRes);
-        }
-
-        if (remainingStone < leaveBehindRes) {
-            sendStone = Math.max(0, totalStone - leaveBehindRes);
-        }
-
-        if (remainingIron < leaveBehindRes) {
-            sendIron = Math.max(0, totalIron - leaveBehindRes);
-        }
-
-        totalToSend = sendWood + sendStone + sendIron;
 
         if (totalToSend > merchantCarry && totalToSend > 0) {
             var scale = merchantCarry / totalToSend;
