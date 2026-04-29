@@ -387,8 +387,8 @@
             if (res.wood + res.stone + res.iron !== 0 && String(villagesData[i].id) !== String(sendBack[0])) {
                 listHTML += `
 <tr id="sendRow-${i}" ${tempRow} height="40">
-    <td><a href__="${villagesData[i].url}" style="color:#40D0E0;">${villagesData[i].name}</a></td>
-    <td><a href__="#" style="color:#40D0E0;">${sendBack[1]}</a></td>
+    <td><a href="${villagesData[i].url}" style="color:#40D0E0;">${villagesData[i].name}</a></td>
+    <td><a href="#" style="color:#40D0E0;">${sendBack[1]}</a></td>
     <td>${checkDistance(sendBack[5], sendBack[6], villagesData[i].coord.substring(0, 3), villagesData[i].coord.substring(4, 7))}</td>
     <td width="50" style="text-align:center">${res.wood}<span class="icon header wood"> </span></td>
     <td width="50" style="text-align:center">${res.stone}<span class="icon header stone"> </span></td>
@@ -547,7 +547,7 @@
     <br>
     <center>
         <p>${langShinko[3]}:
-            <a href__="https://shinko-to-kuma.my-free.website/" title="Sophie profile" target="_blank">Sophie "Shinko to Kuma"</a>
+            <a href="https://shinko-to-kuma.my-free.website/" title="Sophie profile" target="_blank">Sophie "Shinko to Kuma"</a>
         </p>
     </center>
 </div>`;
@@ -577,10 +577,9 @@
         var merchantCarry = parseInt(merchants, 10) * 1000;
         var leaveBehindRes = Math.floor(parseInt(warehouse, 10) / 100 * resLimit);
 
-        var availableWood = Math.max(0, wood - leaveBehindRes);
-        var availableStone = Math.max(0, stone - leaveBehindRes);
-        var availableIron = Math.max(0, iron - leaveBehindRes);
-
+        var availableWood = Math.max(0, parseInt(wood, 10) - leaveBehindRes);
+        var availableStone = Math.max(0, parseInt(stone, 10) - leaveBehindRes);
+        var availableIron = Math.max(0, parseInt(iron, 10) - leaveBehindRes);
         var maxCoinSetsByResources = Math.min(
             availableWood / coinWood,
             availableStone / coinStone,
@@ -588,7 +587,6 @@
         );
         var maxCoinSetsByMerchants = merchantCarry / coinTotal;
         var coinSetsToSend = Math.min(maxCoinSetsByResources, maxCoinSetsByMerchants) * sendPercent / 100;
-
         var sendWood = Math.floor(coinSetsToSend * coinWood);
         var sendStone = Math.floor(coinSetsToSend * coinStone);
         var sendIron = Math.floor(coinSetsToSend * coinIron);
