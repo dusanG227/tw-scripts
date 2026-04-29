@@ -17,6 +17,10 @@
     var totalWoodSent = 0;
     var totalStoneSent = 0;
     var totalIronSent = 0;
+     var coinWood = 28000;
+    var coinStone = 30000;
+    var coinIron = 25000;
+    var coinTotal = coinWood + coinStone + coinIron;
 
     var coordinate = sessionStorage.getItem("coordinate") || "";
     var resLimit = getStoredNumber("resLimit", 0);
@@ -572,23 +576,16 @@
     function calculateResAmounts(wood, stone, iron, warehouse, merchants) {
         var merchantCarry = parseInt(merchants, 10) * 1000;
         var leaveBehindRes = Math.floor(parseInt(warehouse, 10) / 100 * resLimit);
-
-        var availableWood = Math.max(0, parseInt(wood, 10) - leaveBehindRes);
-        var availableStone = Math.max(0, parseInt(stone, 10) - leaveBehindRes);
-        var availableIron = Math.max(0, parseInt(iron, 10) - leaveBehindRes);
-
-        var sendWood = Math.floor(availableWood * sendPercent / 100);
-        var sendStone = Math.floor(availableStone * sendPercent / 100);
-        var sendIron = Math.floor(availableIron * sendPercent / 100);
-        var totalToSend = sendWood + sendStone + sendIron;
-
-        if (totalToSend > merchantCarry && totalToSend > 0) {
-            var scale = merchantCarry / totalToSend;
-
-            sendWood = Math.floor(sendWood * scale);
-            sendStone = Math.floor(sendStone * scale);
-            sendIron = Math.floor(sendIron * scale);
-        }
+         var maxCoinSetsByResources = Math.min(
+            availableWood / coinWood,
+            availableStone / coinStone,
+            availableIron / coinIron
+        );
+        var maxCoinSetsByMerchants = merchantCarry / coinTotal;
+        var coinSetsToSend = Math.min(maxCoinSetsByResources, maxCoinSetsByMerchants) * sendPercent / 100;
+        var sendWood = Math.floor(coinSetsToSend * coinWood);
+        var sendStone = Math.floor(coinSetsToSend * coinStone);
+        var sendIron = Math.floor(coinSetsToSend * coinIron);
 
         return {
             wood: sendWood,
