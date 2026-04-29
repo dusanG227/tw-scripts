@@ -17,6 +17,10 @@
     var totalWoodSent = 0;
     var totalStoneSent = 0;
     var totalIronSent = 0;
+    var ratioWood = 28;
+    var ratioStone = 30;
+    var ratioIron = 25;
+    var ratioTotal = ratioWood + ratioStone + ratioIron;
 
     var coordinate = sessionStorage.getItem("coordinate") || "";
     var resLimit = getStoredNumber("resLimit", 0);
@@ -578,16 +582,23 @@
         var availableWood = Math.max(0, totalWood - leaveBehindRes);
         var availableStone = Math.max(0, totalStone - leaveBehindRes);
         var availableIron = Math.max(0, totalIron - leaveBehindRes);
-        var sendWood = Math.floor(availableWood * sendPercent / 100);
-        var sendStone = Math.floor(availableStone * sendPercent / 100);
-        var sendIron = Math.floor(availableIron * sendPercent / 100);
+        var balancedBase = Math.min(
+            availableWood / ratioWood,
+            availableStone / ratioStone,
+            availableIron / ratioIron
+        );
+        var sendBase = balancedBase * sendPercent / 100;
+        var sendWood = Math.floor(sendBase * ratioWood);
+        var sendStone = Math.floor(sendBase * ratioStone);
+        var sendIron = Math.floor(sendBase * ratioIron);
         var totalToSend = sendWood + sendStone + sendIron;
 
         if (totalToSend > merchantCarry && totalToSend > 0) {
-            var scale = merchantCarry / totalToSend;
-            sendWood = Math.floor(sendWood * scale);
-            sendStone = Math.floor(sendStone * scale);
-            sendIron = Math.floor(sendIron * scale);
+            var merchantBase = merchantCarry / ratioTotal;
+            var finalBase = Math.min(sendBase, merchantBase);
+            sendWood = Math.floor(finalBase * ratioWood);
+            sendStone = Math.floor(finalBase * ratioStone);
+            sendIron = Math.floor(finalBase * ratioIron);
         }
 
         return {
