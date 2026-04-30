@@ -24,7 +24,6 @@
     var ratioStone = 30;
     var ratioIron = 25;
     var ratioTotal = ratioWood + ratioStone + ratioIron;
-
     var coordinate = sessionStorage.getItem("coordinate") || "";
     var resLimit = getStoredNumber("resLimit", 0);
     var sendPercent = getStoredNumber("sendPercent", 15);
@@ -109,7 +108,9 @@
 }
 </style>`;
 
-    ensureProductionOverview();
+    if (!ensureProductionOverview()) {
+        return;
+    }
 
     $("#contentContainer").eq(0).prepend(cssClassesSophie);
     $("#mobileHeader").eq(0).prepend(cssClassesSophie);
@@ -125,12 +126,13 @@
         var params = new URLSearchParams(window.location.search);
         var screen = params.get("screen");
         var mode = params.get("mode");
-        var page = params.get("page");
 
-        if (screen !== "overview_villages" || mode !== "prod" || page !== "-1") {
+        if (screen !== "overview_villages" || mode !== "prod") {
             window.location.href = game_data.link_base_pure + "overview_villages&mode=prod&page=-1";
-            throw new Error("Redirecting to production overview.");
+            return false;
         }
+
+        return true;
     }
 
     function getStoredNumber(key, defaultValue) {
@@ -223,8 +225,8 @@
                     var farmSpaceMatch = farmCell.innerText.match(/(\d+)\s*\/\s*(\d+)/);
 
                     warehouseCapacity.push(parseResource(warehouseCell.innerText));
-                    availableMerchants.push(merchantsMatch ? parseInt(merchantMatch[1], 10) : 0);
-                    totalMerchants.push(merchantsMatch ? parseInt(merchantMatch[2], 10) : 0);
+                    availableMerchants.push(merchantsMatch ? parseInt(merchantsMatch[1], 10) : 0);
+                    totalMerchants.push(merchantsMatch ? parseInt(merchantsMatch[2], 10) : 0);
                     farmSpaceUsed.push(farmSpaceMatch ? parseInt(farmSpaceMatch[1], 10) : 0);
                     farmSpaceTotal.push(farmSpaceMatch ? parseInt(farmSpaceMatch[2], 10) : 0);
                 }
