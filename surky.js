@@ -288,6 +288,7 @@
         }
 
         var htmlString = `
+<div id="resourceSenderWrapper">
 <div id="resourceSender">
     <table id="Settings" width="760">
         <thead>
@@ -320,9 +321,8 @@
         </tbody>
     </table>
     <br>
-</div>`.trim();
+</div>
 
-        var htmlCode = `
 <div id="sendResourcesTable" border="0">
     <table id="tableSend" width="100%">
         <tbody id="appendHere">
@@ -342,12 +342,12 @@
             </tr>
         </tbody>
     </table>
-</div>`;
+</div>
+</div>`.trim();
 
         var uiDiv = document.createElement("div");
         uiDiv.innerHTML = htmlString;
 
-        targetContainer.append(htmlCode);
         targetContainer.prepend(uiDiv.firstChild);
 
         $("#resPercent").val(resLimit);
