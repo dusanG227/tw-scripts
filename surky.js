@@ -96,10 +96,6 @@
     display: block;
     margin: 2px 0;
 }
-.totalsSummaryLine img {
-    vertical-align: middle;
-    margin-left: 4px;
-}
 .totalsSummaryLine .icon {
     margin-left: 4px;
 }
@@ -543,9 +539,9 @@
 
     function buildTotalsCopyText() {
         return (
-            "Drevo " + numberWithCommas(totalWoodSent) + "\n" +
-            "Hlina " + numberWithCommas(totalStoneSent) + "\n" +
-            "Zelezo " + numberWithCommas(totalIronSent)
+            "Drevo " + numberWithCommas(totalWoodSent) + " [building]wood[/building]\n" +
+            "Hlina " + numberWithCommas(totalStoneSent) + " [building]stone[/building]\n" +
+            "Zelezo " + numberWithCommas(totalIronSent) + " [building]iron[/building]"
         );
     }
 
