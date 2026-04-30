@@ -17,6 +17,9 @@
     var totalWoodSent = 0;
     var totalStoneSent = 0;
     var totalIronSent = 0;
+    var woodIconUrl = "https://dssk.innogamescdn.com/asset/610fa902/graphic/holz.webp";
+    var stoneIconUrl = "https://dssk.innogamescdn.com/asset/610fa902/graphic/lehm.webp";
+    var ironIconUrl = "https://dssk.innogamescdn.com/asset/610fa902/graphic/eisen.webp";
     var ratioWood = 28;
     var ratioStone = 30;
     var ratioIron = 25;
@@ -92,6 +95,9 @@
 }
 #resourceSender input {
     max-width: 110px;
+}
+.copyTotalsButton {
+    width: 100%;
 }
 </style>`;
 
@@ -369,8 +375,19 @@
             <td class="sophHeader"><span class="icon header iron"> </span></td>
             <td class="sophRowB" id="ironSent">${numberWithCommas(totalIronSent)}</td>
         </tr>
+        <tr>
+            <td class="sophHeader" colspan="2">Spolu odoslane:</td>
+            <td class="sophRowA" colspan="2" id="totalsSummary">${buildTotalsSummaryText()}</td>
+            <td class="sophRowB">
+                <button type="button" id="copyTotalsButton" class="btn copyTotalsButton">Kopirovat</button>
+            </td>
+        </tr>
     </tbody>
 </table>`);
+
+        $("#copyTotalsButton").click(function () {
+            copyTotalsToClipboard();
+        });
 
         var listHTML = "";
 
@@ -472,8 +489,6 @@
                 if ($(".btn-pp").length > 0) {
                     $(".btn-pp").remove();
                 }
-
-                throw new Error("Done.");
             }
         }, 200);
 
@@ -502,9 +517,66 @@
                 $("#woodSent").eq(0).text(numberWithCommas(totalWoodSent));
                 $("#stoneSent").eq(0).text(numberWithCommas(totalStoneSent));
                 $("#ironSent").eq(0).text(numberWithCommas(totalIronSent));
+                $("#totalsSummary").eq(0).text(buildTotalsSummaryText());
             },
             false
         );
+    }
+
+    function buildTotalsSummaryText() {
+        return (
+            numberWithCommas(totalWoodSent) + " dreva, " +
+            numberWithCommas(totalStoneSent) + " hliny, " +
+            numberWithCommas(totalIronSent) + " zeleza"
+        );
+    }
+
+    function buildTotalsCopyText() {
+        return (
+            numberWithCommas(totalWoodSent) + " dreva " +
+            numberWithCommas(totalStoneSent) + " hliny " +
+            numberWithCommas(totalIronSent) + " zeleza"
+        );
+    }
+
+    function buildTotalsCopyHtml() {
+        return (
+            '<span>' +
+            numberWithCommas(totalWoodSent) + ' <img src="' + woodIconUrl + '" alt="drevo" width="16" height="16"> ' +
+            numberWithCommas(totalStoneSent) + ' <img src="' + stoneIconUrl + '" alt="hlina" width="16" height="16"> ' +
+            numberWithCommas(totalIronSent) + ' <img src="' + ironIconUrl + '" alt="zelezo" width="16" height="16">' +
+            "</span>"
+        );
+    }
+
+    function copyTotalsToClipboard() {
+        var plainText = buildTotalsCopyText();
+        var htmlText = buildTotalsCopyHtml();
+
+        if (navigator.clipboard && window.ClipboardItem) {
+            var item = new ClipboardItem({
+                "text/plain": new Blob([plainText], { type: "text/plain" }),
+                "text/html": new Blob([htmlText], { type: "text/html" })
+            });
+
+            navigator.clipboard.write([item]).then(function () {
+                UI.SuccessMessage("Sucet surovin bol skopirovany.");
+            }).catch(function () {
+                fallbackCopyText(plainText);
+            });
+        } else {
+            fallbackCopyText(plainText);
+        }
+    }
+
+    function fallbackCopyText(text) {
+        var helper = document.createElement("textarea");
+        helper.value = text;
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        document.body.removeChild(helper);
+        UI.SuccessMessage("Sucet surovin bol skopirovany.");
     }
 
     function numberWithCommas(x) {
