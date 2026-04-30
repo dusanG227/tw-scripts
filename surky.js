@@ -280,6 +280,8 @@
             return;
         }
 
+        var targetContainer = $("#mobileHeader")[0] ? $("#mobileHeader").eq(0) : $("#contentContainer").eq(0);
+
         if ($("#sendResourcesTable")[0]) {
             $("#sendResourcesTable").remove();
             $("#resourceSender").remove();
@@ -345,10 +347,8 @@
         var uiDiv = document.createElement("div");
         uiDiv.innerHTML = htmlString;
 
-        $("#mobileHeader").eq(0).append(htmlCode);
-        $("#contentContainer").eq(0).prepend(htmlCode);
-        $("#mobileHeader").prepend(uiDiv.firstChild);
-        $("#contentContainer").prepend(uiDiv.firstChild);
+        targetContainer.append(htmlCode);
+        targetContainer.prepend(uiDiv.firstChild);
 
         $("#resPercent").val(resLimit);
         $("#sendPercent").val(sendPercent);
@@ -543,18 +543,18 @@
 
     function buildTotalsCopyText() {
         return (
-            "Drevo " + numberWithCommas(totalWoodSent) + "\n" +
-            "Hlina " + numberWithCommas(totalStoneSent) + "\n" +
-            "Zelezo " + numberWithCommas(totalIronSent)
+            "Drevo " + numberWithCommas(totalWoodSent) + " [building]wood[/building]\n" +
+            "Hlina " + numberWithCommas(totalStoneSent) + " [building]stone[/building]\n" +
+            "Zelezo " + numberWithCommas(totalIronSent) + " [building]iron[/building]"
         );
     }
 
     function buildTotalsCopyHtml() {
         return (
             '<div>' +
-            '<div>Drevo ' + numberWithCommas(totalWoodSent) + ' <img src="' + woodIconUrl + '" alt="drevo" width="16" height="16"></div>' +
-            '<div>Hlina ' + numberWithCommas(totalStoneSent) + ' <img src="' + stoneIconUrl + '" alt="hlina" width="16" height="16"></div>' +
-            '<div>Zelezo ' + numberWithCommas(totalIronSent) + ' <img src="' + ironIconUrl + '" alt="zelezo" width="16" height="16"></div>' +
+            '<div>Drevo ' + numberWithCommas(totalWoodSent) + ' [building]wood[/building]</div>' +
+            '<div>Hlina ' + numberWithCommas(totalStoneSent) + ' [building]stone[/building]</div>' +
+            '<div>Zelezo ' + numberWithCommas(totalIronSent) + ' [building]iron[/building]</div>' +
             "</div>"
         );
     }
