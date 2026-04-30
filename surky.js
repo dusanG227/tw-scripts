@@ -17,9 +17,6 @@
     var totalWoodSent = 0;
     var totalStoneSent = 0;
     var totalIronSent = 0;
-    var woodIconUrl = "https://dssk.innogamescdn.com/asset/610fa902/graphic/holz.webp";
-    var stoneIconUrl = "https://dssk.innogamescdn.com/asset/610fa902/graphic/lehm.webp";
-    var ironIconUrl = "https://dssk.innogamescdn.com/asset/610fa902/graphic/eisen.webp";
     var ratioWood = 28;
     var ratioStone = 30;
     var ratioIron = 25;
@@ -101,6 +98,9 @@
 }
 .totalsSummaryLine img {
     vertical-align: middle;
+    margin-left: 4px;
+}
+.totalsSummaryLine .icon {
     margin-left: 4px;
 }
 .copyTotalsButton {
@@ -535,26 +535,26 @@
 
     function buildTotalsSummaryHtml() {
         return (
-            '<span class="totalsSummaryLine">Drevo ' + numberWithCommas(totalWoodSent) + ' <img src="' + woodIconUrl + '" alt="drevo" width="16" height="16"></span>' +
-            '<span class="totalsSummaryLine">Hlina ' + numberWithCommas(totalStoneSent) + ' <img src="' + stoneIconUrl + '" alt="hlina" width="16" height="16"></span>' +
-            '<span class="totalsSummaryLine">Zelezo ' + numberWithCommas(totalIronSent) + ' <img src="' + ironIconUrl + '" alt="zelezo" width="16" height="16"></span>'
+            '<span class="totalsSummaryLine">Drevo ' + numberWithCommas(totalWoodSent) + ' <span class="icon header wood" data-title="Drevo "></span></span>' +
+            '<span class="totalsSummaryLine">Hlina ' + numberWithCommas(totalStoneSent) + ' <span class="icon header stone" data-title="Hlina"></span></span>' +
+            '<span class="totalsSummaryLine">Zelezo ' + numberWithCommas(totalIronSent) + ' <span class="icon header iron" data-title="Zelezo"></span></span>'
         );
     }
 
     function buildTotalsCopyText() {
         return (
-            "Drevo " + numberWithCommas(totalWoodSent) + " [building]wood[/building]\n" +
-            "Hlina " + numberWithCommas(totalStoneSent) + " [building]stone[/building]\n" +
-            "Zelezo " + numberWithCommas(totalIronSent) + " [building]iron[/building]"
+            "Drevo " + numberWithCommas(totalWoodSent) + "\n" +
+            "Hlina " + numberWithCommas(totalStoneSent) + "\n" +
+            "Zelezo " + numberWithCommas(totalIronSent)
         );
     }
 
     function buildTotalsCopyHtml() {
         return (
             '<div>' +
-            '<div>Drevo ' + numberWithCommas(totalWoodSent) + ' [building]wood[/building]</div>' +
-            '<div>Hlina ' + numberWithCommas(totalStoneSent) + ' [building]stone[/building]</div>' +
-            '<div>Zelezo ' + numberWithCommas(totalIronSent) + ' [building]iron[/building]</div>' +
+            '<div>Drevo ' + numberWithCommas(totalWoodSent) + ' <span class="icon header wood" data-title="Drevo "></span></div>' +
+            '<div>Hlina ' + numberWithCommas(totalStoneSent) + ' <span class="icon header stone" data-title="Hlina"></span></div>' +
+            '<div>Zelezo ' + numberWithCommas(totalIronSent) + ' <span class="icon header iron" data-title="Zelezo"></span></div>' +
             "</div>"
         );
     }
