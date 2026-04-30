@@ -96,6 +96,14 @@
 #resourceSender input {
     max-width: 110px;
 }
+.totalsSummaryLine {
+    display: block;
+    margin: 2px 0;
+}
+.totalsSummaryLine img {
+    vertical-align: middle;
+    margin-left: 4px;
+}
 .copyTotalsButton {
     width: 100%;
 }
@@ -215,8 +223,8 @@
                     var farmSpaceMatch = farmCell.innerText.match(/(\d+)\s*\/\s*(\d+)/);
 
                     warehouseCapacity.push(parseResource(warehouseCell.innerText));
-                    availableMerchants.push(merchantsMatch ? parseInt(merchantsMatch[1], 10) : 0);
-                    totalMerchants.push(merchantsMatch ? parseInt(merchantsMatch[2], 10) : 0);
+                    availableMerchants.push(merchantsMatch ? parseInt(merchantMatch[1], 10) : 0);
+                    totalMerchants.push(merchantsMatch ? parseInt(merchantMatch[2], 10) : 0);
                     farmSpaceUsed.push(farmSpaceMatch ? parseInt(farmSpaceMatch[1], 10) : 0);
                     farmSpaceTotal.push(farmSpaceMatch ? parseInt(farmSpaceMatch[2], 10) : 0);
                 }
@@ -377,7 +385,7 @@
         </tr>
         <tr>
             <td class="sophHeader" colspan="2">Spolu odoslane:</td>
-            <td class="sophRowA" colspan="2" id="totalsSummary">${buildTotalsSummaryText()}</td>
+            <td class="sophRowA" colspan="2" id="totalsSummary">${buildTotalsSummaryHtml()}</td>
             <td class="sophRowB">
                 <button type="button" id="copyTotalsButton" class="btn copyTotalsButton">Kopirovat</button>
             </td>
@@ -517,35 +525,35 @@
                 $("#woodSent").eq(0).text(numberWithCommas(totalWoodSent));
                 $("#stoneSent").eq(0).text(numberWithCommas(totalStoneSent));
                 $("#ironSent").eq(0).text(numberWithCommas(totalIronSent));
-                $("#totalsSummary").eq(0).text(buildTotalsSummaryText());
+                $("#totalsSummary").eq(0).html(buildTotalsSummaryHtml());
             },
             false
         );
     }
 
-    function buildTotalsSummaryText() {
+    function buildTotalsSummaryHtml() {
         return (
-            numberWithCommas(totalWoodSent) + " dreva, " +
-            numberWithCommas(totalStoneSent) + " hliny, " +
-            numberWithCommas(totalIronSent) + " zeleza"
+            '<span class="totalsSummaryLine">Drevo ' + numberWithCommas(totalWoodSent) + ' <img src="' + woodIconUrl + '" alt="drevo" width="16" height="16"></span>' +
+            '<span class="totalsSummaryLine">Hlina ' + numberWithCommas(totalStoneSent) + ' <img src="' + stoneIconUrl + '" alt="hlina" width="16" height="16"></span>' +
+            '<span class="totalsSummaryLine">Zelezo ' + numberWithCommas(totalIronSent) + ' <img src="' + ironIconUrl + '" alt="zelezo" width="16" height="16"></span>'
         );
     }
 
     function buildTotalsCopyText() {
         return (
-            numberWithCommas(totalWoodSent) + " dreva " +
-            numberWithCommas(totalStoneSent) + " hliny " +
-            numberWithCommas(totalIronSent) + " zeleza"
+            "Drevo " + numberWithCommas(totalWoodSent) + "\n" +
+            "Hlina " + numberWithCommas(totalStoneSent) + "\n" +
+            "Zelezo " + numberWithCommas(totalIronSent)
         );
     }
 
     function buildTotalsCopyHtml() {
         return (
-            '<span>' +
-            numberWithCommas(totalWoodSent) + ' <img src="' + woodIconUrl + '" alt="drevo" width="16" height="16"> ' +
-            numberWithCommas(totalStoneSent) + ' <img src="' + stoneIconUrl + '" alt="hlina" width="16" height="16"> ' +
-            numberWithCommas(totalIronSent) + ' <img src="' + ironIconUrl + '" alt="zelezo" width="16" height="16">' +
-            "</span>"
+            '<div>' +
+            '<div>Drevo ' + numberWithCommas(totalWoodSent) + ' <img src="' + woodIconUrl + '" alt="drevo" width="16" height="16"></div>' +
+            '<div>Hlina ' + numberWithCommas(totalStoneSent) + ' <img src="' + stoneIconUrl + '" alt="hlina" width="16" height="16"></div>' +
+            '<div>Zelezo ' + numberWithCommas(totalIronSent) + ' <img src="' + ironIconUrl + '" alt="zelezo" width="16" height="16"></div>' +
+            "</div>"
         );
     }
 
