@@ -86,10 +86,12 @@ window.FarmGod.Library = (function () {
           return arr;
         },
         addItem: function (item) {
-          let leastBusyQueue = twLib.queues
-            .map((q) => q.length)
-            .reduce((next, curr) => (curr < next ? curr : next), 0);
-          twLib.queues[leastBusyQueue].enqueue(item);
+          let leastBusyQueueIndex = twLib.queues.reduce(
+            (leastIndex, queue, index, queues) =>
+              queue.length < queues[leastIndex].length ? index : leastIndex,
+            0
+          );
+          twLib.queues[leastBusyQueueIndex].enqueue(item);
         },
         orchestrator: function (type, arg) {
           let promise = $.Deferred();
@@ -150,10 +152,12 @@ window.FarmGod.Library = (function () {
     let navLength =
       $html.find('#am_widget_Farm').length > 0
         ? parseInt(
-            $('#plunder_list_nav')
+            $html
+              .find('#plunder_list_nav')
               .first()
               .find('a.paged-nav-item, strong.paged-nav-item')[
-              $('#plunder_list_nav')
+              $html
+                .find('#plunder_list_nav')
                 .first()
                 .find('a.paged-nav-item, strong.paged-nav-item').length - 1
             ].textContent.replace(/\D/g, '')
@@ -174,6 +178,39 @@ window.FarmGod.Library = (function () {
     return false;
   };
 
+  const getRemainingPages = function (page, $html) {
+    let nextPage = determineNextPage(page, $html);
+    if (nextPage === false) return [];
+
+    let navSelect = $html
+      .find('.paged-nav-item')
+      .first()
+      .closest('td')
+      .find('select')
+      .first();
+    let navLength =
+      $html.find('#am_widget_Farm').length > 0
+        ? parseInt(
+            $html
+              .find('#plunder_list_nav')
+              .first()
+              .find('a.paged-nav-item, strong.paged-nav-item')[
+              $html
+                .find('#plunder_list_nav')
+                .first()
+                .find('a.paged-nav-item, strong.paged-nav-item').length - 1
+            ].textContent.replace(/\D/g, '')
+          ) - 1
+        : navSelect.length > 0
+        ? navSelect.find('option').length - 1
+        : $html.find('.paged-nav-item').not('[href*="page=-1"]').length;
+
+    return Array.from(
+      { length: Math.max(navLength - nextPage + 1, 0) },
+      (_, index) => nextPage + index
+    );
+  };
+
   const processPage = function (url, page, wrapFn) {
     let pageText = url.match('am_farm') ? `&Farm_page=${page}` : `&page=${page}`;
     return twLib.ajax({ url: url + pageText }).then((html) => {
@@ -183,16 +220,20 @@ window.FarmGod.Library = (function () {
 
   const processAllPages = function (url, processorFn) {
     let page = url.match('am_farm') || url.match('scavenge_mass') ? 0 : -1;
-    let wrapFn = function (page, $html) {
-      let dnp = determineNextPage(page, $html);
-      if (dnp) {
-        processorFn($html);
-        return processPage(url, dnp, wrapFn);
-      } else {
-        return processorFn($html);
+    return processPage(url, page, (currentPage, $html) => {
+      processorFn($html);
+
+      let remainingPages = getRemainingPages(currentPage, $html);
+      if (remainingPages.length === 0) {
+        return $html;
       }
-    };
-    return processPage(url, page, wrapFn);
+
+      return Promise.all(
+        remainingPages.map((nextPage) =>
+          processPage(url, nextPage, (_, $nextHtml) => processorFn($nextHtml))
+        )
+      );
+    });
   };
 
   const getDistance = function (origin, target) {
@@ -758,33 +799,37 @@ window.FarmGod.Main = (function (Library, Translation) {
   const createPlanning = function (optionDistance, optionTime, optionMaxloot, data) {
     let plan = { counter: 0, farms: {} };
     let serverTime = Math.round(lib.getCurrentServerTime() / 1000);
+    let maxTimeDiff = Math.round(optionTime * 60);
+    let farmCoords = Object.keys(data.farms.farms);
 
     for (let prop in data.villages) {
-      let orderedFarms = Object.keys(data.farms.farms)
+      let orderedFarms = farmCoords
         .map((key) => ({ coord: key, dis: lib.getDistance(prop, key) }))
+        .filter((farm) => farm.dis < optionDistance)
         .sort((a, b) => (a.dis > b.dis ? 1 : -1));
 
-      orderedFarms.forEach((el) => {
+      for (let el of orderedFarms) {
         let farmIndex = data.farms.farms[el.coord];
         let template_name =
           optionMaxloot && farmIndex.hasOwnProperty('max_loot') && farmIndex.max_loot ? 'b' : 'a';
         let template = data.farms.templates[template_name];
         let unitsLeft = lib.subtractArrays(data.villages[prop].units, template.units);
-        let distance = lib.getDistance(prop, el.coord);
+        let distance = el.dis;
         let arrival = Math.round(serverTime + distance * template.speed * 60 + Math.round(plan.counter / 5));
-        let maxTimeDiff = Math.round(optionTime * 60);
         let timeDiff = true;
 
         if (data.commands.hasOwnProperty(el.coord)) {
           if (!farmIndex.hasOwnProperty('color') && data.commands[el.coord].length > 0) timeDiff = false;
-          data.commands[el.coord].forEach((timestamp) => {
-            if (Math.abs(timestamp - arrival) < maxTimeDiff) timeDiff = false;
-          });
+          if (timeDiff) {
+            timeDiff = !data.commands[el.coord].some(
+              (timestamp) => Math.abs(timestamp - arrival) < maxTimeDiff
+            );
+          }
         } else {
           data.commands[el.coord] = [];
         }
 
-        if (unitsLeft && timeDiff && distance < optionDistance) {
+        if (unitsLeft && timeDiff) {
           plan.counter++;
           if (!plan.farms.hasOwnProperty(prop)) plan.farms[prop] = [];
           plan.farms[prop].push({
@@ -796,7 +841,7 @@ window.FarmGod.Main = (function (Library, Translation) {
           data.villages[prop].units = unitsLeft;
           data.commands[el.coord].push(arrival);
         }
-      });
+      }
     }
 
     return plan;
