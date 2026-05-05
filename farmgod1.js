@@ -86,12 +86,10 @@ window.FarmGod.Library = (function () {
           return arr;
         },
         addItem: function (item) {
-          let leastBusyQueueIndex = twLib.queues.reduce(
-            (leastIndex, queue, index, queues) =>
-              queue.length < queues[leastIndex].length ? index : leastIndex,
-            0
-          );
-          twLib.queues[leastBusyQueueIndex].enqueue(item);
+          let leastBusyQueue = twLib.queues
+            .map((q) => q.length)
+            .reduce((next, curr) => (curr < next ? curr : next), 0);
+          twLib.queues[leastBusyQueue].enqueue(item);
         },
         orchestrator: function (type, arg) {
           let promise = $.Deferred();
@@ -152,12 +150,10 @@ window.FarmGod.Library = (function () {
     let navLength =
       $html.find('#am_widget_Farm').length > 0
         ? parseInt(
-            $html
-              .find('#plunder_list_nav')
+            $('#plunder_list_nav')
               .first()
               .find('a.paged-nav-item, strong.paged-nav-item')[
-              $html
-                .find('#plunder_list_nav')
+              $('#plunder_list_nav')
                 .first()
                 .find('a.paged-nav-item, strong.paged-nav-item').length - 1
             ].textContent.replace(/\D/g, '')
@@ -178,39 +174,6 @@ window.FarmGod.Library = (function () {
     return false;
   };
 
-  const getRemainingPages = function (page, $html) {
-    let nextPage = determineNextPage(page, $html);
-    if (nextPage === false) return [];
-
-    let navSelect = $html
-      .find('.paged-nav-item')
-      .first()
-      .closest('td')
-      .find('select')
-      .first();
-    let navLength =
-      $html.find('#am_widget_Farm').length > 0
-        ? parseInt(
-            $html
-              .find('#plunder_list_nav')
-              .first()
-              .find('a.paged-nav-item, strong.paged-nav-item')[
-              $html
-                .find('#plunder_list_nav')
-                .first()
-                .find('a.paged-nav-item, strong.paged-nav-item').length - 1
-            ].textContent.replace(/\D/g, '')
-          ) - 1
-        : navSelect.length > 0
-        ? navSelect.find('option').length - 1
-        : $html.find('.paged-nav-item').not('[href*="page=-1"]').length;
-
-    return Array.from(
-      { length: Math.max(navLength - nextPage + 1, 0) },
-      (_, index) => nextPage + index
-    );
-  };
-
   const processPage = function (url, page, wrapFn) {
     let pageText = url.match('am_farm') ? `&Farm_page=${page}` : `&page=${page}`;
     return twLib.ajax({ url: url + pageText }).then((html) => {
@@ -220,20 +183,16 @@ window.FarmGod.Library = (function () {
 
   const processAllPages = function (url, processorFn) {
     let page = url.match('am_farm') || url.match('scavenge_mass') ? 0 : -1;
-    return processPage(url, page, (currentPage, $html) => {
-      processorFn($html);
-
-      let remainingPages = getRemainingPages(currentPage, $html);
-      if (remainingPages.length === 0) {
-        return $html;
+    let wrapFn = function (page, $html) {
+      let dnp = determineNextPage(page, $html);
+      if (dnp) {
+        processorFn($html);
+        return processPage(url, dnp, wrapFn);
+      } else {
+        return processorFn($html);
       }
-
-      return Promise.all(
-        remainingPages.map((nextPage) =>
-          processPage(url, nextPage, (_, $nextHtml) => processorFn($nextHtml))
-        )
-      );
-    });
+    };
+    return processPage(url, page, wrapFn);
   };
 
   const getDistance = function (origin, target) {
@@ -462,7 +421,7 @@ window.FarmGod.Main = (function (Library, Translation) {
               );
 
               $('.optionsContent').html(UI.Throbber[0].outerHTML + '<br><br>');
-              getData(optionGroup, optionNewbarbs, optionLosses, optionDistance).then((data) => {
+              getData(optionGroup, optionNewbarbs, optionLosses).then((data) => {
                 Dialog.close();
                 let plan = createPlanning(optionDistance, optionTime, optionMaxloot, data);
                 $('.farmGodContent').remove();
@@ -623,131 +582,7 @@ window.FarmGod.Main = (function (Library, Translation) {
     return html;
   };
 
-  const coordToPoint = function (coord) {
-    let [x, y] = coord.split('|').map(Number);
-    return { x, y };
-  };
-
-  const BARB_CACHE_TTL = 60 * 60 * 1000;
-
-  const getVillageBounds = function (villages, distance) {
-    let padding = Math.ceil(distance);
-    let bounds = {
-      minX: Infinity,
-      maxX: -Infinity,
-      minY: Infinity,
-      maxY: -Infinity,
-    };
-
-    Object.values(villages).forEach((village) => {
-      let point = village.point;
-      bounds.minX = Math.min(bounds.minX, point.x - padding);
-      bounds.maxX = Math.max(bounds.maxX, point.x + padding);
-      bounds.minY = Math.min(bounds.minY, point.y - padding);
-      bounds.maxY = Math.max(bounds.maxY, point.y + padding);
-    });
-
-    return Object.keys(villages).length > 0 ? bounds : null;
-  };
-
-  const parseVillageMap = function (text, callback) {
-    let start = 0;
-    for (let index = 0; index <= text.length; index++) {
-      let currentChar = text.charCodeAt(index);
-      if (index === text.length || currentChar === 10) {
-        let end = index > start && text.charCodeAt(index - 1) === 13 ? index - 1 : index;
-        if (end > start) {
-          callback(text.slice(start, end));
-        }
-        start = index + 1;
-      }
-    }
-  };
-
-  const getBarbCacheKey = function (bounds, distance) {
-    let world = game_data.world || location.host;
-    return [
-      'FarmGod_barbs',
-      game_data.market,
-      world,
-      Math.ceil(distance),
-      bounds.minX,
-      bounds.maxX,
-      bounds.minY,
-      bounds.maxY,
-    ].join('_');
-  };
-
-  const readBarbCache = function (bounds, distance) {
-    try {
-      let raw = localStorage.getItem(getBarbCacheKey(bounds, distance));
-      if (!raw) return false;
-
-      let parsed = JSON.parse(raw);
-      if (!parsed.timestamp || Date.now() - parsed.timestamp > BARB_CACHE_TTL) {
-        localStorage.removeItem(getBarbCacheKey(bounds, distance));
-        return false;
-      }
-
-      return Array.isArray(parsed.barbs) ? parsed.barbs : false;
-    } catch (e) {
-      return false;
-    }
-  };
-
-  const writeBarbCache = function (bounds, distance, barbs) {
-    try {
-      localStorage.setItem(
-        getBarbCacheKey(bounds, distance),
-        JSON.stringify({
-          timestamp: Date.now(),
-          barbs,
-        })
-      );
-    } catch (e) {}
-  };
-
-  const buildFarmGrid = function (farms, distance) {
-    let cellSize = Math.max(1, Math.ceil(distance));
-    let cells = {};
-
-    Object.keys(farms).forEach((coord) => {
-      let farm = farms[coord];
-      let point = farm.point || coordToPoint(coord);
-      farm.point = point;
-
-      let key = `${Math.floor(point.x / cellSize)}|${Math.floor(point.y / cellSize)}`;
-      if (!cells.hasOwnProperty(key)) cells[key] = [];
-      cells[key].push(coord);
-    });
-
-    return { cellSize, cells };
-  };
-
-  const getCandidateFarms = function (originPoint, farmGrid, farms, optionDistance) {
-    let cellX = Math.floor(originPoint.x / farmGrid.cellSize);
-    let cellY = Math.floor(originPoint.y / farmGrid.cellSize);
-    let candidates = [];
-
-    for (let offsetX = -1; offsetX <= 1; offsetX++) {
-      for (let offsetY = -1; offsetY <= 1; offsetY++) {
-        let key = `${cellX + offsetX}|${cellY + offsetY}`;
-        let coords = farmGrid.cells[key] || [];
-
-        coords.forEach((coord) => {
-          let farm = farms[coord];
-          let distance = Math.hypot(originPoint.x - farm.point.x, originPoint.y - farm.point.y);
-          if (distance < optionDistance) {
-            candidates.push({ coord, dis: distance });
-          }
-        });
-      }
-    }
-
-    return candidates.sort((a, b) => a.dis - b.dis);
-  };
-
-  const getData = function (group, newbarbs, losses, optionDistance) {
+  const getData = function (group, newbarbs, losses) {
     let data = {
       villages: {},
       commands: {},
@@ -778,12 +613,7 @@ window.FarmGod.Main = (function (Library, Translation) {
               }
             });
             const filteredUnits = units.filter((_, index) => skipUnits.indexOf(game_data.units[index]) === -1);
-            data.villages[coord] = {
-              name,
-              id: villageId,
-              units: filteredUnits,
-              point: coordToPoint(coord),
-            };
+            data.villages[coord] = { name, id: villageId, units: filteredUnits };
           } catch (e) {
             console.error('Error processing village data:', e);
           }
@@ -805,11 +635,11 @@ window.FarmGod.Main = (function (Library, Translation) {
               name: $qel.data('text'),
               id: parseInt($el.find('.quickedit-vn').first().data('id')),
               units,
-              point: coordToPoint($qel.text().toCoord()),
             });
           });
       }
 
+      console.log('villages', data.villages);
       return data;
     };
 
@@ -866,12 +696,12 @@ window.FarmGod.Main = (function (Library, Translation) {
         .find('tr[id^="village_"]')
         .map((i, el) => {
           let $el = $(el);
-          let coord = $el.find('a[href*="screen=report&mode=all&view="]').first().text().toCoord();
-          return (data.farms.farms[coord] = {
+          return (data.farms.farms[
+            $el.find('a[href*="screen=report&mode=all&view="]').first().text().toCoord()
+          ] = {
             id: $el.attr('id').split('_')[1].toNumber(),
             color: $el.find('img[src*="graphic/dots/"]').attr('src').match(/dots\/(green|yellow|red|blue|red_blue)/)[1],
             max_loot: $el.find('img[src*="max_loot/1"]').length > 0,
-            point: coordToPoint(coord),
           });
         });
 
@@ -880,39 +710,14 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     let findNewbarbs = () => {
       if (newbarbs) {
-        let bounds = getVillageBounds(data.villages, optionDistance);
-        if (!bounds) return data;
-        let cachedBarbs = readBarbCache(bounds, optionDistance);
-
-        if (cachedBarbs) {
-          cachedBarbs.forEach(([coord, id, x, y]) => {
-            if (!data.farms.farms.hasOwnProperty(coord)) {
-              data.farms.farms[coord] = { id, point: { x, y } };
-            }
-          });
-          return data;
-        }
-
         return twLib.get('/map/village.txt').then((allVillages) => {
-          let cachedEntries = [];
-          parseVillageMap(allVillages, (villageData) => {
+          allVillages.match(/[^\r\n]+/g).forEach((villageData) => {
             let [id, name, x, y, player_id] = villageData.split(',');
-            let point = { x: Number(x), y: Number(y) };
             let coord = `${x}|${y}`;
-            if (
-              player_id == 0 &&
-              point.x >= bounds.minX &&
-              point.x <= bounds.maxX &&
-              point.y >= bounds.minY &&
-              point.y <= bounds.maxY &&
-              !data.farms.farms.hasOwnProperty(coord)
-            ) {
-              let numericId = id.toNumber();
-              data.farms.farms[coord] = { id: numericId, point };
-              cachedEntries.push([coord, numericId, point.x, point.y]);
+            if (player_id == 0 && !data.farms.farms.hasOwnProperty(coord)) {
+              data.farms.farms[coord] = { id: id.toNumber() };
             }
           });
-          writeBarbCache(bounds, optionDistance, cachedEntries);
           return data;
         });
       } else {
@@ -944,8 +749,8 @@ window.FarmGod.Main = (function (Library, Translation) {
         commandsProcessor
       ),
       lib.processAllPages(TribalWars.buildURL('GET', 'am_farm'), farmProcessor),
+      findNewbarbs(),
     ])
-      .then(findNewbarbs)
       .then(filterFarms)
       .then(() => data);
   };
@@ -953,47 +758,45 @@ window.FarmGod.Main = (function (Library, Translation) {
   const createPlanning = function (optionDistance, optionTime, optionMaxloot, data) {
     let plan = { counter: 0, farms: {} };
     let serverTime = Math.round(lib.getCurrentServerTime() / 1000);
-    let maxTimeDiff = Math.round(optionTime * 60);
-    let farmGrid = buildFarmGrid(data.farms.farms, optionDistance);
 
     for (let prop in data.villages) {
-      let village = data.villages[prop];
-      let orderedFarms = getCandidateFarms(village.point, farmGrid, data.farms.farms, optionDistance);
+      let orderedFarms = Object.keys(data.farms.farms)
+        .map((key) => ({ coord: key, dis: lib.getDistance(prop, key) }))
+        .sort((a, b) => (a.dis > b.dis ? 1 : -1));
 
-      for (let el of orderedFarms) {
+      orderedFarms.forEach((el) => {
         let farmIndex = data.farms.farms[el.coord];
         let template_name =
           optionMaxloot && farmIndex.hasOwnProperty('max_loot') && farmIndex.max_loot ? 'b' : 'a';
         let template = data.farms.templates[template_name];
-        let unitsLeft = lib.subtractArrays(village.units, template.units);
-        let distance = el.dis;
+        let unitsLeft = lib.subtractArrays(data.villages[prop].units, template.units);
+        let distance = lib.getDistance(prop, el.coord);
         let arrival = Math.round(serverTime + distance * template.speed * 60 + Math.round(plan.counter / 5));
+        let maxTimeDiff = Math.round(optionTime * 60);
         let timeDiff = true;
 
         if (data.commands.hasOwnProperty(el.coord)) {
           if (!farmIndex.hasOwnProperty('color') && data.commands[el.coord].length > 0) timeDiff = false;
-          if (timeDiff) {
-            timeDiff = !data.commands[el.coord].some(
-              (timestamp) => Math.abs(timestamp - arrival) < maxTimeDiff
-            );
-          }
+          data.commands[el.coord].forEach((timestamp) => {
+            if (Math.abs(timestamp - arrival) < maxTimeDiff) timeDiff = false;
+          });
         } else {
           data.commands[el.coord] = [];
         }
 
-        if (unitsLeft && timeDiff) {
+        if (unitsLeft && timeDiff && distance < optionDistance) {
           plan.counter++;
           if (!plan.farms.hasOwnProperty(prop)) plan.farms[prop] = [];
           plan.farms[prop].push({
-            origin: { coord: prop, name: village.name, id: village.id },
+            origin: { coord: prop, name: data.villages[prop].name, id: data.villages[prop].id },
             target: { coord: el.coord, id: farmIndex.id },
             fields: distance,
             template: { name: template_name, id: template.id },
           });
-          village.units = unitsLeft;
+          data.villages[prop].units = unitsLeft;
           data.commands[el.coord].push(arrival);
         }
-      }
+      });
     }
 
     return plan;
