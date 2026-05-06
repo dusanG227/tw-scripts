@@ -86,10 +86,12 @@ window.FarmGod.Library = (function () {
           return arr;
         },
         addItem: function (item) {
-          let leastBusyQueue = twLib.queues
-            .map((q) => q.length)
-            .reduce((next, curr) => (curr < next ? curr : next), 0);
-          twLib.queues[leastBusyQueue].enqueue(item);
+          let leastBusyQueueIndex = twLib.queues.reduce(
+            (leastIndex, queue, index, queues) =>
+              queue.length < queues[leastIndex].length ? index : leastIndex,
+            0
+          );
+          twLib.queues[leastBusyQueueIndex].enqueue(item);
         },
         orchestrator: function (type, arg) {
           let promise = $.Deferred();
@@ -421,7 +423,7 @@ window.FarmGod.Main = (function (Library, Translation) {
               );
 
               $('.optionsContent').html(UI.Throbber[0].outerHTML + '<br><br>');
-              getData(optionGroup, optionNewbarbs, optionLosses).then((data) => {
+              getData(optionGroup, optionNewbarbs, optionLosses, optionTime).then((data) => {
                 Dialog.close();
                 let plan = createPlanning(optionDistance, optionTime, optionMaxloot, data);
                 $('.farmGodContent').remove();
@@ -582,12 +584,13 @@ window.FarmGod.Main = (function (Library, Translation) {
     return html;
   };
 
-  const getData = function (group, newbarbs, losses) {
+  const getData = function (group, newbarbs, losses, optionTime) {
     let data = {
       villages: {},
       commands: {},
       farms: { templates: {}, farms: {} },
     };
+    let loadCommands = optionTime > 0 || newbarbs;
 
     let villagesProcessor = ($html) => {
       let skipUnits = ['ram', 'catapult', 'knight', 'snob', 'militia'];
@@ -638,8 +641,6 @@ window.FarmGod.Main = (function (Library, Translation) {
             });
           });
       }
-
-      console.log('villages', data.villages);
       return data;
     };
 
@@ -744,10 +745,12 @@ window.FarmGod.Main = (function (Library, Translation) {
         TribalWars.buildURL('GET', 'overview_villages', { mode: 'combined', group }),
         villagesProcessor
       ),
-      lib.processAllPages(
-        TribalWars.buildURL('GET', 'overview_villages', { mode: 'commands', type: 'attack' }),
-        commandsProcessor
-      ),
+      loadCommands
+        ? lib.processAllPages(
+            TribalWars.buildURL('GET', 'overview_villages', { mode: 'commands', type: 'attack' }),
+            commandsProcessor
+          )
+        : $.Deferred().resolve(data),
       lib.processAllPages(TribalWars.buildURL('GET', 'am_farm'), farmProcessor),
       findNewbarbs(),
     ])
