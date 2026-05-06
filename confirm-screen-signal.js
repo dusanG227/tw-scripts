@@ -15,10 +15,12 @@ if (typeof ScriptAPI !== 'undefined') {
   var STORAGE_TARGET = 'twConfirmSignal.target.parts';
   var STORAGE_LEAD = 'twConfirmSignal.lead';
   var STORAGE_CORRECTION = 'twConfirmSignal.correction';
-  var TICK_KEY = '__twConfirmSignalTick';
+  var TICK_TIMEOUT_KEY = '__twConfirmSignalTickTimeout';
+  var TICK_RAF_KEY = '__twConfirmSignalTickRaf';
   var ALERT_ID = 'twConfirmSignalAlert';
   var CLOCK_STATE_KEY = '__twConfirmSignalClockState';
-  var CLOCK_TIMER_KEY = '__twConfirmSignalClockTimer';
+  var CLOCK_BIND_TIMER_KEY = '__twConfirmSignalClockBindTimer';
+  var CLOCK_OBSERVER_KEY = '__twConfirmSignalClockObserver';
 
   function removeOverlay() {
     var node = document.getElementById(OVERLAY_ID);
@@ -41,64 +43,121 @@ if (typeof ScriptAPI !== 'undefined') {
     return Date.now();
   }
 
+  function requestFrame(callback) {
+    if (typeof window.requestAnimationFrame === 'function') {
+      return window.requestAnimationFrame(callback);
+    }
+    return window.setTimeout(callback, 16);
+  }
+
+  function cancelFrame(handle) {
+    if (!handle) {
+      return;
+    }
+
+    if (typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(handle);
+      return;
+    }
+
+    clearTimeout(handle);
+  }
+
+  function clampMs(value) {
+    return Math.max(0, Math.min(999, Math.floor(value)));
+  }
+
   function getSecondKey(hours, minutes, seconds) {
     return [hours, minutes, seconds].join(':');
   }
 
-  function ensureClockTracking() {
-    if (window[CLOCK_STATE_KEY]) {
+  function parseServerTimeText(text) {
+    var match = (text || '').trim().match(/^(\d{1,2}):(\d{2}):(\d{2})/);
+    if (!match) {
+      return null;
+    }
+
+    var hours = Number(match[1]);
+    var minutes = Number(match[2]);
+    var seconds = Number(match[3]);
+
+    return {
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      secondKey: getSecondKey(hours, minutes, seconds)
+    };
+  }
+
+  function getClockState() {
+    return window[CLOCK_STATE_KEY] || null;
+  }
+
+  function syncClockStateFromNode(node) {
+    var parsed = parseServerTimeText(node && node.textContent);
+    var state = getClockState();
+
+    if (!parsed || !state) {
+      return false;
+    }
+
+    var perfNow = getPerformanceNow();
+
+    if (state.lastSecondKey !== parsed.secondKey) {
+      state.lastSecondKey = parsed.secondKey;
+      state.secondStartedAtPerf = perfNow;
+    } else if (state.secondStartedAtPerf === null) {
+      state.secondStartedAtPerf = perfNow;
+    }
+
+    state.displayedMs = clampMs(perfNow - state.secondStartedAtPerf);
+    state.lastSeenText = (node.textContent || '').trim();
+    return true;
+  }
+
+  function bindClockTracking() {
+    var serverTime = document.getElementById('serverTime');
+
+    if (!serverTime) {
+      window[CLOCK_BIND_TIMER_KEY] = window.setTimeout(bindClockTracking, 100);
       return;
     }
 
-    window[CLOCK_STATE_KEY] = {
-      lastSecondKey: null,
-      secondStartedAtPerf: null,
-      displayedMs: 0
-    };
-
-    function track() {
-      var serverTime = document.getElementById('serverTime');
-      if (!serverTime) {
-        window[CLOCK_TIMER_KEY] = window.setTimeout(track, 50);
-        return;
-      }
-
-      var text = (serverTime.textContent || '').trim();
-      var match = text.match(/^(\d{1,2}):(\d{2}):(\d{2})/);
-      if (!match) {
-        window[CLOCK_TIMER_KEY] = window.setTimeout(track, 50);
-        return;
-      }
-
-      var hours = Number(match[1]);
-      var minutes = Number(match[2]);
-      var seconds = Number(match[3]);
-      var secondKey = getSecondKey(hours, minutes, seconds);
-      var state = window[CLOCK_STATE_KEY];
-      var perfNow = getPerformanceNow();
-
-      if (state.lastSecondKey !== secondKey) {
-        state.lastSecondKey = secondKey;
-        state.secondStartedAtPerf = perfNow;
-      }
-
-      if (state.secondStartedAtPerf === null) {
-        state.secondStartedAtPerf = perfNow;
-      }
-
-      var elapsed = Math.max(0, Math.min(999, Math.floor(perfNow - state.secondStartedAtPerf)));
-      state.displayedMs = elapsed;
-
-      serverTime.textContent =
-        String(hours).padStart(2, '0') + ':' +
-        String(minutes).padStart(2, '0') + ':' +
-        String(seconds).padStart(2, '0') + ':' +
-        String(elapsed).padStart(3, '0');
-
-      window[CLOCK_TIMER_KEY] = window.setTimeout(track, 10);
+    if (window[CLOCK_BIND_TIMER_KEY]) {
+      clearTimeout(window[CLOCK_BIND_TIMER_KEY]);
+      window[CLOCK_BIND_TIMER_KEY] = null;
     }
 
-    track();
+    syncClockStateFromNode(serverTime);
+
+    if (window[CLOCK_OBSERVER_KEY]) {
+      return;
+    }
+
+    var observer = new MutationObserver(function() {
+      syncClockStateFromNode(serverTime);
+    });
+
+    observer.observe(serverTime, {
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+
+    window[CLOCK_OBSERVER_KEY] = observer;
+  }
+
+  function ensureClockTracking() {
+    if (!getClockState()) {
+      window[CLOCK_STATE_KEY] = {
+        lastSecondKey: null,
+        secondStartedAtPerf: null,
+        displayedMs: 0,
+        lastSeenText: ''
+      };
+    }
+
+    bindClockTracking();
   }
 
   function getServerDateParts() {
@@ -139,37 +198,45 @@ if (typeof ScriptAPI !== 'undefined') {
     return { day: a, month: b, year: year };
   }
 
+  function getEstimatedDisplayedMs(parsed) {
+    var state = getClockState();
+
+    if (!state || state.secondStartedAtPerf === null) {
+      return 0;
+    }
+
+    if (state.lastSecondKey !== parsed.secondKey) {
+      return state.displayedMs || 0;
+    }
+
+    var elapsed = clampMs(getPerformanceNow() - state.secondStartedAtPerf);
+    state.displayedMs = elapsed;
+    return elapsed;
+  }
+
   function getServerNow() {
     var serverTime = document.getElementById('serverTime');
     if (!serverTime) {
       throw new Error('Nenasiel som #serverTime.');
     }
 
-    var match = (serverTime.textContent || '').trim().match(
-      /^(\d{1,2}):(\d{2}):(\d{2})(?::(\d{1,3}))?$/
-    );
+    syncClockStateFromNode(serverTime);
 
-    if (!match) {
+    var parsed = parseServerTimeText(serverTime.textContent || '');
+    if (!parsed) {
       throw new Error('Neviem precitat serverovy cas.');
     }
 
     var dateParts = getServerDateParts();
-    var ms = 0;
-    var state = window[CLOCK_STATE_KEY];
-
-    if (match[4]) {
-      ms = Number(match[4].padStart(3, '0'));
-    } else if (state && typeof state.displayedMs === 'number') {
-      ms = state.displayedMs;
-    }
+    var ms = getEstimatedDisplayedMs(parsed);
 
     return new Date(
       dateParts.year,
       dateParts.month - 1,
       dateParts.day,
-      Number(match[1]),
-      Number(match[2]),
-      Number(match[3]),
+      parsed.hours,
+      parsed.minutes,
+      parsed.seconds,
       ms
     );
   }
@@ -414,14 +481,22 @@ if (typeof ScriptAPI !== 'undefined') {
     } catch (error) {}
   }
 
-  function fireSignal(sendTime, actualTriggerTime) {
+  function fireSignal(sendTime, actualTriggerTime, plannedTriggerTime) {
     showSignalDot();
     trySound();
+
+    var deltaMs = actualTriggerTime.getTime() - plannedTriggerTime.getTime();
+
     setStatus(
       'KLIKNI PRI CERVENEJ BODKE | klik cas ' +
         formatTime(sendTime) +
-        ' | signal ' +
-        formatTime(actualTriggerTime),
+        ' | real signal ' +
+        formatTime(actualTriggerTime) +
+        ' | plan ' +
+        formatTime(plannedTriggerTime) +
+        ' | odchylka ' +
+        deltaMs +
+        ' ms',
       '#c1121f'
     );
 
@@ -434,9 +509,14 @@ if (typeof ScriptAPI !== 'undefined') {
   }
 
   function stopTick() {
-    if (window[TICK_KEY]) {
-      clearTimeout(window[TICK_KEY]);
-      window[TICK_KEY] = null;
+    if (window[TICK_TIMEOUT_KEY]) {
+      clearTimeout(window[TICK_TIMEOUT_KEY]);
+      window[TICK_TIMEOUT_KEY] = null;
+    }
+
+    if (window[TICK_RAF_KEY]) {
+      cancelFrame(window[TICK_RAF_KEY]);
+      window[TICK_RAF_KEY] = null;
     }
   }
 
@@ -448,46 +528,90 @@ if (typeof ScriptAPI !== 'undefined') {
 
     var travelDurationMs = getTravelDurationMs();
     var sendTime = new Date(desiredArrival.getTime() - travelDurationMs);
-    var triggerTime = new Date(sendTime.getTime() - leadMs + correctionMs);
+    var totalLeadMs = leadMs + correctionMs;
+    var triggerTime = new Date(sendTime.getTime() - totalLeadMs);
 
-    function tick() {
+    function updateDebug(now, signalIn) {
+      setDebug(
+        'Server now: ' + formatTime(now) +
+        ' | Klik: ' + formatTime(sendTime) +
+        ' | Signal: ' + formatTime(triggerTime) +
+        ' | Prichod: ' + formatTime(desiredArrival) +
+        ' | Trvanie: ' + formatDuration(travelDurationMs) +
+        ' | Do signalu: ' + signalIn + ' ms'
+      );
+    }
+
+    function updateStatus(signalIn) {
+      setStatus(
+        'Klikni pri cervenej bodke | signal za ' +
+          signalIn +
+          ' ms | klik cas ' +
+          formatTime(sendTime) +
+          ' | predstih ' +
+          leadMs +
+          ' ms | korekcia ' +
+          correctionMs +
+          ' ms | spolu ' +
+          totalLeadMs +
+          ' ms',
+        signalIn <= 1000 ? '#a15c00' : '#17324d'
+      );
+    }
+
+    function fireFromNow(now) {
+      fireSignal(sendTime, now, triggerTime);
+      stopTick();
+    }
+
+    function fineTick() {
       try {
         var now = getServerNow();
         var signalIn = triggerTime.getTime() - now.getTime();
 
-        setDebug(
-          'Server now: ' + formatTime(now) +
-          ' | Klik: ' + formatTime(sendTime) +
-          ' | Signal: ' + formatTime(triggerTime) +
-          ' | Prichod: ' + formatTime(desiredArrival) +
-          ' | Trvanie: ' + formatDuration(travelDurationMs)
-        );
+        updateDebug(now, signalIn);
 
         if (signalIn <= 0) {
-          fireSignal(sendTime, triggerTime);
-          stopTick();
+          fireFromNow(now);
           return;
         }
 
-        setStatus(
-          'Klikni pri cervenej bodke | signal za ' +
-            signalIn +
-            ' ms | klik cas ' +
-            formatTime(sendTime) +
-            ' | korekcia ' +
-            correctionMs +
-            ' ms',
-          signalIn <= 1000 ? '#a15c00' : '#17324d'
-        );
-
-        window[TICK_KEY] = setTimeout(tick, signalIn > 300 ? 50 : signalIn > 80 ? 10 : 1);
+        updateStatus(signalIn);
+        window[TICK_RAF_KEY] = requestFrame(fineTick);
       } catch (error) {
         stopTick();
         setStatus(error.message, '#b42318');
       }
     }
 
-    tick();
+    function coarseTick() {
+      try {
+        var now = getServerNow();
+        var signalIn = triggerTime.getTime() - now.getTime();
+
+        updateDebug(now, signalIn);
+
+        if (signalIn <= 0) {
+          fireFromNow(now);
+          return;
+        }
+
+        updateStatus(signalIn);
+
+        if (signalIn <= 120) {
+          window[TICK_RAF_KEY] = requestFrame(fineTick);
+          return;
+        }
+
+        var nextDelay = Math.min(250, Math.max(20, signalIn - 80));
+        window[TICK_TIMEOUT_KEY] = window.setTimeout(coarseTick, nextDelay);
+      } catch (error) {
+        stopTick();
+        setStatus(error.message, '#b42318');
+      }
+    }
+
+    coarseTick();
   }
 
   function buildOverlay() {
@@ -525,7 +649,7 @@ if (typeof ScriptAPI !== 'undefined') {
 
     wrap.innerHTML =
       '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
-      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. Milisekundy sa teraz rataju od momentu, ked na serverTime preskoci sekunda.</div>' +
+      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. Milisekundy sa len odhaduju z preklopenia hernych hodin, takze jedna pevna korekcia nemusi sadnut na kazdy pokus.</div>' +
       '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
       '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
       '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
@@ -534,8 +658,8 @@ if (typeof ScriptAPI !== 'undefined') {
       '</div>' +
       '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
       '<input id="' + CORRECTION_ID + '" type="number" inputmode="numeric" placeholder="0" value="' + savedCorrection + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">1. pole navyse je predstih signalu v ms. 2. pole navyse je korekcia timing-u v ms. Ak to trias o 300 ms neskor, daj sem <b>300</b>. Ak skor, daj zaporne cislo. Trvanie: ' + travelText + '. Prichod v hre: ' + arrivalText + '.</div>' +
-      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: -</div>' +
+      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">1. pole navyse je tvoja priemerna reakcia v ms. 2. pole navyse je korekcia skriptu. Ak stale klikas neskoro o 300 ms, daj sem <b>300</b>. Ak skoro, daj zaporne cislo. Nahodnu odchylku ruky to neodstrani. Trvanie: ' + travelText + '. Prichod v hre: ' + arrivalText + '.</div>' +
+      '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: - | Do signalu: -</div>' +
       '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
@@ -582,7 +706,7 @@ if (typeof ScriptAPI !== 'undefined') {
       stopTick();
       removeAlert();
       setStatus('Signal zastaveny.', '#b42318');
-      setDebug('Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: -');
+      setDebug('Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: - | Do signalu: -');
     };
   }
 
