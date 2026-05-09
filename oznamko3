@@ -326,7 +326,7 @@ CriarRelatorioNotas = {
             totalBuildingPop += calcBuildingPop(allB[bi].name, allB[bi].level);
         }
 
-        var maxPop = 20200;
+        var maxPop = 20500;
         if (maxPop < 0) maxPop = 0;
 
         var isOff = (a == _t("offensive") || a == _t("probOffensive"));
