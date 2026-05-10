@@ -585,8 +585,58 @@ window.FarmGod.Main = (function (Library, Translation) {
     return $.when(
       buildGroupSelectors(options.optionGroup, options.optionExcludedGroups)
     ).then(({ groupSelect, excludeGroupList }) => {
-      return `<style>#popup_box_FarmGod{text-align:center;width:620px;}</style>
-              <h3>${t.options.title}</h3><br><div class="optionsContent">
+      return `<style>
+                #popup_box_FarmGod{
+                  text-align:center;
+                  width:620px;
+                  max-width:calc(100vw - 16px);
+                  box-sizing:border-box;
+                }
+                #popup_box_FarmGod h3{
+                  margin:0;
+                  padding:4px 32px 0;
+                }
+                #popup_box_FarmGod .optionsContent{
+                  display:flex;
+                  flex-direction:column;
+                  max-height:calc(100vh - 150px);
+                }
+                #popup_box_FarmGod .farmGodScrollArea{
+                  overflow-y:auto;
+                  overflow-x:hidden;
+                  -webkit-overflow-scrolling:touch;
+                  padding:12px 2px 0;
+                }
+                #popup_box_FarmGod .farmGodActionBar{
+                  position:sticky;
+                  bottom:0;
+                  background:#F7EED6;
+                  padding:10px 0 calc(10px + env(safe-area-inset-bottom));
+                }
+                @media (max-width: 700px){
+                  #popup_box_FarmGod{
+                    position:fixed !important;
+                    left:8px !important;
+                    right:8px !important;
+                    top:8px !important;
+                    bottom:92px !important;
+                    width:auto !important;
+                    max-width:none !important;
+                    margin:0 !important;
+                    overflow:hidden !important;
+                    box-sizing:border-box;
+                  }
+                  #popup_box_FarmGod .optionsContent{
+                    max-height:none;
+                    height:100%;
+                  }
+                  #popup_box_FarmGod .farmGodScrollArea{
+                    padding-top:8px;
+                    padding-bottom:8px;
+                  }
+                }
+              </style>
+              <h3>${t.options.title}</h3><div class="optionsContent"><div class="farmGodScrollArea">
               ${
                 checkboxError || templateError
                   ? `<div class="info_box" style="line-height:15px;font-size:10px;text-align:left;"><p style="margin:0px 5px;">${t.options.warning}<br><img src="${t.options.filterImage}" style="width:100%;"></p></div><br>`
@@ -604,7 +654,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                     ? `<tr><td>${t.options.newbarbs}</td><td><input type="checkbox" class="optionNewbarbs" ${options.optionNewbarbs ? 'checked' : ''}></td></tr>`
                     : ''
                 }
-              </table></div><br><input type="button" class="btn optionButton" value="${t.options.button}"></div>`;
+              </table></div></div><div class="farmGodActionBar"><input type="button" class="btn optionButton" value="${t.options.button}"></div></div>`;
     });
   };
 
