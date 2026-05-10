@@ -451,6 +451,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                 $('.farmGodContent').remove();
                 $('#am_widget_Farm').first().before(buildTable(plan.farms));
                 bindEventHandlers();
+                bindScrollControls();
                 UI.InitProgressBars();
                 UI.updateProgressBar($('#FarmGodProgessbar'), 0, plan.counter);
                 $('#FarmGodProgessbar').data('current', 0).data('max', plan.counter);
@@ -494,6 +495,34 @@ window.FarmGod.Main = (function (Library, Translation) {
       if (isSelectedGroup) $el.prop('checked', false);
       $el.closest('label').css('opacity', isSelectedGroup ? 0.5 : 1);
     });
+  };
+
+  const removeScrollControls = function () {
+    $('#farmGodScrollControls').remove();
+    $('.farmGodBottomSpacer').remove();
+  };
+
+  const bindScrollControls = function () {
+    $('.farmGodScrollBtn')
+      .off('click')
+      .on('click', function () {
+        let direction = $(this).data('direction');
+        let step = Math.max(Math.round(window.innerHeight * 0.7), 260);
+
+        window.scrollBy({
+          top: direction === 'down' ? step : -step,
+          behavior: 'smooth',
+        });
+      });
+  };
+
+  const buildScrollControls = function () {
+    removeScrollControls();
+
+    return `<div id="farmGodScrollControls" style="position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:99999;display:flex;flex-direction:column;gap:8px;">
+              <button type="button" class="farmGodScrollBtn btn" data-direction="up" style="width:42px;height:42px;line-height:42px;padding:0;text-align:center;font-size:22px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,0.25);" title="Scroll up">▲</button>
+              <button type="button" class="farmGodScrollBtn btn" data-direction="down" style="width:42px;height:42px;line-height:42px;padding:0;text-align:center;font-size:22px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,0.25);" title="Scroll down">▼</button>
+            </div>`;
   };
 
   const enqueueSend = function ($icon) {
@@ -613,7 +642,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const buildTable = function (plan) {
-    let html = `<div class="vis farmGodContent"><h4>FarmGod</h4><table class="vis" width="100%">
+    let html = `${buildScrollControls()}<div class="vis farmGodContent" style="margin-bottom:18px;"><h4>FarmGod</h4><table class="vis" width="100%">
                 <tr><div id="FarmGodProgessbar" class="progress-bar live-progress-bar progress-bar-alive" style="width:98%;margin:5px auto;"><div style="background:rgb(146,194,0);"></div><span class="label" style="margin-top:0px;"></span></div></tr>
                 <tr><th style="text-align:center;">${t.table.origin}</th><th style="text-align:center;">${t.table.target}</th><th style="text-align:center;">${t.table.fields}</th><th style="text-align:center;">${t.table.farm}</th></tr>`;
 
@@ -635,7 +664,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       html += `<tr><td colspan="4" style="text-align:center;">${t.table.noFarmsPlanned}</td></tr>`;
     }
 
-    html += `</table></div>`;
+    html += `</table></div><div class="farmGodBottomSpacer" style="height:140px;"></div>`;
     return html;
   };
 
