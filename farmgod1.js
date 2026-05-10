@@ -275,6 +275,8 @@ window.FarmGod.Translation = (function () {
         warning: '<b>Waarschuwingen:</b><br>- Zorg dat A is ingesteld als je standaard microfarm en B als een grotere microfarm<br>- Zorg dat de farm filters correct zijn ingesteld voor je het script gebruikt',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters.png',
         group: 'Uit welke groep moet er gefarmd worden:',
+        excludeGroups: 'Verstuur geen farms vanuit dorpen in deze groepen:',
+        excludeGroupsHint: 'Dorpen die ook in een aangevinkte groep zitten, worden overgeslagen.',
         distance: 'Maximaal aantal velden dat farms mogen lopen:',
         time: 'Hoe veel tijd in minuten moet er tussen farms zitten:',
         losses: 'Verstuur farm naar dorpen met gedeeltelijke verliezen:',
@@ -303,6 +305,8 @@ window.FarmGod.Translation = (function () {
         warning: '<b>Figyelem:</b><br>- Bizonyosodj meg r\u00F3la, hogy az "A" sablon az alap\u00E9rtelmezett \u00E9s a "B" egy nagyobb mennyis\u00E9g\u0171 mikr\u00F3-farm<br>- Bizonyosodj meg r\u00F3la, hogy a farm-filterek megfelel\u0151en vannak be\u00E1ll\u00EDtva miel\u0151tt haszn\u00E1lod a sctiptet',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters_HU.png',
         group: 'Ebb\u0151l a csoportb\u00F3l k\u00FClje:',
+        excludeGroups: 'Ne kuldjon farmot az ezekben a csoportokban levo falvakbol:',
+        excludeGroupsHint: 'Ha a falu egy bejelolt csoportban is benne van, ki lesz hagyva.',
         distance: 'Maxim\u00E1lis mez\u0151 t\u00E1vols\u00E1g:',
         time: 'Mekkora id\u0151intervallumban k\u00FClje a t\u00E1mad\u00E1sokat percben:',
         losses: 'K\u00FCldj\u00F6n t\u00E1mad\u00E1st olyan falvakba ahol r\u00E9szleges vesztes\u00E9ggel j\u00E1rhat a t\u00E1mad\u00E1s:',
@@ -331,6 +335,8 @@ window.FarmGod.Translation = (function () {
         warning: '<b>Warning:</b><br>- Make sure A is set as your default microfarm and B as a larger microfarm<br>- Make sure the farm filters are set correctly before using the script',
         filterImage: 'https://higamy.github.io/TW/Scripts/Assets/farmGodFilters.png',
         group: 'Send farms from group:',
+        excludeGroups: 'Do not send farms from villages in these groups:',
+        excludeGroupsHint: 'If a village is also in one of the checked groups, it will be skipped.',
         distance: 'Maximum fields for farms:',
         time: 'How much time in minutes should there be between farms:',
         losses: 'Send farm to villages with partial losses:',
@@ -400,20 +406,30 @@ window.FarmGod.Main = (function (Library, Translation) {
         $.when(buildOptions()).then((html) => {
           Dialog.show('FarmGod', html);
 
+          $('.optionGroup')
+            .off('change.farmGod')
+            .on('change.farmGod', syncExcludedGroupInputs);
+          syncExcludedGroupInputs();
+
           $('.optionButton')
             .off('click')
             .on('click', () => {
-              let optionGroup = parseInt($('.optionGroup').val());
+              let optionGroup = parseInt($('.optionGroup').val(), 10);
               let optionDistance = parseFloat($('.optionDistance').val());
               let optionTime = parseFloat($('.optionTime').val());
               let optionLosses = $('.optionLosses').prop('checked');
               let optionMaxloot = $('.optionMaxloot').prop('checked');
               let optionNewbarbs = $('.optionNewbarbs').prop('checked') || false;
+              let optionExcludedGroups = $('.optionExcludeGroup:checked')
+                .map((i, el) => parseInt($(el).val(), 10))
+                .get()
+                .filter((groupId) => !Number.isNaN(groupId) && groupId !== optionGroup);
 
               localStorage.setItem(
                 'farmGod_options',
                 JSON.stringify({
                   optionGroup,
+                  optionExcludedGroups,
                   optionDistance,
                   optionTime,
                   optionLosses,
@@ -423,7 +439,13 @@ window.FarmGod.Main = (function (Library, Translation) {
               );
 
               $('.optionsContent').html(UI.Throbber[0].outerHTML + '<br><br>');
-              getData(optionGroup, optionNewbarbs, optionLosses, optionTime).then((data) => {
+              getData(
+                optionGroup,
+                optionExcludedGroups,
+                optionNewbarbs,
+                optionLosses,
+                optionTime
+              ).then((data) => {
                 Dialog.close();
                 let plan = createPlanning(optionDistance, optionTime, optionMaxloot, data);
                 $('.farmGodContent').remove();
@@ -459,6 +481,19 @@ window.FarmGod.Main = (function (Library, Translation) {
         UI.SuccessMessage(t.messages.villageChanged);
         $(this).closest('tr').remove();
       });
+  };
+
+  const syncExcludedGroupInputs = function () {
+    let selectedGroup = parseInt($('.optionGroup').val(), 10);
+
+    $('.optionExcludeGroup').each((i, el) => {
+      let $el = $(el);
+      let isSelectedGroup = parseInt($el.val(), 10) === selectedGroup;
+
+      $el.prop('disabled', isSelectedGroup);
+      if (isSelectedGroup) $el.prop('checked', false);
+      $el.closest('label').css('opacity', isSelectedGroup ? 0.5 : 1);
+    });
   };
 
   const enqueueSend = function ($icon) {
@@ -498,6 +533,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   const buildOptions = function () {
     let options = JSON.parse(localStorage.getItem('farmGod_options')) || {
       optionGroup: 0,
+      optionExcludedGroups: [],
       optionDistance: 25,
       optionTime: 10,
       optionLosses: false,
@@ -517,8 +553,10 @@ window.FarmGod.Main = (function (Library, Translation) {
       $templateRows.first().find('td').last().text().toNumber() >=
       $templateRows.last().find('td').last().text().toNumber();
 
-    return $.when(buildGroupSelect(options.optionGroup)).then((groupSelect) => {
-      return `<style>#popup_box_FarmGod{text-align:center;width:550px;}</style>
+    return $.when(
+      buildGroupSelectors(options.optionGroup, options.optionExcludedGroups)
+    ).then(({ groupSelect, excludeGroupList }) => {
+      return `<style>#popup_box_FarmGod{text-align:center;width:620px;}</style>
               <h3>${t.options.title}</h3><br><div class="optionsContent">
               ${
                 checkboxError || templateError
@@ -527,6 +565,7 @@ window.FarmGod.Main = (function (Library, Translation) {
               }
               <div style="width:90%;margin:auto;background:url('graphic/index/main_bg.jpg') 100% 0% #E3D5B3;border:1px solid #7D510F;border-collapse:separate !important;border-spacing:0px !important;"><table class="vis" style="width:100%;text-align:left;font-size:11px;">
                 <tr><td>${t.options.group}</td><td>${groupSelect}</td></tr>
+                <tr><td style="vertical-align:top;">${t.options.excludeGroups}</td><td>${excludeGroupList}<div style="margin-top:4px;font-size:10px;line-height:14px;">${t.options.excludeGroupsHint}</div></td></tr>
                 <tr><td>${t.options.distance}</td><td><input type="text" size="5" class="optionDistance" value="${options.optionDistance}"></td></tr>
                 <tr><td>${t.options.time}</td><td><input type="text" size="5" class="optionTime" value="${options.optionTime}"></td></tr>
                 <tr><td>${t.options.losses}</td><td><input type="checkbox" class="optionLosses" ${options.optionLosses ? 'checked' : ''}></td></tr>
@@ -540,20 +579,36 @@ window.FarmGod.Main = (function (Library, Translation) {
     });
   };
 
-  const buildGroupSelect = function (id) {
+  const buildGroupSelectors = function (id, excludedIds = []) {
     return $.get(
       TribalWars.buildURL('GET', 'groups', { ajax: 'load_group_menu' })
     ).then((groups) => {
-      let html = `<select class="optionGroup">`;
+      let groupSelect = `<select class="optionGroup">`;
+      let excludeGroupList = `<div class="farmGodExcludedGroups" style="max-height:140px;overflow-y:auto;border:1px solid #7D510F;background:#F8F1E1;padding:4px;">`;
+      let hasExcludeGroup = false;
+
       groups.result.forEach((val) => {
         if (val.type == 'separator') {
-          html += `<option disabled=""/>`;
+          groupSelect += `<option disabled=""/>`;
         } else {
-          html += `<option value="${val.group_id}" ${val.group_id == id ? 'selected' : ''}>${val.name}</option>`;
+          let groupId = parseInt(val.group_id, 10);
+          groupSelect += `<option value="${val.group_id}" ${val.group_id == id ? 'selected' : ''}>${val.name}</option>`;
+
+          if (groupId !== 0) {
+            hasExcludeGroup = true;
+            excludeGroupList += `<label style="display:block;margin:2px 0;"><input type="checkbox" class="optionExcludeGroup" value="${groupId}" ${excludedIds.includes(groupId) ? 'checked' : ''}> ${val.name}</label>`;
+          }
         }
       });
-      html += `</select>`;
-      return html;
+
+      if (!hasExcludeGroup) {
+        excludeGroupList += `<span style="font-style:italic;">-</span>`;
+      }
+
+      groupSelect += `</select>`;
+      excludeGroupList += `</div>`;
+
+      return { groupSelect, excludeGroupList };
     });
   };
 
@@ -584,13 +639,18 @@ window.FarmGod.Main = (function (Library, Translation) {
     return html;
   };
 
-  const getData = function (group, newbarbs, losses, optionTime) {
+  const getData = function (group, excludedGroups, newbarbs, losses, optionTime) {
+    excludedGroups = [...new Set((excludedGroups || [])
+      .map((groupId) => parseInt(groupId, 10))
+      .filter((groupId) => !Number.isNaN(groupId) && groupId !== group))];
+
     let data = {
       villages: {},
       commands: {},
       farms: { templates: {}, farms: {} },
     };
     let loadCommands = optionTime > 0 || newbarbs;
+    let excludedVillageCoords = {};
 
     let villagesProcessor = ($html) => {
       let skipUnits = ['ram', 'catapult', 'knight', 'snob', 'militia'];
@@ -642,6 +702,30 @@ window.FarmGod.Main = (function (Library, Translation) {
           });
       }
       return data;
+    };
+
+    let excludedVillagesProcessor = ($html) => {
+      const mobileCheck = $('#mobileHeader').length > 0;
+
+      if (mobileCheck) {
+        jQuery($html)
+          .find('.overview-container > div')
+          .each((i, el) => {
+            let coord = jQuery(el).find('.quickedit-label').text().toCoord();
+            if (coord) excludedVillageCoords[coord] = true;
+          });
+      } else {
+        $html
+          .find('#combined_table')
+          .find('.row_a, .row_b')
+          .filter((i, el) => $(el).find('.bonus_icon_33').length == 0)
+          .each((i, el) => {
+            let coord = $(el).find('.quickedit-label').first().text().toCoord();
+            if (coord) excludedVillageCoords[coord] = true;
+          });
+      }
+
+      return excludedVillageCoords;
     };
 
     let commandsProcessor = ($html) => {
@@ -726,6 +810,13 @@ window.FarmGod.Main = (function (Library, Translation) {
       }
     };
 
+    let removeExcludedVillages = () => {
+      Object.keys(excludedVillageCoords).forEach((coord) => {
+        delete data.villages[coord];
+      });
+      return data;
+    };
+
     let filterFarms = () => {
       data.farms.farms = Object.fromEntries(
         Object.entries(data.farms.farms).filter(([key, val]) => {
@@ -751,9 +842,20 @@ window.FarmGod.Main = (function (Library, Translation) {
             commandsProcessor
           )
         : $.Deferred().resolve(data),
+      excludedGroups.length > 0
+        ? Promise.all(
+            excludedGroups.map((groupId) =>
+              lib.processAllPages(
+                TribalWars.buildURL('GET', 'overview_villages', { mode: 'combined', group: groupId }),
+                excludedVillagesProcessor
+              )
+            )
+          )
+        : $.Deferred().resolve(excludedVillageCoords),
       lib.processAllPages(TribalWars.buildURL('GET', 'am_farm'), farmProcessor),
       findNewbarbs(),
     ])
+      .then(removeExcludedVillages)
       .then(filterFarms)
       .then(() => data);
   };
