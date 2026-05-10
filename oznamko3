@@ -1,4 +1,4 @@
-var ScriptData = { name: "Auto notes from report", version: "v2.1", lastUpdate: "2021-03-07", author: "xdam98", authorContact: "Xico#7941 (Discord)" },
+var ScriptData = { name: "Auto notes from report", version: "v2.2", lastUpdate: "2026-05-11", author: "xdam98 + Codex", authorContact: "Xico#7941 (Discord)" },
 LS_prefix = "xd",
 translations = {
     pt_PT: {
@@ -131,6 +131,36 @@ function calcBuildingPop(name, level) {
     return Math.round(d[0] * Math.pow(d[1], level - 1));
 }
 
+function getTroopRole(index, hasArchers) {
+    if (hasArchers) {
+        if (2 == index || 5 == index || 6 == index || 8 == index) return "off";
+        if (0 == index || 1 == index || 3 == index || 7 == index) return "def";
+        return "ignore";
+    }
+
+    if (2 == index || 4 == index || 6 == index) return "off";
+    if (0 == index || 1 == index || 5 == index) return "def";
+    return "ignore";
+}
+
+function addTroopPop(target, index, amount, farmPop, hasArchers) {
+    var role = getTroopRole(index, hasArchers);
+    if ("off" == role) {
+        target.ofensivas += amount * farmPop[index];
+    } else if ("def" == role) {
+        target.defensivas += amount * farmPop[index];
+    }
+}
+
+function getOutsideVillageType(offPop, defPop) {
+    if (offPop > 3e3 && offPop > defPop) return _t("offensive");
+    if (defPop > 1e3 && defPop >= offPop) return _t("defensive");
+    if (offPop > 1e3 && offPop > defPop) return _t("probOffensive");
+    if (defPop > 500 && defPop >= offPop) return _t("probDefensive");
+    if (offPop + defPop > 1e3) return offPop > defPop ? _t("probOffensive") : _t("probDefensive");
+    return "";
+}
+
 CriarRelatorioNotas = {
     dados: {
         player: {
@@ -208,64 +238,32 @@ CriarRelatorioNotas = {
 
         $("#attack_spy_away > tbody > tr:nth-child(1) > th").length && (
             this.dados.aldeia.defensiva.tropas.fora.visiveis = !0,
-            this.dados.mundo.arqueirosAtivos
-                ? $("#attack_spy_away > tbody > tr:nth-child(2) > td > table > tbody > tr:nth-child(2) > td").each((function (e, i) {
-                    var s = parseInt(i.textContent);
-                    e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.fora.totais[e] = s),
-                    2 == e || 5 == e || 6 == e || 8 == e
-                        ? a.dados.aldeia.defensiva.tropas.fora.ofensivas += s * a.dados.mundo.fazendaPorTropa[e]
-                        : 0 != e && 1 != e && 3 != e && 7 != e && 9 != e || (a.dados.aldeia.defensiva.tropas.fora.defensivas += s * a.dados.mundo.fazendaPorTropa[e]);
-                }))
-                : $("#attack_spy_away > tbody > tr:nth-child(2) > td > table > tbody > tr:nth-child(2) > td").each((function (e, i) {
-                    var s = parseInt(i.textContent);
-                    e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.fora.totais[e] = s),
-                    2 == e || 4 == e || 6 == e
-                        ? a.dados.aldeia.defensiva.tropas.fora.ofensivas += s * a.dados.mundo.fazendaPorTropa[e]
-                        : 0 != e && 1 != e && 5 != e || (a.dados.aldeia.defensiva.tropas.fora.defensivas += s * a.dados.mundo.fazendaPorTropa[e]);
-                }))
+            $("#attack_spy_away > tbody > tr:nth-child(2) > td > table > tbody > tr:nth-child(2) > td").each((function (e, i) {
+                var s = parseInt(i.textContent, 10) || 0;
+                e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.fora.totais[e] = s),
+                addTroopPop(a.dados.aldeia.defensiva.tropas.fora, e, s, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+            }))
         ),
 
         $("#attack_info_def_units > tbody > tr:nth-child(2) > td").length && (this.dados.aldeia.defensiva.tropas.visiveis = !0),
 
-        this.dados.mundo.arqueirosAtivos
-            ? (
-                this.dados.aldeia.defensiva.tropas.visiveis && $("#attack_info_def_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
-                    var s = parseInt(i.textContent);
-                    e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.dentro.totais[e] = s),
-                    2 == e || 5 == e || 6 == e || 8 == e
-                        ? a.dados.aldeia.defensiva.tropas.dentro.ofensivas += s * a.dados.mundo.fazendaPorTropa[e]
-                        : 0 != e && 1 != e && 3 != e && 7 != e && 9 != e || (a.dados.aldeia.defensiva.tropas.dentro.defensivas += s * a.dados.mundo.fazendaPorTropa[e]);
-                })),
-                $("#attack_info_att_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
-                    var s = parseInt(i.textContent);
-                    e < a.dados.aldeia.ofensiva.tropas.totais.length && (a.dados.aldeia.ofensiva.tropas.totais[e] = s),
-                    2 == e || 5 == e || 6 == e
-                        ? a.dados.aldeia.ofensiva.tropas.ofensivas += s * a.dados.mundo.fazendaPorTropa[e]
-                        : 0 != e && 1 != e && 3 != e && 7 != e && 9 != e || (a.dados.aldeia.ofensiva.tropas.defensivas += s * a.dados.mundo.fazendaPorTropa[e]);
-                }))
-            )
-            : (
-                this.dados.aldeia.defensiva.tropas.visiveis && $("#attack_info_def_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
-                    var s = parseInt(i.textContent);
-                    e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.dentro.totais[e] = s),
-                    2 == e || 4 == e || 6 == e
-                        ? a.dados.aldeia.defensiva.tropas.dentro.ofensivas += s * a.dados.mundo.fazendaPorTropa[e]
-                        : 0 != e && 1 != e && 5 != e || (a.dados.aldeia.defensiva.tropas.dentro.defensivas += s * a.dados.mundo.fazendaPorTropa[e]);
-                })),
-                $("#attack_info_att_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
-                    var s = parseInt(i.textContent);
-                    e < a.dados.aldeia.ofensiva.tropas.totais.length && (a.dados.aldeia.ofensiva.tropas.totais[e] = s),
-                    2 == e || 4 == e || 6 == e
-                        ? a.dados.aldeia.ofensiva.tropas.ofensivas += s * a.dados.mundo.fazendaPorTropa[e]
-                        : 0 != e && 1 != e && 5 != e && 7 != e || (a.dados.aldeia.ofensiva.tropas.defensivas += s * a.dados.mundo.fazendaPorTropa[e]);
-                }))
-            ),
+        this.dados.aldeia.defensiva.tropas.visiveis && $("#attack_info_def_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
+            var s = parseInt(i.textContent, 10) || 0;
+            e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.dentro.totais[e] = s),
+            addTroopPop(a.dados.aldeia.defensiva.tropas.dentro, e, s, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+        })),
+
+        $("#attack_info_att_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
+            var s = parseInt(i.textContent, 10) || 0;
+            e < a.dados.aldeia.ofensiva.tropas.totais.length && (a.dados.aldeia.ofensiva.tropas.totais[e] = s),
+            addTroopPop(a.dados.aldeia.ofensiva.tropas, e, s, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+        })),
 
         $("#attack_spy_buildings_left > tbody > tr:nth-child(1) > th:nth-child(1)").length && (
             this.dados.aldeia.defensiva.edificios.edificiosVisiveis = !0,
             $("table[id^='attack_spy_buildings_'] > tbody > tr:gt(0) > td > img").each((function (e, i) {
                 var s = i.src.split("/").pop().replace(/\.[^.]+$/, "");
-                t = parseInt(i.parentNode.parentNode.childNodes[3].textContent);
+                var t = parseInt(i.parentNode.parentNode.childNodes[3].textContent, 10) || 0;
                 a.dados.aldeia.defensiva.edificios.allBuildings.push({ name: s, level: t });
                 "watchtower" == s ? a.dados.aldeia.defensiva.edificios.torre = [!0, t] :
                 "church_f" == s ? a.dados.aldeia.defensiva.edificios.igrejaPrincipal = [!0, t] :
@@ -286,17 +284,13 @@ CriarRelatorioNotas = {
             )
             : this.dados.aldeia.defensiva.tropas.visiveis || (this.dados.aldeia.defensiva.tipoAldeia = _t("noSurvivors"));
 
-        this.dados.aldeia.defensiva.tropas.fora.visiveis && (
-            this.dados.aldeia.defensiva.tropas.fora.ofensivas > 3e3 ? this.dados.aldeia.defensiva.tipoAldeia = _t("offensive") :
-            this.dados.aldeia.defensiva.tropas.fora.ofensivas > 1e3 ? this.dados.aldeia.defensiva.tipoAldeia = _t("probOffensive") :
-            this.dados.aldeia.defensiva.tropas.fora.defensivas > 1e3 ? this.dados.aldeia.defensiva.tipoAldeia = _t("defensive") :
-            this.dados.aldeia.defensiva.tropas.fora.defensivas > 500 ? this.dados.aldeia.defensiva.tipoAldeia = _t("probDefensive") :
-            this.dados.aldeia.defensiva.tropas.fora.defensivas + this.dados.aldeia.defensiva.tropas.fora.ofensivas > 1e3 && (
-                this.dados.aldeia.defensiva.tropas.fora.ofensivas > this.dados.aldeia.defensiva.tropas.fora.defensivas
-                    ? this.dados.aldeia.defensiva.tipoAldeia = _t("probOffensive")
-                    : this.dados.aldeia.defensiva.tropas.fora.defensivas >= this.dados.aldeia.defensiva.tropas.fora.ofensivas && (this.dados.aldeia.defensiva.tipoAldeia = _t("probDefensive"))
-            )
-        ),
+        if (this.dados.aldeia.defensiva.tropas.fora.visiveis) {
+            var foraType = getOutsideVillageType(
+                this.dados.aldeia.defensiva.tropas.fora.ofensivas,
+                this.dados.aldeia.defensiva.tropas.fora.defensivas
+            );
+            foraType && (this.dados.aldeia.defensiva.tipoAldeia = foraType);
+        }
 
         this.dados.aldeia.ofensiva.tropas.ofensivas > this.dados.aldeia.ofensiva.tropas.defensivas
             ? this.dados.aldeia.ofensiva.tipoAldeia = _t("offensive")
@@ -314,27 +308,13 @@ CriarRelatorioNotas = {
 
         s += " | [color=#" + (a == _t("offensive") || a == _t("probOffensive") ? "ff0000" : "0eae0e") + "][b]" + a + "[/b][/color] | ";
 
-        var farmLevel = this.dados.aldeia.defensiva.edificios.farmLevel;
-        var totalFarmPop = 24000;
-        if (farmLevel > 0 && farmLevel <= 30) {
-            totalFarmPop = farmPopTable[farmLevel];
-        }
-
-        var totalBuildingPop = 0;
-        var allB = this.dados.aldeia.defensiva.edificios.allBuildings;
-        for (var bi = 0; bi < allB.length; bi++) {
-            totalBuildingPop += calcBuildingPop(allB[bi].name, allB[bi].level);
-        }
-
         var maxPop = 20500;
-        if (maxPop < 0) maxPop = 0;
-
         var isOff = (a == _t("offensive") || a == _t("probOffensive"));
         var offPop = this.dados.aldeia.defensiva.tropas.dentro.ofensivas + this.dados.aldeia.defensiva.tropas.fora.ofensivas;
         var allDeffPop = this.dados.aldeia.defensiva.tropas.dentro.defensivas + this.dados.aldeia.defensiva.tropas.fora.defensivas;
-        var currentPop = isOff ? offPop : (offPop + allDeffPop);
+        var currentPop = isOff ? offPop : offPop + allDeffPop;
         var percentLabel = isOff ? "OFF" : "SD";
-        var percent = maxPop > 0 ? Math.round((currentPop / maxPop) * 100) : 0;
+        var percent = maxPop > 0 ? Math.round(currentPop / maxPop * 100) : 0;
 
         if (percent > 100) percent = 100;
 
@@ -356,8 +336,8 @@ CriarRelatorioNotas = {
             var deffStr = Math.round(allDeffPop / 1000) + "K";
             s += "[color=#00ffff][b]BETÓN (" + deffStr + " deff)[/b][/color] | ";
         } else if (isOff && allDeffPop > 0) {
-            var deffStr = allDeffPop >= 1000 ? Math.round(allDeffPop / 1000) + "K" : allDeffPop;
-            s += "[color=#ff8c00][b]" + deffStr + " deff[/b][/color] | ";
+            var deffStr2 = allDeffPop >= 1000 ? Math.round(allDeffPop / 1000) + "K" : allDeffPop;
+            s += "[color=#ff8c00][b]" + deffStr2 + " deff[/b][/color] | ";
         }
 
         if (this.dados.aldeia.defensiva.edificios.muralha[0]) {
@@ -385,8 +365,8 @@ CriarRelatorioNotas = {
 
         if (
             s = this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor
-                ? parseInt(this.dados.aldeia.defensiva.idAldeia)
-                : parseInt(this.dados.aldeia.ofensiva.idAldeia),
+                ? parseInt(this.dados.aldeia.defensiva.idAldeia, 10)
+                : parseInt(this.dados.aldeia.ofensiva.idAldeia, 10),
             e = "0" == game_data.player.sitter
                 ? "https://" + location.hostname + "/game.php?village=" + game_data.village.id + "&screen=api&ajaxaction=village_note_edit&h=" + game_data.csrf + "&client_time=" + Math.round(Timing.getCurrentServerTime() / 1e3)
                 : "https://" + location.hostname + "/game.php?village=" + game_data.village.id + "&screen=api&ajaxaction=village_note_edit&t=" + game_data.player.id,
