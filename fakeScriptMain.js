@@ -1,4 +1,4 @@
-// TW Fake Executor v4.1
+// TW Fake Executor v4.2
 (function() {
   'use strict';
 
@@ -49,7 +49,7 @@
   var maxFakesPerTarget = 0;
   var maxFakesPerVillage = 0;
   var unitMode = 'random';
-  var fakeLimitRounding = 'floor';
+  var fakeLimitRounding = 'ceil';
   var villagePointsSource = 'combined';
   var planningServerNow = null;
 
@@ -76,6 +76,7 @@
   if (persistedState.fakeLimitRounding === 'ceil' || persistedState.fakeLimitRounding === 'round' || persistedState.fakeLimitRounding === 'floor') {
     fakeLimitRounding = persistedState.fakeLimitRounding;
   }
+  if (fakeLimit > 0 && fakeLimitRounding === 'floor') fakeLimitRounding = 'ceil';
 
   function log(msg) { console.log('[TW-Fake] ' + msg); }
 
@@ -228,6 +229,13 @@
       (((availableUnits.ram || 0) >= 2) || ((availableUnits.catapult || 0) >= 2));
   }
 
+  function getFakeCoreRequiredPop(units) {
+    if ((units.spy || 0) < 1) return 0;
+    if ((units.ram || 0) >= 2) return unitPop.spy + (unitPop.ram * 2);
+    if ((units.catapult || 0) >= 2) return unitPop.spy + (unitPop.catapult * 2);
+    return 0;
+  }
+
   function getPointBasedFakePop(villagePoints, fakeLimitPct) {
     var raw = villagePoints > 0 ? villagePoints * (fakeLimitPct / 100) : 0;
     if (!raw) return 0;
@@ -299,167 +307,148 @@
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
-  function smartFill(selected, availableUnits, usedPop, popBudget) {
-    var fillers = ['light', 'heavy', 'marcher', 'archer', 'axe', 'sword', 'spear'];
-    var changed = true;
-    while (changed && usedPop < popBudget) {
-      changed = false;
-      for (var i = 0; i < fillers.length; i++) {
-        var u = fillers[i];
-        var pop = unitPop[u] || 1;
-        if (usedPop + pop > popBudget) continue;
-        var already = selected[u] || 0;
-        var avail = (availableUnits[u] || 0) - already;
-        if (avail <= 0) continue;
-        var take = (unitMode === 'random') ? (Math.random() < 0.7 ? 1 : 0) : 1;
-        if (take < 1) continue;
-        selected[u] = already + 1;
-        usedPop += pop;
-        changed = true;
-        if (usedPop >= popBudget) break;
-      }
+  function shuffleArray(items) {
+    var copy = items.slice();
+    for (var i = copy.length - 1; i > 0; i--) {
+      var swapIndex = randInt(0, i);
+      var tmp = copy[i];
+      copy[i] = copy[swapIndex];
+      copy[swapIndex] = tmp;
     }
-    return { selected: selected, usedPop: usedPop };
+    return copy;
   }
 
-  function forceFillToMinimum(selected, availableUnits, usedPop, popBudget) {
-    var fillers = ['light', 'heavy', 'marcher', 'archer', 'axe', 'sword', 'spear'];
+  function getFillOrder() {
+    var cheap = ['spear', 'sword', 'axe', 'archer'];
+    var medium = ['spy', 'light', 'ram', 'marcher', 'heavy', 'catapult'];
 
-    while (usedPop < popBudget) {
-      var progressed = false;
+    if (unitMode === 'random') {
+      cheap = shuffleArray(cheap);
+      medium = shuffleArray(medium);
+    }
 
-      for (var i = 0; i < fillers.length; i++) {
-        var unitName = fillers[i];
+    return cheap.concat(medium);
+  }
+
+  function fillCloseToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder) {
+    var changed = true;
+
+    while (changed && usedPop < requiredPop) {
+      changed = false;
+      var remaining = requiredPop - usedPop;
+
+      for (var i = 0; i < fillOrder.length; i++) {
+        var unitName = fillOrder[i];
         var pop = unitPop[unitName] || 1;
         var already = selected[unitName] || 0;
         var available = (availableUnits[unitName] || 0) - already;
 
         if (available <= 0) continue;
-        if (usedPop + pop > popBudget) continue;
+        if (pop > remaining) continue;
 
         selected[unitName] = already + 1;
         usedPop += pop;
-        progressed = true;
+        changed = true;
 
-        if (usedPop >= popBudget) break;
+        if (usedPop >= requiredPop) break;
       }
-
-      if (!progressed) break;
     }
 
     return { selected: selected, usedPop: usedPop };
   }
 
-  function selectRandomUnits(availableUnits, fakeLimitPct, villagePoints) {
-    var hasSpy = (availableUnits.spy || 0) >= 1;
-    var hasRam = (availableUnits.ram || 0) >= 2;
-    var hasCat = (availableUnits.catapult || 0) >= 2;
-    if (!hasSpy || (!hasRam && !hasCat)) return {};
+  function topOffToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder) {
+    while (usedPop < requiredPop) {
+      var bestUnit = null;
+      var bestOvershoot = Infinity;
+      var bestPop = Infinity;
 
-    var minRamCat = hasRam ? unitPop.ram * 2 : unitPop.catapult * 2;
-    var minRequired = unitPop.spy + minRamCat;
-    var popBudget = getFakePopBudget(fakeLimitPct, villagePoints, minRequired);
+      for (var i = 0; i < fillOrder.length; i++) {
+        var unitName = fillOrder[i];
+        var pop = unitPop[unitName] || 1;
+        var already = selected[unitName] || 0;
+        var available = (availableUnits[unitName] || 0) - already;
+        if (available <= 0) continue;
 
-    var selected = {};
-    var usedPop = 0;
+        var overshoot = usedPop + pop - requiredPop;
+        if (overshoot < 0) continue;
 
-    var maxSpy = Math.min(2, availableUnits.spy || 0, Math.floor((popBudget - minRequired + unitPop.spy) / unitPop.spy));
-    if (maxSpy < 1) return {};
-    selected.spy = randInt(1, maxSpy);
-    usedPop += selected.spy * unitPop.spy;
-
-    if (hasRam && hasCat) {
-      var combo = randInt(0, 2);
-      if (combo !== 1) {
-        var maxRam = Math.min(availableUnits.ram, 4, Math.floor((popBudget - usedPop - (combo !== 0 ? unitPop.catapult * 2 : 0)) / unitPop.ram));
-        if (maxRam >= 2) {
-          selected.ram = randInt(2, maxRam);
-          usedPop += selected.ram * unitPop.ram;
-        } else {
-          return {};
+        if (overshoot < bestOvershoot || (overshoot === bestOvershoot && pop < bestPop)) {
+          bestUnit = unitName;
+          bestOvershoot = overshoot;
+          bestPop = pop;
         }
       }
-      if (combo !== 0) {
-        var maxCat = Math.min(availableUnits.catapult, 4, Math.floor((popBudget - usedPop) / unitPop.catapult));
-        if (maxCat >= 2) {
-          selected.catapult = randInt(2, maxCat);
-          usedPop += selected.catapult * unitPop.catapult;
-        } else if (!selected.ram) {
-          return {};
-        }
-      }
-    } else if (hasRam) {
-      var maxRam2 = Math.min(availableUnits.ram, 4, Math.floor((popBudget - usedPop) / unitPop.ram));
-      if (maxRam2 < 2) return {};
-      selected.ram = randInt(2, maxRam2);
-      usedPop += selected.ram * unitPop.ram;
-    } else {
-      var maxCat2 = Math.min(availableUnits.catapult, 4, Math.floor((popBudget - usedPop) / unitPop.catapult));
-      if (maxCat2 < 2) return {};
-      selected.catapult = randInt(2, maxCat2);
-      usedPop += selected.catapult * unitPop.catapult;
+
+      if (!bestUnit) break;
+
+      selected[bestUnit] = (selected[bestUnit] || 0) + 1;
+      usedPop += unitPop[bestUnit] || 1;
     }
 
-    if (!selected.ram && !selected.catapult) return {};
+    return { selected: selected, usedPop: usedPop };
+  }
 
-    var filled = smartFill(selected, availableUnits, usedPop, popBudget);
+  function buildFakeCoreSelection(availableUnits, preferRandomSiege) {
+    if (!canStartFakeFromUnits(availableUnits)) return null;
+
+    var selected = { spy: 1 };
+    var usedPop = unitPop.spy;
+    var hasRam = (availableUnits.ram || 0) >= 2;
+    var hasCat = (availableUnits.catapult || 0) >= 2;
+    var siegeType = hasRam ? 'ram' : 'catapult';
+
+    if (hasRam && hasCat && preferRandomSiege) {
+      siegeType = Math.random() < 0.5 ? 'ram' : 'catapult';
+    }
+
+    selected[siegeType] = 2;
+    usedPop += (unitPop[siegeType] || 1) * 2;
+
+    return {
+      selected: selected,
+      usedPop: usedPop
+    };
+  }
+
+  function finalizeSelectedUnits(selected, availableUnits, requiredPop, usedPop) {
+    if (getUnitsPopulation(availableUnits) < requiredPop) return {};
+
+    var fillOrder = getFillOrder();
+    var filled = fillCloseToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder);
     selected = filled.selected;
     usedPop = filled.usedPop;
 
-    if (usedPop < popBudget) {
-      filled = forceFillToMinimum(selected, availableUnits, usedPop, popBudget);
+    if (usedPop < requiredPop) {
+      filled = topOffToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder);
       selected = filled.selected;
       usedPop = filled.usedPop;
     }
 
-    if (usedPop < popBudget) return {};
+    if (usedPop < requiredPop) return {};
 
-    for (var k in selected) {
-      if (!hasOwn(selected, k)) continue;
-      if (selected[k] > (availableUnits[k] || 0)) return {};
+    for (var unitName in selected) {
+      if (!hasOwn(selected, unitName)) continue;
+      if (selected[unitName] > (availableUnits[unitName] || 0)) return {};
     }
+
     return selected;
   }
 
+  function selectRandomUnits(availableUnits, fakeLimitPct, villagePoints) {
+    var core = buildFakeCoreSelection(availableUnits, true);
+    if (!core) return {};
+
+    var requiredPop = getFakePopBudget(fakeLimitPct, villagePoints, core.usedPop);
+    return finalizeSelectedUnits(core.selected, availableUnits, requiredPop, core.usedPop);
+  }
+
   function selectManualUnits(availableUnits, fakeLimitPct, villagePoints) {
-    var hasSpy = (availableUnits.spy || 0) >= 1;
-    var hasRam = (availableUnits.ram || 0) >= 2;
-    var hasCat = (availableUnits.catapult || 0) >= 2;
-    if (!hasSpy || (!hasRam && !hasCat)) return {};
+    var core = buildFakeCoreSelection(availableUnits, false);
+    if (!core) return {};
 
-    var minRequired = unitPop.spy + (hasRam ? unitPop.ram * 2 : unitPop.catapult * 2);
-    var maxPop = getFakePopBudget(fakeLimitPct, villagePoints, minRequired);
-
-    var selected = {};
-    var usedPop = 0;
-
-    selected.spy = 1;
-    usedPop += unitPop.spy;
-
-    if (hasRam) {
-      var ramCount = Math.min(4, availableUnits.ram, Math.floor((maxPop - usedPop) / unitPop.ram));
-      if (ramCount < 2) return {};
-      selected.ram = ramCount;
-      usedPop += selected.ram * unitPop.ram;
-    } else {
-      var catCount = Math.min(4, availableUnits.catapult, Math.floor((maxPop - usedPop) / unitPop.catapult));
-      if (catCount < 2) return {};
-      selected.catapult = catCount;
-      usedPop += selected.catapult * unitPop.catapult;
-    }
-
-    var filled = smartFill(selected, availableUnits, usedPop, maxPop);
-    selected = filled.selected;
-    usedPop = filled.usedPop;
-
-    if (usedPop < maxPop) {
-      filled = forceFillToMinimum(selected, availableUnits, usedPop, maxPop);
-      selected = filled.selected;
-      usedPop = filled.usedPop;
-    }
-
-    if (usedPop < maxPop) return {};
-    return selected;
+    var requiredPop = getFakePopBudget(fakeLimitPct, villagePoints, core.usedPop);
+    return finalizeSelectedUnits(core.selected, availableUnits, requiredPop, core.usedPop);
   }
 
   function selectUnitsForFake(availableUnits, fakeLimitPct, villagePoints) {
@@ -620,7 +609,7 @@
 
     var h = '<div style="text-align:center;margin-bottom:12px;">';
     h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake - Konfigurácia</h2>';
-    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v4.0 | svet: ' + escapeHtml(config.worldId || '?') + ' | rýchlosť: ' + worldSpeed + 'x | jednotky: ' + unitSpeedMod + 'x</p>';
+    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v4.2 | svet: ' + escapeHtml(config.worldId || '?') + ' | rýchlosť: ' + worldSpeed + 'x | jednotky: ' + unitSpeedMod + 'x</p>';
     h += '</div>';
 
     h += '<div style="margin-bottom:10px;padding:10px;background:#e8d5a3;border-radius:4px;">';
@@ -660,16 +649,16 @@
     h += '<td><input id="tw-cfg-fakelimit" type="number" value="' + fakeLimit + '" step="0.1" min="0" max="100" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
     h += '<div style="font-size:9px;color:#8b7355;">0 = percento sa nepoužije, napr. 1 = 1% bodov dediny</div></td></tr>';
 
-    h += '<tr><td style="padding:3px;font-weight:bold;">Min fake pop:</td>';
+    h += '<tr><td style="padding:3px;font-weight:bold;">Pevné minimum fake pop:</td>';
     h += '<td><input id="tw-cfg-fakeminpop" type="number" value="' + fakeMinPop + '" min="0" max="100000" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" />';
-    h += '<div style="font-size:9px;color:#8b7355;">Výsledok = max(povinné jednotky, % z bodov, min fake pop)</div></td></tr>';
+    h += '<div style="font-size:9px;color:#8b7355;">Neurčuje sa z bodov dediny. 0 = vypnuté. Použi len ak svet vyžaduje fixné minimum pre každý fake, napr. 100 pop.</div></td></tr>';
 
     h += '<tr><td style="padding:3px;font-weight:bold;">Zaokrúhlenie fake:</td>';
     h += '<td><select id="tw-cfg-rounding" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;">';
     h += '<option value="floor"' + (fakeLimitRounding === 'floor' ? ' selected' : '') + '>floor (51.75 → 51)</option>';
     h += '<option value="ceil"' + (fakeLimitRounding === 'ceil' ? ' selected' : '') + '>ceil (51.75 → 52)</option>';
     h += '<option value="round"' + (fakeLimitRounding === 'round' ? ' selected' : '') + '>round (51.75 → 52)</option>';
-    h += '</select><div style="font-size:9px;color:#8b7355;">Počíta sa z bodov z Produkcie, ak sa ju podarí načítať</div></td></tr>';
+    h += '</select><div style="font-size:9px;color:#8b7355;">Pre fake limit je zvyčajne najbezpečnejšie ceil. Body berie z Produkcie, ak sa ju podarí načítať.</div></td></tr>';
 
     h += '<tr><td style="padding:3px;font-weight:bold;">Open tabs:</td>';
     h += '<td><input id="tw-cfg-opentabs" type="number" value="' + openTabs + '" min="1" max="50" style="width:100%;padding:3px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
@@ -688,8 +677,9 @@
     h += '</table>';
 
     h += '<div style="background:#e8f4e8;padding:6px 10px;border-radius:4px;margin-bottom:10px;font-size:10px;color:#2d5a27;">';
-    h += '🪖 Ram/Cat: <b>2–4 kusy</b> | 🔀 Smart filler: <b>dorovná podľa pravidla sveta</b> | 💾 Pamätá si posledné nastavenia aj tabuľky coordov';
-    h += '<br/>Príklad: svet s <b>1%</b> a minimom <b>100 pop</b> nastavíš ako <b>1</b> + <b>100</b>.';
+    h += '🪖 Základ fake: <b>1 spy + 2 ram/cat</b> | 🔀 Dorovná na <b>aspoň required pop</b> | 💾 Pamätá si posledné nastavenia aj tabuľky coordov';
+    h += '<br/>Pri percentovom svete sa required pop ráta osobitne z bodov každej dediny. Príklad: svet s <b>0,5%</b> nastavíš ako <b>0.5</b> + <b>0</b>.';
+    h += '<br/>Pevné minimum používaj len ak svet vyžaduje napríklad <b>100 pop</b> na každý fake bez ohľadu na body dediny.';
     h += '</div>';
 
     h += '<div style="display:flex;gap:8px;">';
@@ -751,6 +741,7 @@
       fakeLimit = clampNumber(document.getElementById('tw-cfg-fakelimit').value, 0, 100, 0.5);
       fakeMinPop = clampInt(document.getElementById('tw-cfg-fakeminpop').value, 0, 100000, 0);
       fakeLimitRounding = document.getElementById('tw-cfg-rounding').value || 'floor';
+      if (fakeLimit > 0 && fakeLimitRounding === 'floor') fakeLimitRounding = 'ceil';
       openTabs = clampInt(document.getElementById('tw-cfg-opentabs').value, 1, 50, 5);
       openTabDelayMs = clampInt(document.getElementById('tw-cfg-tabdelay').value, 0, 60000, 0);
       maxFakesPerTarget = Math.max(0, parseInt(document.getElementById('tw-cfg-maxpertarget').value, 10) || 0);
@@ -1130,6 +1121,8 @@
 
           if (!isInArrivalWindow(pv.village, target, attackUnits)) continue;
 
+          var requiredPop = getFakePopBudget(fakeLimitPct, pv.village.points, getFakeCoreRequiredPop(attackUnits));
+
           queue.push({
             villageId: pv.village.id,
             villageName: pv.village.name,
@@ -1138,7 +1131,9 @@
             targetX: target.x,
             targetY: target.y,
             units: attackUnits,
-            population: getUnitsPopulation(attackUnits)
+            population: getUnitsPopulation(attackUnits),
+            requiredPop: requiredPop,
+            villagePoints: pv.village.points || 0
           });
 
           consumeUnits(pv.remainingUnits, attackUnits);
@@ -1185,7 +1180,7 @@
       var bg = i % 2 === 0 ? '#fff8e7' : '#f4e4bc';
       h += '<div style="padding:4px 8px;background:' + bg + ';border-bottom:1px solid #e6d5b8;font-size:10px;">';
       h += '<b>' + escapeHtml(atk.villageName.substring(0, 22)) + '</b> → ' + atk.targetX + '|' + atk.targetY;
-      h += '<br/><span style="color:#8b7355;">' + escapeHtml(unitStr) + ' | pop:' + atk.population + '</span>';
+      h += '<br/><span style="color:#8b7355;">' + escapeHtml(unitStr) + ' | pop:' + atk.population + ' | min:' + atk.requiredPop + ' | body:' + atk.villagePoints + '</span>';
       h += '</div>';
     }
     if (queue.length > 30) {
