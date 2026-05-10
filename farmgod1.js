@@ -397,7 +397,13 @@ window.FarmGod.Main = (function (Library, Translation) {
     fireNext();
   };
 
+  const cleanupLegacyUi = function () {
+    $('#farmGodScrollControls, .farmGodScrollBtn, .farmGodBottomSpacer').remove();
+  };
+
   const init = function () {
+    cleanupLegacyUi();
+
     if (
       game_data.features.Premium.active &&
       game_data.features.FarmAssistent.active
@@ -438,6 +444,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                 })
               );
 
+              cleanupLegacyUi();
               $('.optionsContent').html(buildLoadingContent());
               getData(
                 optionGroup,
@@ -502,11 +509,114 @@ window.FarmGod.Main = (function (Library, Translation) {
         ? UI.Throbber[0].outerHTML
         : '';
 
-    return `<div class="farmGodLoading" style="display:flex;flex:1;align-items:center;justify-content:center;min-height:220px;padding:24px 0;">
-              <div style="text-align:center;">
-                <img src="graphic/throbber.gif" alt="Loading" style="display:block;margin:0 auto;max-width:128px;height:auto;" onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
-                <div style="display:none;">${fallbackThrobber}</div>
+    return `<style>
+              .farmGodLoadingCard{
+                width:min(92%, 320px);
+                margin:0 auto;
+                padding:18px 16px 16px;
+                border:1px solid #7D510F;
+                border-radius:12px;
+                background:
+                  radial-gradient(circle at top, rgba(255, 210, 120, 0.22), transparent 40%),
+                  linear-gradient(180deg, #4f2f18 0%, #2e180c 100%);
+                box-shadow:0 8px 20px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08);
+                color:#f8e2ab;
+              }
+              .farmGodLoadingTitle{
+                font-size:28px;
+                line-height:1.1;
+                font-weight:700;
+                letter-spacing:1px;
+                text-shadow:0 2px 6px rgba(0,0,0,0.55);
+              }
+              .farmGodLoadingSubtitle{
+                margin-top:6px;
+                font-size:12px;
+                letter-spacing:2px;
+                text-transform:uppercase;
+                color:#d9b36b;
+              }
+              .farmGodBattleIcons{
+                position:relative;
+                width:150px;
+                height:108px;
+                margin:12px auto 10px;
+              }
+              .farmGodBattleIcons img{
+                position:absolute;
+                top:18px;
+                left:39px;
+                width:72px;
+                height:72px;
+                transform-origin:50% 72%;
+                filter:drop-shadow(0 3px 6px rgba(0,0,0,0.45));
+              }
+              .farmGodBladeLeft{
+                transform:rotate(-30deg);
+                animation:farmGodBladeLeft 1.25s ease-in-out infinite alternate;
+              }
+              .farmGodBladeRight{
+                transform:rotate(30deg);
+                animation:farmGodBladeRight 1.25s ease-in-out infinite alternate;
+              }
+              .farmGodBattleSpark{
+                position:absolute;
+                left:50%;
+                top:50%;
+                width:20px;
+                height:20px;
+                margin:-10px 0 0 -10px;
+                border-radius:50%;
+                background:radial-gradient(circle, rgba(255,244,182,0.95) 0%, rgba(255,178,63,0.8) 38%, rgba(255,130,30,0) 72%);
+                animation:farmGodBattleSpark 1s ease-in-out infinite;
+              }
+              .farmGodLoadingBar{
+                overflow:hidden;
+                height:10px;
+                margin-top:10px;
+                border:1px solid rgba(233, 197, 120, 0.35);
+                border-radius:999px;
+                background:rgba(20, 10, 5, 0.45);
+              }
+              .farmGodLoadingBarInner{
+                width:42%;
+                height:100%;
+                border-radius:999px;
+                background:linear-gradient(90deg, #b55b1d 0%, #f0bb53 55%, #fff0bf 100%);
+                box-shadow:0 0 10px rgba(255, 184, 66, 0.55);
+                animation:farmGodLoadingBar 1.45s ease-in-out infinite;
+              }
+              @keyframes farmGodBladeLeft{
+                0%{transform:rotate(-38deg) translateY(2px);}
+                100%{transform:rotate(-22deg) translateY(-2px);}
+              }
+              @keyframes farmGodBladeRight{
+                0%{transform:rotate(38deg) translateY(2px);}
+                100%{transform:rotate(22deg) translateY(-2px);}
+              }
+              @keyframes farmGodBattleSpark{
+                0%, 100%{transform:scale(0.75); opacity:0.5;}
+                50%{transform:scale(1.2); opacity:1;}
+              }
+              @keyframes farmGodLoadingBar{
+                0%{transform:translateX(-110%);}
+                100%{transform:translateX(310%);}
+              }
+            </style>
+            <div class="farmGodLoading" style="display:flex;flex:1;align-items:center;justify-content:center;min-height:220px;padding:24px 0;">
+              <div class="farmGodLoadingCard">
+                <div class="farmGodLoadingTitle">El-Cigino</div>
+                <div class="farmGodLoadingSubtitle">Preparing the raid</div>
+                <div class="farmGodBattleIcons">
+                  <img class="farmGodBladeLeft" src="graphic/unit/unit_sword.png" alt="">
+                  <img class="farmGodBladeRight" src="graphic/unit/unit_axe.png" alt="">
+                  <div class="farmGodBattleSpark"></div>
+                </div>
+                <div class="farmGodLoadingBar">
+                  <div class="farmGodLoadingBarInner"></div>
+                </div>
               </div>
+              <div style="display:none;">${fallbackThrobber}</div>
             </div>`;
   };
 
@@ -677,7 +787,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   };
 
   const buildTable = function (plan) {
-    $('.farmGodBottomSpacer').remove();
+    cleanupLegacyUi();
 
     let html = `<div class="vis farmGodContent" style="margin-bottom:18px;"><h4>FarmGod</h4><table class="vis" width="100%">
                 <tr><div id="FarmGodProgessbar" class="progress-bar live-progress-bar progress-bar-alive" style="width:98%;margin:5px auto;"><div style="background:rgb(146,194,0);"></div><span class="label" style="margin-top:0px;"></span></div></tr>
