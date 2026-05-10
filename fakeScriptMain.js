@@ -815,6 +815,85 @@
     return village.x + '|' + village.y;
   }
 
+  function normalizeLabel(text) {
+    var value = String(text == null ? '' : text).toLowerCase();
+    if (typeof value.normalize === 'function') {
+      value = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    }
+    return value.replace(/\s+/g, ' ').trim();
+  }
+
+  function getCellLabel(cell) {
+    if (!cell) return '';
+
+    var parts = [];
+    parts.push(cell.textContent || '');
+    if (cell.getAttribute) {
+      parts.push(cell.getAttribute('title') || '');
+      parts.push(cell.getAttribute('data-title') || '');
+    }
+
+    var img = cell.querySelector ? cell.querySelector('img') : null;
+    if (img) {
+      parts.push(img.getAttribute('title') || '');
+      parts.push(img.getAttribute('alt') || '');
+    }
+
+    return normalizeLabel(parts.join(' '));
+  }
+
+  function isPointsLabel(label) {
+    return label === 'body' ||
+      label.indexOf(' body') !== -1 ||
+      label.indexOf('body ') !== -1 ||
+      label.indexOf('bodov') !== -1 ||
+      label.indexOf('point') !== -1 ||
+      label.indexOf('points') !== -1;
+  }
+
+  function getPointsColumnIndex(table) {
+    if (!table) return -1;
+    if (typeof table._twPointsColumnIndex === 'number') return table._twPointsColumnIndex;
+
+    var rows = table.querySelectorAll('tr');
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var cells = row.querySelectorAll('th, td');
+      for (var j = 0; j < cells.length; j++) {
+        if (isPointsLabel(getCellLabel(cells[j]))) {
+          table._twPointsColumnIndex = j;
+          return j;
+        }
+      }
+
+      if (row.querySelector('a[href*="village="]')) break;
+    }
+
+    table._twPointsColumnIndex = -1;
+    return -1;
+  }
+
+  function getPointsCellFromRow(row) {
+    if (!row) return null;
+
+    var table = row.closest ? row.closest('table') : null;
+    var pointsColumnIndex = getPointsColumnIndex(table);
+    if (pointsColumnIndex >= 0) {
+      var cells = row.querySelectorAll('td, th');
+      if (cells[pointsColumnIndex]) return cells[pointsColumnIndex];
+    }
+
+    return row.querySelector('.points, td.points, span.points, td[class~="points"], td[data-title*="Body"], td[data-title*="Points"]');
+  }
+
+  function parsePointsCellValue(cell) {
+    if (!cell) return 0;
+    var text = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+    var match = text.match(/(\d[\d\s.]*)/);
+    if (!match) return 0;
+    return parseInt(match[1].replace(/\D+/g, ''), 10) || 0;
+  }
+
   function getProductionOverviewUrl() {
     var link = document.querySelector('a[href*="screen=overview_villages"][href*="mode=prod"]');
     if (link && link.href) return link.href;
@@ -837,20 +916,22 @@
 
       var idMatch = (villageLink.href || '').match(/village=(\d+)/);
       var coordMatch = (coordSource.textContent || '').match(/(\d{3})\|(\d{3})/);
-      if (!coordMatch) continue;
+      if (!idMatch && !coordMatch) continue;
 
-      var pointsEl = row.querySelector('.points') || row.querySelector('td[class*="point"]');
+      var pointsEl = getPointsCellFromRow(row);
       if (!pointsEl) continue;
 
-      var points = parseInt((pointsEl.textContent || '').replace(/\D+/g, ''), 10) || 0;
+      var points = parsePointsCellValue(pointsEl);
+      if (points <= 0) continue;
+
       var entry = {
         id: idMatch ? idMatch[1] : null,
-        key: coordMatch[1] + '|' + coordMatch[2],
+        key: coordMatch ? (coordMatch[1] + '|' + coordMatch[2]) : null,
         points: points
       };
 
       if (entry.id) result['id:' + entry.id] = entry.points;
-      result['coord:' + entry.key] = entry.points;
+      if (entry.key) result['coord:' + entry.key] = entry.points;
     }
 
     return result;
@@ -921,11 +1002,8 @@
       var vx = parseInt(coordMatch[1], 10);
       var vy = parseInt(coordMatch[2], 10);
 
-      var pointsEl = row.querySelector('.points') || row.querySelector('td[class*="point"]');
-      var villagePoints = 0;
-      if (pointsEl) {
-        villagePoints = parseInt((pointsEl.textContent || '').replace(/\D+/g, ''), 10) || 0;
-      }
+      var pointsEl = getPointsCellFromRow(row);
+      var villagePoints = parsePointsCellValue(pointsEl);
 
       var unitCells = row.querySelectorAll('td.unit-item');
       if (!unitCells.length) continue;
