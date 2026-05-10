@@ -112,7 +112,7 @@
     html += '<tr><td style="padding:5px;font-weight:bold;">Fake limit (%):</td>';
     html += '<td style="padding:5px;"><input id="tw-fake-limit" type="number" value="' + escapeHtml(formState.fakeLimit) + '" step="0.1" min="0" max="100" placeholder="napr. 0.5 alebo 1" style="width:100%;padding:4px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
 
-    html += '<tr><td style="padding:5px;font-weight:bold;">Min fake pop:</td>';
+    html += '<tr><td style="padding:5px;font-weight:bold;">Pevné minimum fake pop:</td>';
     html += '<td style="padding:5px;"><input id="tw-fake-min-pop" type="number" value="' + escapeHtml(formState.fakeMinPop) + '" min="0" max="100000" placeholder="napr. 0 alebo 100" style="width:100%;padding:4px;border:1px solid #7d510f;border-radius:3px;background:#fff8e7;" /></td></tr>';
 
     html += '</table>';
@@ -120,7 +120,8 @@
     html += '<div style="margin-bottom:10px;padding:8px;background:#e8f4e8;border-radius:4px;font-size:10px;color:#2d5a27;">';
     html += '✅ Bookmarklet je samostatný a nespolieha sa na posledný config v localStorage.';
     html += '<br/>✅ Coords a arrival okno sa nastavujú priamo v hlavnom skripte po spustení bookmarkletu.';
-    html += '<br/>✅ Fake pravidlo bude: <b>max(povinné jednotky, % z bodov, min fake pop)</b>.';
+    html += '<br/>✅ Fake pravidlo bude: <b>max(povinné jednotky, % z bodov dediny, pevné minimum fake pop)</b>.';
+    html += '<br/>ℹ️ Pri percentovom svete sa required pop ráta zvlášť pre každú dedinu podľa jej bodov.';
     if (detectedWorld) {
       html += '<br/>ℹ️ Tlačidlo Načítať funguje len pre aktuálne otvorený svet <b>' + escapeHtml(detectedWorld) + '</b>.';
     }
