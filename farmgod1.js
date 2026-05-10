@@ -373,28 +373,100 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // ── Send queue: one attack every 180-220ms randomly ──────────────────────
+  // Send queue: one attack at a time with a randomized delay.
   let sendQueue = [];
   let sendTimer = null;
+  let sendInFlight = false;
+  let sendWatchdog = null;
+
+  const getSendDelay = function () {
+    return 280 + Math.floor(Math.random() * 121); // 280-400ms
+  };
+
+  const clearSendTimer = function () {
+    if (sendTimer) {
+      clearTimeout(sendTimer);
+      sendTimer = null;
+    }
+  };
+
+  const clearSendWatchdog = function () {
+    if (sendWatchdog) {
+      clearTimeout(sendWatchdog);
+      sendWatchdog = null;
+    }
+  };
+
+  const resetSendState = function () {
+    clearSendTimer();
+    clearSendWatchdog();
+    sendQueue = [];
+    sendInFlight = false;
+  };
+
+  const scheduleNextSend = function (delay = getSendDelay()) {
+    clearSendTimer();
+    if (sendQueue.length === 0) return;
+
+    sendTimer = setTimeout(() => {
+      sendTimer = null;
+      fireNext();
+    }, delay);
+  };
+
+  const updateProgress = function () {
+    let $pb = $('#FarmGodProgessbar');
+    if ($pb.length === 0) return;
+
+    $pb.data('current', ($pb.data('current') || 0) + 1);
+    UI.updateProgressBar($pb, $pb.data('current'), $pb.data('max'));
+  };
+
+  const finishSend = function ($icon, wasSuccessful, message) {
+    clearSendWatchdog();
+    sendInFlight = false;
+
+    if (wasSuccessful) {
+      if (message) UI.SuccessMessage(message);
+    } else {
+      UI.ErrorMessage(message || t.messages.sendError);
+    }
+
+    updateProgress();
+    if ($icon && $icon.closest('.farmRow').length) {
+      $icon.closest('.farmRow').remove();
+    }
+
+    scheduleNextSend();
+  };
+
+  const getErrorMessage = function (response) {
+    if (typeof response === 'string' && response.trim().length > 0) return response;
+    if (response && typeof response.error === 'string' && response.error.trim().length > 0) {
+      return response.error;
+    }
+    if (response && typeof response.message === 'string' && response.message.trim().length > 0) {
+      return response.message;
+    }
+    return t.messages.sendError;
+  };
 
   const fireNext = function () {
-    if (sendQueue.length === 0) {
-      sendTimer = null;
-      return;
-    }
+    if (sendInFlight) return;
 
-    let $icon = sendQueue.shift();
-    if ($icon && $icon.closest('.farmRow').length) {
-      executeSend($icon);
+    while (sendQueue.length > 0) {
+      let $icon = sendQueue.shift();
+      if ($icon && $icon.closest('.farmRow').length) {
+        sendInFlight = true;
+        executeSend($icon);
+        return;
+      }
     }
-
-    let delay = 180 + Math.floor(Math.random() * 41); // 180-220ms
-    sendTimer = setTimeout(fireNext, delay);
   };
 
   const startSendQueue = function () {
-    if (sendTimer) return;
-    fireNext();
+    if (sendInFlight || sendTimer) return;
+    scheduleNextSend(0);
   };
 
   const cleanupLegacyUi = function () {
@@ -403,6 +475,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   const init = function () {
     cleanupLegacyUi();
+    resetSendState();
 
     if (
       game_data.features.Premium.active &&
@@ -420,6 +493,8 @@ window.FarmGod.Main = (function (Library, Translation) {
           $('.optionButton')
             .off('click')
             .on('click', () => {
+              resetSendState();
+
               let optionGroup = parseInt($('.optionGroup').val(), 10);
               let optionDistance = parseFloat($('.optionDistance').val());
               let optionTime = parseFloat($('.optionTime').val());
@@ -464,9 +539,8 @@ window.FarmGod.Main = (function (Library, Translation) {
 
                 // Auto-enqueue all planned farm icons
                 $('.farmGod_icon').each(function () {
-                  sendQueue.push($(this));
+                  enqueueSend($(this));
                 });
-                startSendQueue();
               });
             });
 
@@ -511,45 +585,50 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     return `<style>
               .farmGodLoadingCard{
-                width:min(92%, 320px);
+                width:min(94%, 348px);
                 margin:0 auto;
-                padding:18px 16px 16px;
-                border:1px solid #7D510F;
-                border-radius:12px;
+                padding:20px 18px 18px;
+                border:1px solid #b7893f;
+                border-radius:14px;
                 background:
-                  radial-gradient(circle at top, rgba(255, 210, 120, 0.22), transparent 40%),
-                  linear-gradient(180deg, #4f2f18 0%, #2e180c 100%);
-                box-shadow:0 8px 20px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08);
-                color:#f8e2ab;
+                  radial-gradient(circle at 50% 0%, rgba(255, 180, 75, 0.22), transparent 36%),
+                  linear-gradient(180deg, #21110d 0%, #0d090a 58%, #050405 100%);
+                box-shadow:0 10px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,214,146,0.08);
+                color:#f6e7bf;
               }
               .farmGodLoadingTitle{
-                font-size:28px;
+                font-size:34px;
                 line-height:1.1;
-                font-weight:700;
-                letter-spacing:1px;
-                text-shadow:0 2px 6px rgba(0,0,0,0.55);
+                font-weight:800;
+                letter-spacing:1.5px;
+                color:#fff0c5;
+                text-shadow:0 0 2px rgba(255,255,255,0.35), 0 2px 10px rgba(0,0,0,0.9), 0 0 18px rgba(184,95,26,0.4);
               }
               .farmGodLoadingSubtitle{
-                margin-top:6px;
-                font-size:12px;
-                letter-spacing:2px;
+                margin-top:7px;
+                font-size:13px;
+                font-weight:700;
+                letter-spacing:2.4px;
                 text-transform:uppercase;
-                color:#d9b36b;
+                color:#d4a45a;
+                text-shadow:0 1px 4px rgba(0,0,0,0.85);
               }
               .farmGodBattleIcons{
                 position:relative;
-                width:150px;
-                height:108px;
-                margin:12px auto 10px;
+                width:196px;
+                height:132px;
+                margin:14px auto 12px;
               }
               .farmGodBattleIcons img{
                 position:absolute;
-                top:18px;
-                left:39px;
-                width:72px;
-                height:72px;
+                top:14px;
+                left:50px;
+                width:96px;
+                height:96px;
                 transform-origin:50% 72%;
-                filter:drop-shadow(0 3px 6px rgba(0,0,0,0.45));
+                image-rendering:-webkit-optimize-contrast;
+                image-rendering:crisp-edges;
+                filter:contrast(1.15) saturate(1.1) drop-shadow(0 5px 10px rgba(0,0,0,0.75));
               }
               .farmGodBladeLeft{
                 transform:rotate(-30deg);
@@ -563,28 +642,36 @@ window.FarmGod.Main = (function (Library, Translation) {
                 position:absolute;
                 left:50%;
                 top:50%;
-                width:20px;
-                height:20px;
-                margin:-10px 0 0 -10px;
+                width:28px;
+                height:28px;
+                margin:-14px 0 0 -14px;
                 border-radius:50%;
-                background:radial-gradient(circle, rgba(255,244,182,0.95) 0%, rgba(255,178,63,0.8) 38%, rgba(255,130,30,0) 72%);
+                background:radial-gradient(circle, rgba(255,245,196,1) 0%, rgba(255,202,90,0.95) 28%, rgba(255,110,25,0.52) 56%, rgba(255,130,30,0) 76%);
                 animation:farmGodBattleSpark 1s ease-in-out infinite;
+                box-shadow:0 0 18px rgba(255, 166, 52, 0.45);
               }
               .farmGodLoadingBar{
                 overflow:hidden;
-                height:10px;
-                margin-top:10px;
-                border:1px solid rgba(233, 197, 120, 0.35);
+                height:12px;
+                margin-top:14px;
+                border:1px solid rgba(233, 197, 120, 0.42);
                 border-radius:999px;
-                background:rgba(20, 10, 5, 0.45);
+                background:rgba(8, 6, 7, 0.88);
+                box-shadow:inset 0 1px 5px rgba(0,0,0,0.65);
               }
               .farmGodLoadingBarInner{
                 width:42%;
                 height:100%;
                 border-radius:999px;
-                background:linear-gradient(90deg, #b55b1d 0%, #f0bb53 55%, #fff0bf 100%);
-                box-shadow:0 0 10px rgba(255, 184, 66, 0.55);
+                background:linear-gradient(90deg, #5d0f10 0%, #ba3f22 30%, #ffb24a 70%, #fff1b7 100%);
+                box-shadow:0 0 14px rgba(255, 157, 56, 0.68);
                 animation:farmGodLoadingBar 1.45s ease-in-out infinite;
+              }
+              .farmGodLoadingHint{
+                margin-top:12px;
+                font-size:12px;
+                color:#bba792;
+                text-shadow:0 1px 3px rgba(0,0,0,0.7);
               }
               @keyframes farmGodBladeLeft{
                 0%{transform:rotate(-38deg) translateY(2px);}
@@ -606,7 +693,7 @@ window.FarmGod.Main = (function (Library, Translation) {
             <div class="farmGodLoading" style="display:flex;flex:1;align-items:center;justify-content:center;min-height:220px;padding:24px 0;">
               <div class="farmGodLoadingCard">
                 <div class="farmGodLoadingTitle">El-Cigino</div>
-                <div class="farmGodLoadingSubtitle">Preparing the raid</div>
+                <div class="farmGodLoadingSubtitle">Night raid in progress</div>
                 <div class="farmGodBattleIcons">
                   <img class="farmGodBladeLeft" src="graphic/unit/unit_sword.png" alt="">
                   <img class="farmGodBladeRight" src="graphic/unit/unit_axe.png" alt="">
@@ -615,6 +702,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                 <div class="farmGodLoadingBar">
                   <div class="farmGodLoadingBarInner"></div>
                 </div>
+                <div class="farmGodLoadingHint">Sharpened dark mode loading screen</div>
               </div>
               <div style="display:none;">${fallbackThrobber}</div>
             </div>`;
@@ -622,11 +710,28 @@ window.FarmGod.Main = (function (Library, Translation) {
 
   const enqueueSend = function ($icon) {
     sendQueue.push($icon);
-    if (!sendTimer) startSendQueue();
+    startSendQueue();
   };
 
   const executeSend = function ($this) {
-    let $pb = $('#FarmGodProgessbar');
+    let handled = false;
+    let complete = function (wasSuccessful, response) {
+      if (handled) return;
+      handled = true;
+
+      let message = wasSuccessful
+        ? response && response.success
+          ? response.success
+          : 'Farm sent successfully!'
+        : getErrorMessage(response);
+
+      finishSend($this, wasSuccessful, message);
+    };
+
+    clearSendWatchdog();
+    sendWatchdog = setTimeout(() => {
+      complete(false, 'Request timed out. Continuing with the next farm.');
+    }, 15000);
 
     TribalWars.post(
       Accountmanager.send_units_link.replace(
@@ -640,16 +745,10 @@ window.FarmGod.Main = (function (Library, Translation) {
         source: $this.data('origin'),
       },
       function (r) {
-        UI.SuccessMessage(r.success);
-        $pb.data('current', $pb.data('current') + 1);
-        UI.updateProgressBar($pb, $pb.data('current'), $pb.data('max'));
-        $this.closest('.farmRow').remove();
+        complete(true, r);
       },
       function (r) {
-        UI.ErrorMessage(r || t.messages.sendError);
-        $pb.data('current', $pb.data('current') + 1);
-        UI.updateProgressBar($pb, $pb.data('current'), $pb.data('max'));
-        $this.closest('.farmRow').remove();
+        complete(false, r);
       }
     );
   };
