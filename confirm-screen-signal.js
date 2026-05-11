@@ -635,8 +635,12 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.id = OVERLAY_ID;
     wrap.style.position = 'fixed';
     wrap.style.left = '12px';
-    wrap.style.right = '12px';
-    wrap.style.bottom = '12px';
+    wrap.style.top = '12px';
+    wrap.style.width = '380px';
+    wrap.style.maxWidth = 'calc(100vw - 24px)';
+    wrap.style.maxHeight = 'calc(100vh - 24px)';
+    wrap.style.overflowY = 'auto';
+    wrap.style.boxSizing = 'border-box';
     wrap.style.zIndex = '999999';
     wrap.style.background = '#fff8e7';
     wrap.style.border = '2px solid #c18b3b';
