@@ -12,6 +12,8 @@ if (typeof ScriptAPI !== 'undefined') {
   var MS_ID = 'twConfirmSignalMs';
   var LEAD_ID = 'twConfirmSignalLead';
   var CORRECTION_ID = 'twConfirmSignalCorrection';
+  var INFO_BUTTON_ID = 'twConfirmSignalInfoButton';
+  var INFO_PANEL_ID = 'twConfirmSignalInfoPanel';
   var STORAGE_TARGET = 'twConfirmSignal.target.parts';
   var STORAGE_LEAD = 'twConfirmSignal.lead';
   var STORAGE_CORRECTION = 'twConfirmSignal.correction';
@@ -635,8 +637,8 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.id = OVERLAY_ID;
     wrap.style.position = 'fixed';
     wrap.style.left = '12px';
-    wrap.style.top = '12px';
-    wrap.style.width = '380px';
+    wrap.style.bottom = '12px';
+    wrap.style.width = '320px';
     wrap.style.maxWidth = 'calc(100vw - 24px)';
     wrap.style.maxHeight = 'calc(100vh - 24px)';
     wrap.style.overflowY = 'auto';
@@ -652,23 +654,26 @@ if (typeof ScriptAPI !== 'undefined') {
     wrap.style.transition = 'background 120ms ease, box-shadow 120ms ease, border-color 120ms ease';
 
     wrap.innerHTML =
-      '<div style="font-size:16px;font-weight:700;margin-bottom:8px;">Confirm Screen Signal</div>' +
-      '<div style="font-size:13px;line-height:1.35;margin-bottom:10px;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. Milisekundy sa len odhaduju z preklopenia hernych hodin, takze jedna pevna korekcia nemusi sadnut na kazdy pokus.</div>' +
-      '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
-      '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
-      '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
-      '<input id="' + SECOND_ID + '" type="text" inputmode="numeric" placeholder="SS" style="flex:1;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
-      '<input id="' + MS_ID + '" type="text" inputmode="numeric" placeholder="MS" style="flex:1.2;min-width:0;box-sizing:border-box;font-size:18px;text-align:center;padding:10px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">' +
+      '<div style="font-size:16px;font-weight:700;">Confirm Screen Signal</div>' +
+      '<button id="' + INFO_BUTTON_ID + '" type="button" title="Info" style="width:28px;height:28px;border:none;border-radius:999px;background:#c18b3b;color:#fff;font-size:16px;font-weight:700;line-height:1;cursor:pointer;">i</button>' +
       '</div>' +
-      '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<input id="' + CORRECTION_ID + '" type="number" inputmode="numeric" placeholder="0" value="' + savedCorrection + '" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
-      '<div style="font-size:12px;margin-bottom:6px;color:#6b4f2a;">1. pole navyse je tvoja priemerna reakcia v ms. 2. pole navyse je korekcia skriptu. Ak stale klikas neskoro o 300 ms, daj sem <b>300</b>. Ak skoro, daj zaporne cislo. Nahodnu odchylku ruky to neodstrani. Trvanie: ' + travelText + '. Prichod v hre: ' + arrivalText + '.</div>' +
+      '<div style="font-size:11px;line-height:1.35;margin-bottom:8px;color:#6b4f2a;">Trvanie: ' + travelText + ' | Prichod v hre: ' + arrivalText + '</div>' +
+      '<div id="' + INFO_PANEL_ID + '" style="display:none;font-size:12px;line-height:1.35;margin-bottom:8px;padding:8px 10px;border-radius:10px;background:#fff2cf;color:#6b4f2a;">Zadaj pozadovany <b>cas prichodu</b>. Klikaj pri <b>cervenej bodke</b>. 1. pole navyse je tvoja priemerna reakcia v ms. 2. pole navyse je korekcia skriptu. Ak stale klikas neskoro o 300 ms, daj sem <b>300</b>. Ak skoro, daj zaporne cislo. Milisekundy sa len odhaduju z preklopenia hernych hodin, takze jedna pevna korekcia nemusi sadnut na kazdy pokus.</div>' +
+      '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+      '<input id="' + HOUR_ID + '" type="text" inputmode="numeric" placeholder="HH" style="flex:1;min-width:0;box-sizing:border-box;font-size:17px;text-align:center;padding:8px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<input id="' + MINUTE_ID + '" type="text" inputmode="numeric" placeholder="MM" style="flex:1;min-width:0;box-sizing:border-box;font-size:17px;text-align:center;padding:8px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<input id="' + SECOND_ID + '" type="text" inputmode="numeric" placeholder="SS" style="flex:1;min-width:0;box-sizing:border-box;font-size:17px;text-align:center;padding:8px;border-radius:10px;border:1px solid #b8894f;">' +
+      '<input id="' + MS_ID + '" type="text" inputmode="numeric" placeholder="MS" style="flex:1.1;min-width:0;box-sizing:border-box;font-size:17px;text-align:center;padding:8px;border-radius:10px;border:1px solid #b8894f;">' +
+      '</div>' +
+      '<input id="' + LEAD_ID + '" type="number" inputmode="numeric" placeholder="200" value="' + savedLead + '" style="width:100%;box-sizing:border-box;font-size:15px;padding:8px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
+      '<input id="' + CORRECTION_ID + '" type="number" inputmode="numeric" placeholder="0" value="' + savedCorrection + '" style="width:100%;box-sizing:border-box;font-size:15px;padding:8px;border-radius:10px;border:1px solid #b8894f;margin-bottom:8px;">' +
       '<div id="' + DEBUG_ID + '" style="font-size:12px;margin-bottom:8px;color:#7c5a1b;">Server now: - | Klik: - | Signal: - | Prichod: - | Trvanie: - | Do signalu: -</div>' +
-      '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:10px;color:#17324d;">Pripravene.</div>' +
-      '<div style="display:flex;gap:8px;">' +
-      '<button id="twConfirmSignalStart" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
-      '<button id="twConfirmSignalTest" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#b42318;color:#fff;font-weight:700;">Test</button>' +
-      '<button id="twConfirmSignalStop" style="flex:1;padding:10px 12px;border:none;border-radius:10px;background:#6b7280;color:#fff;font-weight:700;">Stop</button>' +
+      '<div id="' + STATUS_ID + '" style="font-size:13px;margin-bottom:8px;color:#17324d;">Pripravene.</div>' +
+      '<div style="display:flex;gap:6px;">' +
+      '<button id="twConfirmSignalStart" style="flex:1;padding:9px 10px;border:none;border-radius:10px;background:#c96f2d;color:#fff;font-weight:700;">Spustit</button>' +
+      '<button id="twConfirmSignalTest" style="flex:1;padding:9px 10px;border:none;border-radius:10px;background:#b42318;color:#fff;font-weight:700;">Test</button>' +
+      '<button id="twConfirmSignalStop" style="flex:1;padding:9px 10px;border:none;border-radius:10px;background:#6b7280;color:#fff;font-weight:700;">Stop</button>' +
       '</div>';
 
     document.body.appendChild(wrap);
@@ -688,6 +693,15 @@ if (typeof ScriptAPI !== 'undefined') {
     autoAdvance(hourInput, minuteInput, 2);
     autoAdvance(minuteInput, secondInput, 2);
     autoAdvance(secondInput, msInput, 2);
+
+    document.getElementById(INFO_BUTTON_ID).onclick = function() {
+      var panel = document.getElementById(INFO_PANEL_ID);
+      if (!panel) {
+        return;
+      }
+
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    };
 
     document.getElementById('twConfirmSignalStart').onclick = function() {
       try {
