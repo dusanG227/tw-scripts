@@ -19,14 +19,14 @@
   window[APP_KEY] = state;
 
   const CLAIM_LABEL_PATTERNS = [
-    /slachticky\s+narok.*skonc/i,
-    /slechticky\s+narok.*skonc/i,
-    /noble.*claim.*(end|expir)/i,
+    /^slachticky\s+narok\s+skonci:?$/i,
+    /^slechticky\s+narok\s+skonci:?$/i,
+    /^noble\s+claim\s+(end|expires?):?$/i,
   ];
   const CLAIM_FROM_LABEL_PATTERNS = [
-    /slachticky\s+narok.*od/i,
-    /slechticky\s+narok.*od/i,
-    /noble.*claim.*from/i,
+    /^slachticky\s+narok\s+od:?$/i,
+    /^slechticky\s+narok\s+od:?$/i,
+    /^noble\s+claim\s+from:?$/i,
   ];
 
   function normalizeText(value) {
@@ -84,6 +84,21 @@
     url.searchParams.set('village', getCurrentVillageId());
     url.searchParams.set('screen', 'info_village');
     url.searchParams.set('id', villageId);
+    return url.toString();
+  }
+
+  function buildVillageMapUrl(coords) {
+    const url = new URL('/game.php', window.location.origin);
+    url.searchParams.set('village', getCurrentVillageId());
+    url.searchParams.set('screen', 'map');
+
+    const match = String(coords || '').match(/(\d{1,3})\s*[|;]\s*(\d{1,3})/);
+    if (match) {
+      url.hash = `${match[1]};${match[2]}`;
+    } else if (window.game_data?.village?.x && window.game_data?.village?.y) {
+      url.hash = `${window.game_data.village.x};${window.game_data.village.y}`;
+    }
+
     return url.toString();
   }
 
@@ -774,11 +789,11 @@
 
       tbodyEl.innerHTML = state.results
         .map((result) => {
-          const infoUrl = buildVillageInfoUrl(result.id);
+          const mapUrl = buildVillageMapUrl(result.coords);
           return `
             <tr>
               <td>
-                <a class="tw-lockscan-link" href="${infoUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(result.name || result.coords)}</a>
+                <a class="tw-lockscan-link" href="${mapUrl}" target="_self">${escapeHtml(result.name || result.coords)}</a>
                 <div class="tw-lockscan-muted">${escapeHtml(result.coords)}</div>
               </td>
               <td>${escapeHtml(result.playerName || '-')}</td>
@@ -883,7 +898,7 @@
       .split(/\r?\n/)
       .filter(Boolean)
       .map((line) => {
-        const [id, tag, name, members, villages, points, allPoints, rank] = line.split(',');
+        const [id, name, tag, members, villages, points, allPoints, rank] = line.split(',');
         return {
           id: Number(id),
           name: decodeGameText(name),
@@ -1059,19 +1074,22 @@
   }
 
   function findInfoValueByLabel(doc, labelPatterns) {
-    const cells = Array.from(doc.querySelectorAll('td, th'));
-    for (const cell of cells) {
-      const label = normalizeText(getOwnCellText(cell));
+    const rows = Array.from((doc.querySelector('#content_value') || doc.body).querySelectorAll('tr'));
+    for (const row of rows) {
+      const cells = Array.from(row.children).filter((cell) => {
+        return cell.tagName === 'TD' || cell.tagName === 'TH';
+      });
+
+      if (cells.length < 2) {
+        continue;
+      }
+
+      const label = normalizeText(getOwnCellText(cells[0]));
       if (!labelPatterns.some((pattern) => pattern.test(label))) {
         continue;
       }
 
-      const sibling = cell.nextElementSibling;
-      if (!sibling) {
-        continue;
-      }
-
-      const value = sibling.textContent.replace(/\s+/g, ' ').trim();
+      const value = cells[1].textContent.replace(/\s+/g, ' ').trim();
       if (value) {
         return value;
       }
@@ -1150,6 +1168,12 @@
   async function run() {
     if (!getCurrentVillageId()) {
       throw new Error('Na tejto stranke nevidim parameter village. Spusti to v hre.');
+    }
+
+    const currentScreen = new URLSearchParams(window.location.search).get('screen');
+    if (currentScreen !== 'map') {
+      window.location.assign(buildVillageMapUrl(window.location.hash.replace('#', '')));
+      return;
     }
 
     const loading = createLoadingOverlay('Nacitavam zoznam hracov a kmenov...');
