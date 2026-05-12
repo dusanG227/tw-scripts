@@ -10,6 +10,8 @@
   const state = {
     aborted: false,
     abortController: new AbortController(),
+    loadingEl: null,
+    selectorEl: null,
     panelEl: null,
     styleEl: null,
     results: [],
@@ -52,67 +54,26 @@
     return url.toString();
   }
 
-  function parseFilterMode(rawValue) {
-    const value = normalizeText(rawValue);
-    if (['h', 'hrac', 'player'].includes(value)) {
-      return 'player';
-    }
-    if (['k', 'kmen', 'kmen ', 'tribe', 'ally'].includes(value)) {
-      return 'tribe';
-    }
-    return null;
-  }
-
-  function getPromptConfig() {
-    const modeInput = window.prompt('Filter: hrac alebo kmen? (h/k)', 'h');
-    if (modeInput === null) {
-      return null;
+  function ensureStyle() {
+    if (state.styleEl) {
+      return;
     }
 
-    const mode = parseFilterMode(modeInput);
-    if (!mode) {
-      throw new Error('Zadaj h pre hraca alebo k pre kmen.');
-    }
-
-    const label = mode === 'player' ? 'Zadaj meno hraca:' : 'Zadaj tag alebo nazov kmenu:';
-    const queryInput = window.prompt(label, '');
-    if (queryInput === null) {
-      return null;
-    }
-
-    const query = String(queryInput).trim();
-    if (!query) {
-      throw new Error('Filter nemoze byt prazdny.');
-    }
-
-    return {
-      mode,
-      query,
-      queryNormalized: normalizeText(query),
-    };
-  }
-
-  function sortResults(results) {
-    return [...results].sort((left, right) => {
-      const leftTime = left.endsAt?.getTime?.() ?? Number.POSITIVE_INFINITY;
-      const rightTime = right.endsAt?.getTime?.() ?? Number.POSITIVE_INFINITY;
-      if (leftTime !== rightTime) {
-        return leftTime - rightTime;
-      }
-      return left.coords.localeCompare(right.coords, 'sk');
-    });
-  }
-
-  function createPanel() {
     const style = document.createElement('style');
     style.textContent = `
-      .tw-lockscan-panel {
+      .tw-lockscan-overlay {
         position: fixed;
-        top: 16px;
-        right: 16px;
-        width: 680px;
-        max-width: calc(100vw - 32px);
-        max-height: calc(100vh - 32px);
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(20, 12, 3, 0.5);
+        z-index: 2147483647;
+      }
+
+      .tw-lockscan-selector,
+      .tw-lockscan-panel {
         display: flex;
         flex-direction: column;
         background: #f5e7bf;
@@ -121,8 +82,22 @@
         border-radius: 10px;
         box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
         font: 13px/1.4 Verdana, Arial, sans-serif;
-        z-index: 2147483647;
         overflow: hidden;
+      }
+
+      .tw-lockscan-selector {
+        width: 640px;
+        max-width: min(640px, calc(100vw - 32px));
+      }
+
+      .tw-lockscan-panel {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        width: 680px;
+        max-width: calc(100vw - 32px);
+        max-height: calc(100vh - 32px);
+        z-index: 2147483646;
       }
 
       .tw-lockscan-header {
@@ -158,11 +133,116 @@
       }
 
       .tw-lockscan-status,
-      .tw-lockscan-summary {
+      .tw-lockscan-summary,
+      .tw-lockscan-field,
+      .tw-lockscan-help,
+      .tw-lockscan-error {
         padding: 8px 10px;
-        background: rgba(255, 251, 236, 0.9);
+        background: rgba(255, 251, 236, 0.92);
         border: 1px solid #d7bd87;
         border-radius: 8px;
+      }
+
+      .tw-lockscan-field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .tw-lockscan-label {
+        font-weight: 700;
+      }
+
+      .tw-lockscan-mode {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .tw-lockscan-mode-option {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 10px;
+        border: 1px solid #d7bd87;
+        border-radius: 6px;
+        background: #fff8e4;
+        cursor: pointer;
+      }
+
+      .tw-lockscan-mode-option input {
+        margin: 0;
+      }
+
+      .tw-lockscan-input {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #b89453;
+        border-radius: 6px;
+        background: #fffdf5;
+        color: #2c1b09;
+        font: inherit;
+        box-sizing: border-box;
+      }
+
+      .tw-lockscan-input:focus {
+        outline: 2px solid rgba(141, 95, 35, 0.2);
+        border-color: #8d5f23;
+      }
+
+      .tw-lockscan-help {
+        color: #5c4527;
+      }
+
+      .tw-lockscan-error {
+        color: #7e1010;
+        display: none;
+      }
+
+      .tw-lockscan-error.is-visible {
+        display: block;
+      }
+
+      .tw-lockscan-suggestions {
+        max-height: 260px;
+        overflow: auto;
+        border: 1px solid #d7bd87;
+        border-radius: 8px;
+        background: rgba(255, 251, 236, 0.92);
+      }
+
+      .tw-lockscan-suggestion {
+        width: 100%;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 10px;
+        text-align: left;
+        border: 0;
+        border-bottom: 1px solid #eadab5;
+        background: transparent;
+        color: #2c1b09;
+        cursor: pointer;
+        font: inherit;
+      }
+
+      .tw-lockscan-suggestion:last-child {
+        border-bottom: 0;
+      }
+
+      .tw-lockscan-suggestion:hover,
+      .tw-lockscan-suggestion.is-active {
+        background: #efd7aa;
+      }
+
+      .tw-lockscan-suggestion-main {
+        font-weight: 700;
+      }
+
+      .tw-lockscan-suggestion-meta,
+      .tw-lockscan-muted {
+        color: #7a6749;
       }
 
       .tw-lockscan-actions {
@@ -181,6 +261,11 @@
         font: inherit;
       }
 
+      .tw-lockscan-button.is-secondary {
+        background: #bca16b;
+        color: #2c1b09;
+      }
+
       .tw-lockscan-button:disabled {
         opacity: 0.55;
         cursor: not-allowed;
@@ -189,7 +274,7 @@
       .tw-lockscan-tablewrap {
         border: 1px solid #d7bd87;
         border-radius: 8px;
-        background: rgba(255, 251, 236, 0.9);
+        background: rgba(255, 251, 236, 0.92);
         overflow: auto;
       }
 
@@ -226,11 +311,348 @@
       .tw-lockscan-link:hover {
         text-decoration: underline;
       }
-
-      .tw-lockscan-muted {
-        color: #7a6749;
-      }
     `;
+
+    document.head.appendChild(style);
+    state.styleEl = style;
+  }
+
+  function createLoadingOverlay(message) {
+    ensureStyle();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tw-lockscan-overlay';
+    overlay.innerHTML = `
+      <div class="tw-lockscan-selector">
+        <div class="tw-lockscan-header">
+          <div class="tw-lockscan-title">TW Claim Lock Scanner</div>
+        </div>
+        <div class="tw-lockscan-body">
+          <div class="tw-lockscan-status">${escapeHtml(message)}</div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    state.loadingEl = overlay;
+
+    return {
+      setMessage(nextMessage) {
+        const statusEl = overlay.querySelector('.tw-lockscan-status');
+        if (statusEl) {
+          statusEl.textContent = nextMessage;
+        }
+      },
+      remove() {
+        if (state.loadingEl === overlay) {
+          state.loadingEl = null;
+        }
+        overlay.remove();
+      },
+    };
+  }
+
+  function createSelectorModal(worldData) {
+    ensureStyle();
+
+    const players = [...worldData.players].sort((left, right) => left.name.localeCompare(right.name, 'sk'));
+    const tribes = [...worldData.tribes].sort((left, right) =>
+      formatTribeLabel(left).localeCompare(formatTribeLabel(right), 'sk')
+    );
+
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'tw-lockscan-overlay';
+      overlay.innerHTML = `
+        <div class="tw-lockscan-selector">
+          <div class="tw-lockscan-header">
+            <div class="tw-lockscan-title">Vyber hracov alebo kmene</div>
+            <button type="button" class="tw-lockscan-close" title="Zavriet">x</button>
+          </div>
+          <div class="tw-lockscan-body">
+            <div class="tw-lockscan-field">
+              <div class="tw-lockscan-label">Filter</div>
+              <div class="tw-lockscan-mode">
+                <label class="tw-lockscan-mode-option">
+                  <input type="radio" name="tw-lockscan-mode" value="player" checked>
+                  <span>Hraci</span>
+                </label>
+                <label class="tw-lockscan-mode-option">
+                  <input type="radio" name="tw-lockscan-mode" value="tribe">
+                  <span>Kmene</span>
+                </label>
+              </div>
+            </div>
+            <div class="tw-lockscan-field">
+              <div class="tw-lockscan-label">Vyber</div>
+              <input class="tw-lockscan-input" type="text" autocomplete="off" spellcheck="false">
+              <div class="tw-lockscan-help"></div>
+            </div>
+            <div class="tw-lockscan-error"></div>
+            <div class="tw-lockscan-suggestions"></div>
+            <div class="tw-lockscan-actions">
+              <button type="button" class="tw-lockscan-button" data-action="start">Spustit sken</button>
+              <button type="button" class="tw-lockscan-button is-secondary" data-action="cancel">Zrusit</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      state.selectorEl = overlay;
+
+      const closeButton = overlay.querySelector('.tw-lockscan-close');
+      const cancelButton = overlay.querySelector('[data-action="cancel"]');
+      const startButton = overlay.querySelector('[data-action="start"]');
+      const inputEl = overlay.querySelector('.tw-lockscan-input');
+      const helpEl = overlay.querySelector('.tw-lockscan-help');
+      const errorEl = overlay.querySelector('.tw-lockscan-error');
+      const suggestionsEl = overlay.querySelector('.tw-lockscan-suggestions');
+      const radioEls = Array.from(overlay.querySelectorAll('input[name="tw-lockscan-mode"]'));
+
+      let mode = 'player';
+      let suggestions = [];
+      let activeIndex = 0;
+
+      function cleanup() {
+        if (state.selectorEl === overlay) {
+          state.selectorEl = null;
+        }
+        overlay.remove();
+      }
+
+      function close(result) {
+        cleanup();
+        resolve(result);
+      }
+
+      function getPlaceholder() {
+        return mode === 'player'
+          ? 'Pis mena hracov oddelene ciarkou, napr. Miro, Mates'
+          : 'Pis tagy alebo nazvy kmenov oddelene ciarkou, napr. HELL, GOOD';
+      }
+
+      function getHelpText() {
+        return mode === 'player'
+          ? 'Pis zaciatok mena. Enter vyberie aktivnu moznost, ciarka ti dovoli pridat dalsie meno.'
+          : 'Pis zaciatok tagu alebo nazvu kmenu. Staci aj skratka kmenu.';
+      }
+
+      function getItems() {
+        return mode === 'player' ? players : tribes;
+      }
+
+      function getQueryKeys(item) {
+        if (mode === 'player') {
+          return [item.name];
+        }
+        return [item.tag, item.name].filter(Boolean);
+      }
+
+      function getSuggestionValue(item) {
+        if (mode === 'player') {
+          return item.name;
+        }
+        return String(item.tag || '').trim() || String(item.name || '').trim();
+      }
+
+      function getSuggestionMain(item) {
+        return mode === 'player' ? item.name : getSuggestionValue(item);
+      }
+
+      function getSuggestionMeta(item) {
+        if (mode === 'player') {
+          return formatTribeLabel(worldData.tribesById.get(item.tribeId));
+        }
+
+        const tag = String(item.tag || '').trim();
+        const name = String(item.name || '').trim();
+        if (tag && name && normalizeText(tag) !== normalizeText(name)) {
+          return name;
+        }
+
+        return `${item.members || 0} hracov`;
+      }
+
+      function splitQueries(value) {
+        return String(value || '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function getTokenInfo() {
+        const rawValue = inputEl.value;
+        const lastCommaIndex = rawValue.lastIndexOf(',');
+        const committedValue = lastCommaIndex === -1 ? '' : rawValue.slice(0, lastCommaIndex);
+        const currentToken = lastCommaIndex === -1 ? rawValue : rawValue.slice(lastCommaIndex + 1);
+
+        return {
+          rawValue,
+          committedQueries: splitQueries(committedValue),
+          currentToken: currentToken.trim(),
+          lastCommaIndex,
+        };
+      }
+
+      function setError(message) {
+        if (message) {
+          errorEl.textContent = message;
+          errorEl.classList.add('is-visible');
+        } else {
+          errorEl.textContent = '';
+          errorEl.classList.remove('is-visible');
+        }
+      }
+
+      function applySuggestion(item) {
+        const value = getSuggestionValue(item);
+        const { rawValue, lastCommaIndex } = getTokenInfo();
+        const prefix = lastCommaIndex === -1 ? '' : `${rawValue.slice(0, lastCommaIndex).trim()}, `;
+        inputEl.value = `${prefix}${value}, `;
+        inputEl.focus();
+        setError('');
+        updateSuggestions();
+      }
+
+      function renderSuggestions() {
+        if (!suggestions.length) {
+          suggestionsEl.innerHTML = '';
+          return;
+        }
+
+        suggestionsEl.innerHTML = suggestions
+          .map((item, index) => {
+            const activeClass = index === activeIndex ? ' is-active' : '';
+            return `
+              <button type="button" class="tw-lockscan-suggestion${activeClass}" data-index="${index}">
+                <span class="tw-lockscan-suggestion-main">${escapeHtml(getSuggestionMain(item))}</span>
+                <span class="tw-lockscan-suggestion-meta">${escapeHtml(getSuggestionMeta(item))}</span>
+              </button>
+            `;
+          })
+          .join('');
+
+        Array.from(suggestionsEl.querySelectorAll('.tw-lockscan-suggestion')).forEach((button) => {
+          button.addEventListener('click', () => {
+            const index = Number(button.getAttribute('data-index'));
+            const item = suggestions[index];
+            if (item) {
+              applySuggestion(item);
+            }
+          });
+        });
+      }
+
+      function updateSuggestions() {
+        const { committedQueries, currentToken } = getTokenInfo();
+        const tokenNormalized = normalizeText(currentToken);
+        const alreadySelected = new Set(committedQueries.map((item) => normalizeText(item)));
+
+        if (!tokenNormalized) {
+          suggestions = [];
+          activeIndex = 0;
+          renderSuggestions();
+          return;
+        }
+
+        const items = getItems()
+          .filter((item) => {
+            const keys = getQueryKeys(item).map((key) => normalizeText(key));
+            const matches = keys.some((key) => key.startsWith(tokenNormalized));
+            const alreadyUsed = keys.some((key) => alreadySelected.has(key));
+            return matches && !alreadyUsed;
+          })
+          .slice(0, 12);
+
+        suggestions = items;
+        activeIndex = 0;
+        renderSuggestions();
+      }
+
+      function submitSelection() {
+        const queries = splitQueries(inputEl.value);
+        if (!queries.length) {
+          setError('Najprv vyber aspon jedno meno alebo kmen.');
+          inputEl.focus();
+          return;
+        }
+
+        close({
+          mode,
+          queries,
+          queriesNormalized: queries.map((query) => normalizeText(query)),
+        });
+      }
+
+      function updateMode(nextMode) {
+        mode = nextMode;
+        inputEl.value = '';
+        inputEl.placeholder = getPlaceholder();
+        helpEl.textContent = getHelpText();
+        setError('');
+        suggestions = [];
+        activeIndex = 0;
+        renderSuggestions();
+        inputEl.focus();
+      }
+
+      closeButton.addEventListener('click', () => close(null));
+      cancelButton.addEventListener('click', () => close(null));
+      startButton.addEventListener('click', submitSelection);
+
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+          close(null);
+        }
+      });
+
+      radioEls.forEach((radio) => {
+        radio.addEventListener('change', () => {
+          if (radio.checked) {
+            updateMode(radio.value);
+          }
+        });
+      });
+
+      inputEl.addEventListener('input', () => {
+        setError('');
+        updateSuggestions();
+      });
+
+      inputEl.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' && suggestions.length) {
+          event.preventDefault();
+          activeIndex = (activeIndex + 1) % suggestions.length;
+          renderSuggestions();
+          return;
+        }
+
+        if (event.key === 'ArrowUp' && suggestions.length) {
+          event.preventDefault();
+          activeIndex = (activeIndex - 1 + suggestions.length) % suggestions.length;
+          renderSuggestions();
+          return;
+        }
+
+        if ((event.key === 'Enter' || event.key === 'Tab') && suggestions.length) {
+          event.preventDefault();
+          applySuggestion(suggestions[activeIndex]);
+          return;
+        }
+
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submitSelection();
+        }
+      });
+
+      updateMode('player');
+    });
+  }
+
+  function createPanel() {
+    ensureStyle();
 
     const panel = document.createElement('div');
     panel.className = 'tw-lockscan-panel';
@@ -293,10 +715,7 @@
       }
     });
 
-    document.head.appendChild(style);
     document.body.appendChild(panel);
-
-    state.styleEl = style;
     state.panelEl = panel;
 
     function setStatus(message) {
@@ -348,6 +767,17 @@
     };
   }
 
+  function sortResults(results) {
+    return [...results].sort((left, right) => {
+      const leftTime = left.endsAt?.getTime?.() ?? Number.POSITIVE_INFINITY;
+      const rightTime = right.endsAt?.getTime?.() ?? Number.POSITIVE_INFINITY;
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return left.coords.localeCompare(right.coords, 'sk');
+    });
+  }
+
   function destroy() {
     if (state.aborted) {
       return;
@@ -355,8 +785,10 @@
 
     state.aborted = true;
     state.abortController.abort();
-    state.styleEl?.remove();
+    state.loadingEl?.remove();
+    state.selectorEl?.remove();
     state.panelEl?.remove();
+    state.styleEl?.remove();
     delete window[APP_KEY];
   }
 
@@ -470,7 +902,7 @@
       return exact;
     }
 
-    return players.filter((player) => normalizeText(player.name).includes(queryNormalized));
+    return players.filter((player) => normalizeText(player.name).startsWith(queryNormalized));
   }
 
   function findTribeMatches(tribes, queryNormalized) {
@@ -482,63 +914,98 @@
     }
 
     return tribes.filter((tribe) => {
-      return normalizeText(tribe.tag).includes(queryNormalized) || normalizeText(tribe.name).includes(queryNormalized);
+      return normalizeText(tribe.tag).startsWith(queryNormalized) || normalizeText(tribe.name).startsWith(queryNormalized);
     });
   }
 
-  function requireSingleMatch(matches, label, formatter) {
-    if (!matches.length) {
-      throw new Error(`Nic som nenasiel pre filter "${label}".`);
+  function resolveSelectionList(items, queries, queriesNormalized, findMatches, formatter) {
+    const resolved = [];
+    const seenIds = new Set();
+
+    queriesNormalized.forEach((queryNormalized, index) => {
+      const matches = findMatches(items, queryNormalized);
+      const label = queries[index];
+
+      if (!matches.length) {
+        throw new Error(`Nic som nenasiel pre "${label}".`);
+      }
+
+      if (matches.length > 1) {
+        const preview = matches
+          .slice(0, 10)
+          .map((item) => formatter(item))
+          .join(', ');
+        throw new Error(`Nasiel som viac moznosti pre "${label}": ${preview}`);
+      }
+
+      const match = matches[0];
+      if (!seenIds.has(match.id)) {
+        seenIds.add(match.id);
+        resolved.push(match);
+      }
+    });
+
+    return resolved;
+  }
+
+  function formatSummaryLabel(prefix, labels) {
+    if (labels.length <= 3) {
+      return `${prefix} ${labels.join(', ')}`;
     }
 
-    if (matches.length > 1) {
-      const preview = matches
-        .slice(0, 10)
-        .map((item) => formatter(item))
-        .join(', ');
-      throw new Error(`Nasiel som viac moznosti pre "${label}": ${preview}`);
-    }
-
-    return matches[0];
+    return `${prefix} ${labels.slice(0, 3).join(', ')} +${labels.length - 3}`;
   }
 
   function buildCandidates(worldData, config) {
     const { villages, players, tribes, playersById, tribesById } = worldData;
 
     if (config.mode === 'player') {
-      const player = requireSingleMatch(
-        findPlayerMatches(players, config.queryNormalized),
-        config.query,
+      const selectedPlayers = resolveSelectionList(
+        players,
+        config.queries,
+        config.queriesNormalized,
+        findPlayerMatches,
         (item) => item.name
       );
-
-      const tribe = tribesById.get(player.tribeId);
+      const playerIds = new Set(selectedPlayers.map((player) => player.id));
+      const selectedPlayersById = new Map(selectedPlayers.map((player) => [player.id, player]));
       const playerVillages = villages
-        .filter((village) => village.playerId === player.id)
-        .map((village) => ({
-          ...village,
-          playerName: player.name,
-          tribeLabel: formatTribeLabel(tribe),
-        }));
+        .filter((village) => playerIds.has(village.playerId))
+        .map((village) => {
+          const player = selectedPlayersById.get(village.playerId);
+          const tribe = tribesById.get(player?.tribeId || 0);
+          return {
+            ...village,
+            playerName: player?.name || '-',
+            tribeLabel: formatTribeLabel(tribe),
+          };
+        });
 
       return {
         candidates: playerVillages,
-        summaryLabel: `hrac ${player.name}`,
+        summaryLabel: formatSummaryLabel(
+          selectedPlayers.length === 1 ? 'hrac' : 'hraci',
+          selectedPlayers.map((player) => player.name)
+        ),
       };
     }
 
-    const tribe = requireSingleMatch(
-      findTribeMatches(tribes, config.queryNormalized),
-      config.query,
+    const selectedTribes = resolveSelectionList(
+      tribes,
+      config.queries,
+      config.queriesNormalized,
+      findTribeMatches,
       (item) => formatTribeLabel(item)
     );
-
-    const tribePlayers = players.filter((player) => player.tribeId === tribe.id);
-    const tribePlayerIds = new Set(tribePlayers.map((player) => player.id));
+    const tribeIds = new Set(selectedTribes.map((tribe) => tribe.id));
     const tribeVillages = villages
-      .filter((village) => tribePlayerIds.has(village.playerId))
+      .filter((village) => {
+        const player = playersById.get(village.playerId);
+        return player && tribeIds.has(player.tribeId);
+      })
       .map((village) => {
         const player = playersById.get(village.playerId);
+        const tribe = tribesById.get(player?.tribeId || 0);
         return {
           ...village,
           playerName: player?.name || '-',
@@ -548,7 +1015,10 @@
 
     return {
       candidates: tribeVillages,
-      summaryLabel: `kmen ${formatTribeLabel(tribe)}`,
+      summaryLabel: formatSummaryLabel(
+        selectedTribes.length === 1 ? 'kmen' : 'kmeny',
+        selectedTribes.map((tribe) => formatTribeLabel(tribe))
+      ),
     };
   }
 
@@ -637,18 +1107,20 @@
       throw new Error('Na tejto stranke nevidim parameter village. Spusti to v hre.');
     }
 
-    const config = getPromptConfig();
+    const loading = createLoadingOverlay('Nacitavam zoznam hracov a kmenov...');
+    const worldData = await loadWorldData();
+    loading.remove();
+
+    const config = await createSelectorModal(worldData);
     if (!config) {
       state.destroy();
       return;
     }
 
     const panel = createPanel();
-    panel.setStatus('Nacitavam mapove data sveta...');
+    panel.setStatus('Pripravujem sken...');
 
-    const worldData = await loadWorldData();
     const { candidates, summaryLabel } = buildCandidates(worldData, config);
-
     if (!candidates.length) {
       panel.setStatus(`Pre filter ${summaryLabel} som nenasiel ziadne dediny.`);
       panel.setSummary('Skus iny nazov alebo iny filter.');
