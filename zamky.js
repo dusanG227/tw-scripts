@@ -23,6 +23,11 @@
     /slechticky\s+narok.*skonc/i,
     /noble.*claim.*(end|expir)/i,
   ];
+  const CLAIM_FROM_LABEL_PATTERNS = [
+    /slachticky\s+narok.*od/i,
+    /slechticky\s+narok.*od/i,
+    /noble.*claim.*from/i,
+  ];
 
   function normalizeText(value) {
     return String(value || '')
@@ -40,6 +45,34 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function decodeGameText(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+      return '';
+    }
+
+    try {
+      return decodeURIComponent(rawValue.replace(/\+/g, '%20'));
+    } catch (error) {
+      try {
+        return decodeURIComponent(rawValue);
+      } catch (nestedError) {
+        return rawValue.replace(/\+/g, ' ');
+      }
+    }
+  }
+
+  function getOwnCellText(cell) {
+    const ownText = Array.from(cell.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return ownText || cell.textContent.replace(/\s+/g, ' ').trim();
   }
 
   function getCurrentVillageId() {
@@ -703,7 +736,7 @@
         'Dedina\tHrac\tKmen\tKoniec zamku',
         ...state.results.map(
           (result) =>
-            `${result.name} (${result.coords})\t${result.playerName}\t${result.tribeLabel}\t${result.rawEndText}`
+            `${result.name} (${result.coords})\t${result.playerName}\t${result.tribeLabel}\t${result.rawEndText}${result.claimedBy ? ` | ${result.claimedBy}` : ''}`
         ),
       ];
 
@@ -750,7 +783,10 @@
               </td>
               <td>${escapeHtml(result.playerName || '-')}</td>
               <td>${escapeHtml(result.tribeLabel || '-')}</td>
-              <td>${escapeHtml(result.rawEndText)}</td>
+              <td>
+                <div>${escapeHtml(result.rawEndText)}</div>
+                ${result.claimedBy ? `<div class="tw-lockscan-muted">${escapeHtml(result.claimedBy)}</div>` : ''}
+              </td>
             </tr>
           `;
         })
@@ -815,7 +851,7 @@
         const [id, name, x, y, playerId, points] = line.split(',');
         return {
           id: Number(id),
-          name: name || '',
+          name: decodeGameText(name),
           x: Number(x),
           y: Number(y),
           playerId: Number(playerId),
@@ -833,7 +869,7 @@
         const [id, name, tribeId, villages, points, rank] = line.split(',');
         return {
           id: Number(id),
-          name: name || '',
+          name: decodeGameText(name),
           tribeId: Number(tribeId) || 0,
           villages: Number(villages) || 0,
           points: Number(points) || 0,
@@ -847,11 +883,11 @@
       .split(/\r?\n/)
       .filter(Boolean)
       .map((line) => {
-        const [id, name, tag, members, villages, points, allPoints, rank] = line.split(',');
+        const [id, tag, name, members, villages, points, allPoints, rank] = line.split(',');
         return {
           id: Number(id),
-          name: name || '',
-          tag: tag || '',
+          name: decodeGameText(name),
+          tag: decodeGameText(tag),
           members: Number(members) || 0,
           villages: Number(villages) || 0,
           points: Number(points) || 0,
@@ -1022,24 +1058,41 @@
     };
   }
 
-  function findClaimRow(doc) {
-    const rows = Array.from(doc.querySelectorAll('tr'));
-    for (const row of rows) {
-      const cells = row.querySelectorAll('th, td');
-      if (cells.length < 2) {
+  function findInfoValueByLabel(doc, labelPatterns) {
+    const cells = Array.from(doc.querySelectorAll('td, th'));
+    for (const cell of cells) {
+      const label = normalizeText(getOwnCellText(cell));
+      if (!labelPatterns.some((pattern) => pattern.test(label))) {
         continue;
       }
 
-      const label = normalizeText(cells[0].textContent);
-      if (!CLAIM_LABEL_PATTERNS.some((pattern) => pattern.test(label))) {
+      const sibling = cell.nextElementSibling;
+      if (!sibling) {
         continue;
       }
 
-      const value = cells[1].textContent.replace(/\s+/g, ' ').trim();
-      return value || null;
+      const value = sibling.textContent.replace(/\s+/g, ' ').trim();
+      if (value) {
+        return value;
+      }
     }
 
     return null;
+  }
+
+  function extractClaimInfo(doc) {
+    const rawEndText = findInfoValueByLabel(doc, CLAIM_LABEL_PATTERNS);
+    const claimedBy = findInfoValueByLabel(doc, CLAIM_FROM_LABEL_PATTERNS);
+
+    if (!rawEndText) {
+      return null;
+    }
+
+    return {
+      rawEndText,
+      claimedBy,
+      endsAt: parseClaimEnd(rawEndText),
+    };
   }
 
   function parseClaimEnd(rawValue) {
@@ -1076,15 +1129,7 @@
 
     const html = await response.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const rawEndText = findClaimRow(doc);
-    if (!rawEndText) {
-      return null;
-    }
-
-    return {
-      rawEndText,
-      endsAt: parseClaimEnd(rawEndText),
-    };
+    return extractClaimInfo(doc);
   }
 
   async function asyncPool(limit, items, worker) {
