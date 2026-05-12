@@ -1255,6 +1255,22 @@
 
   function parseClaimEnd(rawValue) {
     const cleaned = String(rawValue || '').replace(/\s+/g, ' ').trim();
+    const relativeMatch = cleaned.match(/^(dnes|zajtra)\s+(?:o\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?$/i);
+    if (relativeMatch) {
+      const keyword = normalizeText(relativeMatch[1]);
+      const hour = Number(relativeMatch[2]);
+      const minute = Number(relativeMatch[3]);
+      const second = Number(relativeMatch[4] || 0);
+      const date = new Date();
+
+      date.setHours(hour, minute, second, 0);
+      if (keyword === 'zajtra') {
+        date.setDate(date.getDate() + 1);
+      }
+
+      return date;
+    }
+
     const match = cleaned.match(/(\d{1,2})\.(\d{1,2})\.\s*(?:o\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
     if (!match) {
       return null;
