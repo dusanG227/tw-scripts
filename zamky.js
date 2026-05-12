@@ -28,6 +28,11 @@
     /^slechticky\s+narok\s+od:?$/i,
     /^noble\s+claim\s+from:?$/i,
   ];
+  const CLAIM_URGENCY_THRESHOLDS = {
+    criticalHours: 3,
+    warningHours: 8,
+    soonHours: 12,
+  };
 
   function normalizeText(value) {
     return String(value || '')
@@ -100,6 +105,15 @@
     }
 
     return url.toString();
+  }
+
+  function getUrgencyLabelText() {
+    return {
+      critical: `do ${CLAIM_URGENCY_THRESHOLDS.criticalHours}h`,
+      warning: `do ${CLAIM_URGENCY_THRESHOLDS.warningHours}h`,
+      soon: `do ${CLAIM_URGENCY_THRESHOLDS.soonHours}h`,
+      safe: `nad ${CLAIM_URGENCY_THRESHOLDS.soonHours}h`,
+    };
   }
 
   function ensureStyle() {
@@ -299,6 +313,12 @@
         flex-wrap: wrap;
       }
 
+      .tw-lockscan-legend {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
       .tw-lockscan-button {
         padding: 7px 10px;
         background: #8d5f23;
@@ -348,6 +368,54 @@
 
       .tw-lockscan-table tr:last-child td {
         border-bottom: 0;
+      }
+
+      .tw-lockscan-row--critical td {
+        background: rgba(179, 31, 31, 0.14);
+      }
+
+      .tw-lockscan-row--warning td {
+        background: rgba(214, 108, 24, 0.15);
+      }
+
+      .tw-lockscan-row--soon td {
+        background: rgba(226, 177, 41, 0.18);
+      }
+
+      .tw-lockscan-row--safe td {
+        background: rgba(42, 133, 75, 0.14);
+      }
+
+      .tw-lockscan-badge {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 999px;
+        font-weight: 700;
+      }
+
+      .tw-lockscan-badge--critical {
+        background: #b31f1f;
+        color: #fff6f6;
+      }
+
+      .tw-lockscan-badge--warning {
+        background: #d66c18;
+        color: #fff8ef;
+      }
+
+      .tw-lockscan-badge--soon {
+        background: #d7a722;
+        color: #3c2a06;
+      }
+
+      .tw-lockscan-badge--safe {
+        background: #2a854b;
+        color: #f3fff8;
+      }
+
+      .tw-lockscan-badge--unknown {
+        background: #8d5f23;
+        color: #fff9ea;
       }
 
       .tw-lockscan-link {
@@ -701,6 +769,7 @@
 
   function createPanel() {
     ensureStyle();
+    const urgencyLabels = getUrgencyLabelText();
 
     const panel = document.createElement('div');
     panel.className = 'tw-lockscan-panel';
@@ -714,6 +783,12 @@
         <div class="tw-lockscan-summary">Vysledky sa zobrazia po naskenovani.</div>
         <div class="tw-lockscan-actions">
           <button type="button" class="tw-lockscan-button" data-action="copy" disabled>Skopirovat vysledky</button>
+        </div>
+        <div class="tw-lockscan-legend">
+          <span class="tw-lockscan-badge tw-lockscan-badge--critical">${escapeHtml(urgencyLabels.critical)}</span>
+          <span class="tw-lockscan-badge tw-lockscan-badge--warning">${escapeHtml(urgencyLabels.warning)}</span>
+          <span class="tw-lockscan-badge tw-lockscan-badge--soon">${escapeHtml(urgencyLabels.soon)}</span>
+          <span class="tw-lockscan-badge tw-lockscan-badge--safe">${escapeHtml(urgencyLabels.safe)}</span>
         </div>
         <div class="tw-lockscan-tablewrap">
           <table class="tw-lockscan-table">
@@ -790,8 +865,10 @@
       tbodyEl.innerHTML = state.results
         .map((result) => {
           const mapUrl = buildVillageMapUrl(result.coords);
+          const urgency = getClaimUrgency(result.endsAt);
+          const remainingText = formatRemainingTime(result.endsAt);
           return `
-            <tr>
+            <tr class="tw-lockscan-row--${urgency.tier}">
               <td>
                 <a class="tw-lockscan-link" href="${mapUrl}" target="_self">${escapeHtml(result.name || result.coords)}</a>
                 <div class="tw-lockscan-muted">${escapeHtml(result.coords)}</div>
@@ -799,7 +876,8 @@
               <td>${escapeHtml(result.playerName || '-')}</td>
               <td>${escapeHtml(result.tribeLabel || '-')}</td>
               <td>
-                <div>${escapeHtml(result.rawEndText)}</div>
+                <div class="tw-lockscan-badge tw-lockscan-badge--${urgency.tier}">${escapeHtml(result.rawEndText)}</div>
+                ${remainingText ? `<div class="tw-lockscan-muted">${escapeHtml(remainingText)}</div>` : ''}
                 ${result.claimedBy ? `<div class="tw-lockscan-muted">${escapeHtml(result.claimedBy)}</div>` : ''}
               </td>
             </tr>
@@ -827,6 +905,54 @@
       }
       return left.coords.localeCompare(right.coords, 'sk');
     });
+  }
+
+  function getClaimUrgency(endsAt) {
+    const timestamp = endsAt?.getTime?.();
+    if (!Number.isFinite(timestamp)) {
+      return {
+        tier: 'unknown',
+        hoursRemaining: null,
+      };
+    }
+
+    const hoursRemaining = (timestamp - Date.now()) / (60 * 60 * 1000);
+    if (hoursRemaining <= CLAIM_URGENCY_THRESHOLDS.criticalHours) {
+      return { tier: 'critical', hoursRemaining };
+    }
+
+    if (hoursRemaining <= CLAIM_URGENCY_THRESHOLDS.warningHours) {
+      return { tier: 'warning', hoursRemaining };
+    }
+
+    if (hoursRemaining <= CLAIM_URGENCY_THRESHOLDS.soonHours) {
+      return { tier: 'soon', hoursRemaining };
+    }
+
+    return { tier: 'safe', hoursRemaining };
+  }
+
+  function formatRemainingTime(endsAt) {
+    const timestamp = endsAt?.getTime?.();
+    if (!Number.isFinite(timestamp)) {
+      return '';
+    }
+
+    const remainingMs = Math.max(0, timestamp - Date.now());
+    const totalMinutes = Math.round(remainingMs / (60 * 1000));
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
+
+    if (days > 0) {
+      return `Za ${days}d ${hours}h ${minutes}m`;
+    }
+
+    if (hours > 0) {
+      return `Za ${hours}h ${minutes}m`;
+    }
+
+    return `Za ${minutes}m`;
   }
 
   function destroy() {
@@ -1135,6 +1261,37 @@
     return date;
   }
 
+  function extractClaimInfoFromText(doc) {
+    const compactText = String(doc.body?.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!compactText) {
+      return null;
+    }
+
+    const claimedByMatch = compactText.match(
+      /[ŠS]ľ?achtick[ýy]\s+n[áa]rok\s+od:\s*(.*?)\s*[ŠS]ľ?achtick[ýy]\s+n[áa]rok\s+skon[čc][íi]:/i
+    );
+    const endMatch = compactText.match(
+      /[ŠS]ľ?achtick[ýy]\s+n[áa]rok\s+skon[čc][íi]:\s*(d[ňn]a\s+\d{1,2}\.\d{1,2}\.\s+o\s+\d{1,2}:\d{2}(?::\d{2})?)/i
+    );
+
+    if (!endMatch) {
+      return null;
+    }
+
+    return {
+      rawEndText: endMatch[1].trim(),
+      claimedBy: claimedByMatch?.[1]?.trim() || null,
+      endsAt: parseClaimEnd(endMatch[1]),
+    };
+  }
+
+  function getScanConcurrency() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 2 : 6;
+  }
+
   async function fetchClaimLock(village) {
     const response = await fetch(buildVillageInfoUrl(village.id), {
       credentials: 'same-origin',
@@ -1147,7 +1304,7 @@
 
     const html = await response.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    return extractClaimInfo(doc);
+    return extractClaimInfo(doc) || extractClaimInfoFromText(doc);
   }
 
   async function asyncPool(limit, items, worker) {
@@ -1213,7 +1370,7 @@
 
     panel.setSummary(`Nasiel som ${candidates.length} dedin pre ${summaryLabel}. Zacina sken...`);
 
-    await asyncPool(6, candidates, async (village) => {
+    await asyncPool(getScanConcurrency(), candidates, async (village) => {
       try {
         const claim = await fetchClaimLock(village);
         if (claim) {
