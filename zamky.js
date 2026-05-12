@@ -898,13 +898,27 @@
 
   function sortResults(results) {
     return [...results].sort((left, right) => {
-      const leftTime = left.endsAt?.getTime?.() ?? Number.POSITIVE_INFINITY;
-      const rightTime = right.endsAt?.getTime?.() ?? Number.POSITIVE_INFINITY;
+      const leftTime = getResultSortTime(left);
+      const rightTime = getResultSortTime(right);
       if (leftTime !== rightTime) {
         return leftTime - rightTime;
       }
       return left.coords.localeCompare(right.coords, 'sk');
     });
+  }
+
+  function getResultSortTime(result) {
+    const currentTime = result?.endsAt?.getTime?.();
+    if (Number.isFinite(currentTime)) {
+      return currentTime;
+    }
+
+    const reparsedTime = parseClaimEnd(result?.rawEndText)?.getTime?.();
+    if (Number.isFinite(reparsedTime)) {
+      return reparsedTime;
+    }
+
+    return Number.POSITIVE_INFINITY;
   }
 
   function getClaimUrgency(endsAt) {
