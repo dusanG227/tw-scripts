@@ -865,8 +865,9 @@
       tbodyEl.innerHTML = state.results
         .map((result) => {
           const mapUrl = buildVillageMapUrl(result.coords);
-          const urgency = getClaimUrgency(result.endsAt);
-          const remainingText = formatRemainingTime(result.endsAt);
+          const endDate = getResultEndDate(result);
+          const urgency = getClaimUrgency(endDate);
+          const remainingText = formatRemainingTime(endDate);
           return `
             <tr class="tw-lockscan-row--${urgency.tier}">
               <td>
@@ -907,15 +908,19 @@
     });
   }
 
-  function getResultSortTime(result) {
-    const currentTime = result?.endsAt?.getTime?.();
-    if (Number.isFinite(currentTime)) {
-      return currentTime;
+  function getResultEndDate(result) {
+    if (result?.endsAt instanceof Date && Number.isFinite(result.endsAt.getTime())) {
+      return result.endsAt;
     }
 
-    const reparsedTime = parseClaimEnd(result?.rawEndText)?.getTime?.();
-    if (Number.isFinite(reparsedTime)) {
-      return reparsedTime;
+    return parseClaimEnd(result?.rawEndText);
+  }
+
+  function getResultSortTime(result) {
+    const endDate = getResultEndDate(result);
+    const timestamp = endDate?.getTime?.();
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
     }
 
     return Number.POSITIVE_INFINITY;
@@ -1254,8 +1259,12 @@
   }
 
   function parseClaimEnd(rawValue) {
-    const cleaned = String(rawValue || '').replace(/\s+/g, ' ').trim();
-    const relativeMatch = cleaned.match(/^(dnes|zajtra)\s+(?:o\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?$/i);
+    const cleaned = String(rawValue || '')
+      .split('|')[0]
+      .replace(/\u00a0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const relativeMatch = cleaned.match(/\b(dnes|zajtra)\b.*?(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
     if (relativeMatch) {
       const keyword = normalizeText(relativeMatch[1]);
       const hour = Number(relativeMatch[2]);
@@ -1271,7 +1280,7 @@
       return date;
     }
 
-    const match = cleaned.match(/(\d{1,2})\.(\d{1,2})\.\s*(?:o\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
+    const match = cleaned.match(/(?:d[nň]a\s+)?(\d{1,2})\.(\d{1,2})\.\s*(?:o\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
     if (!match) {
       return null;
     }
