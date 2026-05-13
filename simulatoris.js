@@ -1,14 +1,22 @@
 (() => {
   const CONFIG = {
     safetyMarginPercent: 5,
+    defaultAttackModifiers: {
+      moralePercent: 100,
+      luckPercent: 0,
+    },
+    defaultDefenseModifiers: {
+      nightBonusEnabled: false,
+      nightBonusPercent: 100,
+    },
     offTemplates: [
       {
         name: "Full OFF Axe/LC",
-        units: { axe: 7000, light: 3000, ram: 300, catapult: 200 },
+        units: { axe: 6800, light: 2650, ram: 350, catapult: 125 },
       },
       {
         name: "Full OFF Axe/MA",
-        units: { axe: 6500, marcher: 2500, ram: 300, catapult: 200 },
+        units: { axe: 6800, marcher: 2650, ram: 350, catapult: 125 },
       },
     ],
     reserveScenario: {
@@ -141,6 +149,7 @@
 
   const PANEL_ID = "tw-report-off-bookmarklet-panel";
   const STATE_KEY = "__twReportOffBookmarkletState";
+  const STORAGE_KEY = "twReportOffBookmarkletStateV2";
   const UNIT_ORDER = Object.keys(UNIT_STATS);
   const CATEGORY_UNITS = {
     infantry: UNIT_ORDER.filter((unit) => UNIT_STATS[unit].group === "infantry"),
@@ -203,6 +212,19 @@
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function parseNumber(value) {
+    const match = String(value || "")
+      .replace(/\s+/g, "")
+      .replace(",", ".")
+      .match(/-?\d+(?:\.\d+)?/);
+    if (!match) {
+      return null;
+    }
+
+    const parsed = Number.parseFloat(match[0]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function formatNumber(value) {
     return Math.round(value).toLocaleString("sk-SK");
   }
@@ -214,11 +236,145 @@
     });
   }
 
+  function formatPercent(value, options = {}) {
+    const numeric = Number(value || 0);
+    const decimals =
+      options.decimals ??
+      (Math.abs(numeric % 1) > 0.0001 ? 1 : 0);
+    return numeric.toLocaleString("sk-SK", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
+
+  function clamp(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, value));
+  }
+
+  function normalizeAttackModifiers(modifiers) {
+    const moraleSource = parseNumber(modifiers?.moralePercent);
+    const luckSource = parseNumber(modifiers?.luckPercent);
+
+    return {
+      moralePercent: clamp(
+        moraleSource ?? CONFIG.defaultAttackModifiers.moralePercent,
+        1,
+        100
+      ),
+      luckPercent: clamp(luckSource ?? CONFIG.defaultAttackModifiers.luckPercent, -25, 25),
+    };
+  }
+
+  function normalizeDefenseModifiers(modifiers) {
+    const nightBonusSource = parseNumber(modifiers?.nightBonusPercent);
+
+    return {
+      nightBonusEnabled: Boolean(modifiers?.nightBonusEnabled),
+      nightBonusPercent: clamp(
+        nightBonusSource ?? CONFIG.defaultDefenseModifiers.nightBonusPercent,
+        0,
+        300
+      ),
+    };
+  }
+
+  function calculateAttackMultiplier(attackModifiers) {
+    const normalized = normalizeAttackModifiers(attackModifiers);
+    return (normalized.moralePercent / 100) * (1 + normalized.luckPercent / 100);
+  }
+
+  function buildInitialState() {
+    const defaults = {
+      manualReserveScenario: null,
+      attackModifiersOverride: null,
+      defenseModifiers: normalizeDefenseModifiers(CONFIG.defaultDefenseModifiers),
+    };
+
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return defaults;
+      }
+
+      const saved = JSON.parse(raw);
+      const savedAttackModifiers = saved?.attackModifiersOverride || saved?.attackModifiers;
+      if (savedAttackModifiers) {
+        defaults.attackModifiersOverride = normalizeAttackModifiers(savedAttackModifiers);
+      }
+      defaults.defenseModifiers = normalizeDefenseModifiers(saved?.defenseModifiers);
+
+      if (saved?.manualReserveScenario?.raw) {
+        defaults.manualReserveScenario = {
+          raw: saved.manualReserveScenario.raw,
+          label: saved.manualReserveScenario.label || "Manualna rezerva",
+          bonusMap: parseManualReserve(saved.manualReserveScenario.raw),
+        };
+      }
+    } catch (error) {
+      return defaults;
+    }
+
+    return defaults;
+  }
+
   function getState() {
     if (!window[STATE_KEY]) {
-      window[STATE_KEY] = { manualReserveScenario: null };
+      window[STATE_KEY] = buildInitialState();
     }
     return window[STATE_KEY];
+  }
+
+  function persistState() {
+    try {
+      const state = getState();
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          attackModifiersOverride: state.attackModifiersOverride
+            ? normalizeAttackModifiers(state.attackModifiersOverride)
+            : null,
+          defenseModifiers: normalizeDefenseModifiers(state.defenseModifiers),
+          manualReserveScenario: state.manualReserveScenario
+            ? {
+                raw: state.manualReserveScenario.raw,
+                label: state.manualReserveScenario.label,
+              }
+            : null,
+        })
+      );
+    } catch (error) {
+      // Ignore localStorage issues and keep the bookmarklet functional.
+    }
+  }
+
+  function extractReportAttackModifiers() {
+    const bodyText = normalizeText(document.body?.innerText || "");
+    if (!bodyText) {
+      return null;
+    }
+
+    const moraleMatch = bodyText.match(/moralka\s*:?\s*(\d{1,3}(?:[.,]\d+)?)\s*%/i);
+    const luckMatch = bodyText.match(
+      /stastie(?:\s+utocnika)?[^\d+-]{0,20}([+-]?\d{1,2}(?:[.,]\d+)?)\s*%/i
+    );
+
+    const moralePercent = parseNumber(moraleMatch?.[1]);
+    const luckPercent = parseNumber(luckMatch?.[1]);
+
+    if (moralePercent === null && luckPercent === null) {
+      return null;
+    }
+
+    return normalizeAttackModifiers({
+      moralePercent:
+        moralePercent === null
+          ? CONFIG.defaultAttackModifiers.moralePercent
+          : moralePercent,
+      luckPercent:
+        luckPercent === null
+          ? CONFIG.defaultAttackModifiers.luckPercent
+          : luckPercent,
+    });
   }
 
   function matchesAlias(text, aliases) {
@@ -341,7 +497,7 @@
     return bestCandidate;
   }
 
-  function extractTroops() {
+  function extractTroopCandidate() {
     let best = null;
 
     for (const table of collectTables()) {
@@ -351,29 +507,87 @@
       }
     }
 
-    return best ? best.counts : null;
+    return best;
   }
 
-  function collectBonusSources() {
-    const sources = new Set();
-
-    String(document.body?.innerText || "")
+  function addBonusSource(targetMap, rawValue, isContextual) {
+    String(rawValue || "")
       .split(/\n+/)
       .map((line) => line.trim())
-      .filter((line) => line.includes("%") && line.length <= 180)
-      .forEach((line) => sources.add(line));
+      .filter((line) => line.includes("%") && line.length <= 220)
+      .forEach((line) => {
+        const key = normalizeText(line);
+        if (!key) {
+          return;
+        }
 
-    const bonusAttributes = ["title", "data-title", "data-tooltip-content", "aria-label"];
+        const existing = targetMap.get(key);
+        if (existing) {
+          existing.isContextual = existing.isContextual || isContextual;
+          return;
+        }
+
+        targetMap.set(key, { text: line, isContextual });
+      });
+  }
+
+  function collectNearbyBonusNodes(table) {
+    const nodes = new Set();
+    if (!table) {
+      return [];
+    }
+
+    nodes.add(table);
+    let current = table.parentElement;
+    for (let depth = 0; current && depth < 4; depth += 1) {
+      nodes.add(current);
+
+      let sibling = current.nextElementSibling;
+      for (let steps = 0; sibling && steps < 4; steps += 1) {
+        nodes.add(sibling);
+        sibling = sibling.nextElementSibling;
+      }
+
+      current = current.parentElement;
+    }
+
+    return Array.from(nodes);
+  }
+
+  function collectBonusSources(troopTable) {
+    const sources = new Map();
+
+    addBonusSource(sources, document.body?.innerText || "", false);
+
+    const bonusAttributes = ["title", "data-title", "data-tooltip-content", "aria-label", "alt"];
     for (const element of document.querySelectorAll("*")) {
       for (const attribute of bonusAttributes) {
         const value = element.getAttribute(attribute);
         if (value && value.includes("%")) {
-          sources.add(value.trim());
+          addBonusSource(sources, value, false);
         }
       }
     }
 
-    return Array.from(sources);
+    for (const node of collectNearbyBonusNodes(troopTable)) {
+      addBonusSource(sources, node.textContent || "", true);
+      for (const attribute of bonusAttributes) {
+        const ownValue = node.getAttribute?.(attribute);
+        if (ownValue && ownValue.includes("%")) {
+          addBonusSource(sources, ownValue, true);
+        }
+      }
+      for (const nested of node.querySelectorAll?.("*") || []) {
+        for (const attribute of bonusAttributes) {
+          const value = nested.getAttribute(attribute);
+          if (value && value.includes("%")) {
+            addBonusSource(sources, value, true);
+          }
+        }
+      }
+    }
+
+    return Array.from(sources.values());
   }
 
   function findUnitsForCategory(text) {
@@ -408,12 +622,12 @@
     target.entries.push({ label, percent, unitName: null });
   }
 
-  function collectDetectedBonuses() {
+  function collectDetectedBonuses(troopTable) {
     const bonusMap = buildEmptyBonusMap();
     const seen = new Set();
 
-    for (const rawSource of collectBonusSources()) {
-      const source = rawSource.trim();
+    for (const sourceInfo of collectBonusSources(troopTable)) {
+      const source = sourceInfo.text.trim();
       const normalized = normalizeText(source);
 
       if (!normalized || seen.has(normalized)) {
@@ -421,16 +635,19 @@
       }
       seen.add(normalized);
 
-      if (!BONUS_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
+      if (
+        !sourceInfo.isContextual &&
+        !BONUS_KEYWORDS.some((keyword) => normalized.includes(keyword))
+      ) {
         continue;
       }
 
-      const percentMatch = source.match(/([+-]?\d{1,3})(?:[.,]\d+)?\s*%/);
+      const percentMatch = source.match(/([+-]?\d{1,3}(?:[.,]\d+)?)\s*%/);
       if (!percentMatch) {
         continue;
       }
 
-      const percent = Number.parseInt(percentMatch[1], 10);
+      const percent = parseNumber(percentMatch[1]);
       if (!Number.isFinite(percent) || percent === 0) {
         continue;
       }
@@ -501,9 +718,9 @@
     };
   }
 
-  function calculateTemplateAttack(template) {
-    let infantryAttack = 0;
-    let cavalryAttack = 0;
+  function calculateTemplateAttack(template, attackModifiers) {
+    let baseInfantryAttack = 0;
+    let baseCavalryAttack = 0;
 
     for (const [unitName, count] of Object.entries(template.units || {})) {
       if (!UNIT_STATS[unitName] || !count) {
@@ -512,21 +729,29 @@
 
       const attackValue = UNIT_STATS[unitName].attack * count;
       if (UNIT_STATS[unitName].group === "cavalry") {
-        cavalryAttack += attackValue;
+        baseCavalryAttack += attackValue;
       } else {
-        infantryAttack += attackValue;
+        baseInfantryAttack += attackValue;
       }
     }
 
+    const attackMultiplier = calculateAttackMultiplier(attackModifiers);
+    const infantryAttack = baseInfantryAttack * attackMultiplier;
+    const cavalryAttack = baseCavalryAttack * attackMultiplier;
+
     return {
+      attackMultiplier,
+      baseInfantryAttack,
+      baseCavalryAttack,
+      totalBaseAttack: baseInfantryAttack + baseCavalryAttack,
       infantryAttack,
       cavalryAttack,
       totalAttack: infantryAttack + cavalryAttack,
     };
   }
 
-  function calculateTemplateResult(template, defense) {
-    const attack = calculateTemplateAttack(template);
+  function calculateTemplateResult(template, defense, attackModifiers) {
+    const attack = calculateTemplateAttack(template, attackModifiers);
     if (!attack.totalAttack) {
       return null;
     }
@@ -543,6 +768,9 @@
 
     return {
       name: template.name,
+      attackMultiplier: attack.attackMultiplier,
+      totalBaseAttack: attack.totalBaseAttack,
+      modifiedAttack: attack.totalAttack,
       totalAttack: attack.totalAttack,
       effectiveDefense,
       exactOffs,
@@ -563,13 +791,13 @@
     const seen = new Set();
 
     if (bonusMap.globalDefensePercent) {
-      lines.push(`Global defense: +${bonusMap.globalDefensePercent}%`);
+      lines.push(`Global defense: +${formatPercent(bonusMap.globalDefensePercent)}%`);
     }
 
     for (const unitName of UNIT_ORDER) {
       const percent = bonusMap.unitDefensePercent[unitName] || 0;
       if (percent) {
-        lines.push(`${UNIT_STATS[unitName].label}: +${percent}%`);
+        lines.push(`${UNIT_STATS[unitName].label}: +${formatPercent(percent)}%`);
       }
     }
 
@@ -612,6 +840,21 @@
     return reserve;
   }
 
+  function buildDefenseModifierBonusMap(defenseModifiers) {
+    const normalized = normalizeDefenseModifiers(defenseModifiers);
+    const map = buildEmptyBonusMap();
+
+    if (normalized.nightBonusEnabled && normalized.nightBonusPercent) {
+      addGlobalBonus(
+        map,
+        normalized.nightBonusPercent,
+        `Nocny bonus +${formatPercent(normalized.nightBonusPercent)}%`
+      );
+    }
+
+    return map;
+  }
+
   function renderPanel(html) {
     const existing = document.getElementById(PANEL_ID);
     if (existing) {
@@ -626,6 +869,14 @@
   }
 
   function buildPanelHtml(result) {
+    const attackEfficiencyPercent = calculateAttackMultiplier(result.attackModifiers) * 100;
+    const reportAttackText = result.reportAttackModifiers
+      ? `Report: moralka ${formatPercent(
+          result.reportAttackModifiers.moralePercent
+        )}% / stastie ${formatPercent(result.reportAttackModifiers.luckPercent, {
+          decimals: 1,
+        })}%`
+      : "Report: moralku ani stastie sa nepodarilo precitat.";
     const unitLines = summarizeUnits(result.units)
       .map(
         (entry) =>
@@ -647,6 +898,7 @@
             (template) => `
               <tr>
                 <td>${escapeHtml(template.name)}</td>
+                <td>${formatNumber(template.modifiedAttack)}</td>
                 <td>${formatDecimal(template.exactOffs)}</td>
                 <td>${template.recommendedOffs}</td>
               </tr>
@@ -668,6 +920,7 @@
               <thead>
                 <tr>
                   <th>Template</th>
+                  <th>Sila OFF</th>
                   <th>Exact OFF</th>
                   <th>Odporucanie</th>
                 </tr>
@@ -694,6 +947,60 @@
           <section class="tw-off-section">
             <h4>Najdene jednotky</h4>
             <ul>${unitLines || "<li>Ziadne jednotky neboli rozpoznane.</li>"}</ul>
+          </section>
+
+          <section class="tw-off-section">
+            <h4>Utokove modifikatory</h4>
+            <div class="tw-off-controls">
+              <label class="tw-off-field">
+                <span>Moralka %</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="0.1"
+                  data-field="morale"
+                  value="${escapeHtml(result.attackModifiers.moralePercent)}"
+                >
+              </label>
+              <label class="tw-off-field">
+                <span>Stastie %</span>
+                <input
+                  type="number"
+                  min="-25"
+                  max="25"
+                  step="0.1"
+                  data-field="luck"
+                  value="${escapeHtml(result.attackModifiers.luckPercent)}"
+                >
+              </label>
+              <label class="tw-off-field tw-off-check">
+                <span>Nocny bonus</span>
+                <input
+                  type="checkbox"
+                  data-field="night-enabled"
+                  ${result.defenseModifiers.nightBonusEnabled ? "checked" : ""}
+                >
+              </label>
+              <label class="tw-off-field">
+                <span>Noc % obrany</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="300"
+                  step="0.1"
+                  data-field="night-percent"
+                  value="${escapeHtml(result.defenseModifiers.nightBonusPercent)}"
+                >
+              </label>
+              <button type="button" data-action="apply-modifiers">Pouzit</button>
+              <button type="button" data-action="use-report-modifiers">Z reportu</button>
+            </div>
+            <p class="tw-off-meta">${escapeHtml(reportAttackText)}</p>
+            <p class="tw-off-meta">
+              Efektivita utoku: <strong>${formatDecimal(attackEfficiencyPercent)}%</strong>
+              povodnej sily jednej OFF.
+            </p>
           </section>
 
           <section class="tw-off-section">
@@ -778,6 +1085,40 @@
           margin: 4px 0 0;
           color: #5b4331;
         }
+        #${PANEL_ID} .tw-off-controls {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: end;
+        }
+        #${PANEL_ID} .tw-off-field {
+          display: grid;
+          gap: 4px;
+          min-width: 130px;
+        }
+        #${PANEL_ID} .tw-off-check {
+          min-width: 110px;
+        }
+        #${PANEL_ID} .tw-off-field span {
+          font-size: 12px;
+          color: #5b4331;
+        }
+        #${PANEL_ID} .tw-off-field input {
+          box-sizing: border-box;
+          width: 100%;
+          border: 1px solid #9f7a53;
+          border-radius: 8px;
+          padding: 7px 9px;
+          background: #fffdf8;
+          color: #2b180a;
+        }
+        #${PANEL_ID} .tw-off-check input {
+          width: 18px;
+          height: 18px;
+          padding: 0;
+          accent-color: #7c5b37;
+          background: transparent;
+        }
         #${PANEL_ID} .tw-off-section {
           margin-top: 14px;
           padding-top: 10px;
@@ -836,11 +1177,11 @@
     `;
   }
 
-  function calculateScenario(units, detectedBonuses, extraBonusMap, label) {
+  function calculateScenario(units, detectedBonuses, extraBonusMap, label, attackModifiers) {
     const mergedBonusMap = mergeBonusMaps(detectedBonuses, extraBonusMap);
     const defense = calculateDefense(units, mergedBonusMap);
     const templates = CONFIG.offTemplates
-      .map((template) => calculateTemplateResult(template, defense))
+      .map((template) => calculateTemplateResult(template, defense, attackModifiers))
       .filter(Boolean);
 
     return {
@@ -864,6 +1205,7 @@
     const parsed = parseManualReserve(value);
     if (!value.trim()) {
       state.manualReserveScenario = null;
+      persistState();
       return true;
     }
 
@@ -872,26 +1214,42 @@
       label: "Manualna rezerva",
       bonusMap: parsed,
     };
+    persistState();
     return true;
   }
 
   function clearReserveScenario() {
     getState().manualReserveScenario = null;
+    persistState();
   }
 
   function buildResult() {
-    const units = extractTroops();
-    if (!units) {
+    const troopCandidate = extractTroopCandidate();
+    if (!troopCandidate?.counts) {
       throw new Error(
         "Nepodarilo sa najst tabulku s jednotkami v otvorenom spy reporte. Otvor report s jednotkami a skus bookmarklet znova."
       );
     }
 
-    const detectedBonuses = collectDetectedBonuses();
+    const units = troopCandidate.counts;
+    const detectedBonuses = collectDetectedBonuses(troopCandidate.table);
     const scenarios = [];
+    const state = getState();
+    const reportAttackModifiers = extractReportAttackModifiers();
+    const attackModifiers = normalizeAttackModifiers(
+      state.attackModifiersOverride || reportAttackModifiers || CONFIG.defaultAttackModifiers
+    );
+    const defenseModifiers = normalizeDefenseModifiers(state.defenseModifiers);
+    const defenseModifierBonusMap = buildDefenseModifierBonusMap(defenseModifiers);
 
     scenarios.push(
-      calculateScenario(units, detectedBonuses, buildEmptyBonusMap(), "Aktualny stav")
+      calculateScenario(
+        units,
+        detectedBonuses,
+        defenseModifierBonusMap,
+        "Aktualny stav",
+        attackModifiers
+      )
     );
 
     if (CONFIG.reserveScenario.enabled) {
@@ -899,29 +1257,33 @@
         calculateScenario(
           units,
           detectedBonuses,
-          {
+          mergeBonusMaps(defenseModifierBonusMap, {
             globalDefensePercent: CONFIG.reserveScenario.globalDefensePercent || 0,
             unitDefensePercent: CONFIG.reserveScenario.unitDefensePercent || {},
             entries: [{ label: CONFIG.reserveScenario.label || "Rezervny bonus" }],
-          },
-          CONFIG.reserveScenario.label || "Rezervny bonus"
+          }),
+          CONFIG.reserveScenario.label || "Rezervny bonus",
+          attackModifiers
         )
       );
     }
 
-    const state = getState();
     if (state.manualReserveScenario) {
       scenarios.push(
         calculateScenario(
           units,
           detectedBonuses,
-          state.manualReserveScenario.bonusMap,
-          state.manualReserveScenario.label
+          mergeBonusMaps(defenseModifierBonusMap, state.manualReserveScenario.bonusMap),
+          state.manualReserveScenario.label,
+          attackModifiers
         )
       );
     }
 
     return {
+      attackModifiers,
+      defenseModifiers,
+      reportAttackModifiers,
       units,
       detectedBonuses,
       scenarios,
@@ -938,6 +1300,48 @@
 
     panel.querySelector('[data-action="refresh"]')?.addEventListener("click", () => {
       mountPanel();
+    });
+
+    panel.querySelector('[data-action="apply-modifiers"]')?.addEventListener("click", () => {
+      const moraleInput = panel.querySelector('[data-field="morale"]');
+      const luckInput = panel.querySelector('[data-field="luck"]');
+      const nightEnabledInput = panel.querySelector('[data-field="night-enabled"]');
+      const nightPercentInput = panel.querySelector('[data-field="night-percent"]');
+      const state = getState();
+
+      state.attackModifiersOverride = normalizeAttackModifiers({
+        moralePercent: moraleInput?.value,
+        luckPercent: luckInput?.value,
+      });
+      state.defenseModifiers = normalizeDefenseModifiers({
+        nightBonusEnabled: nightEnabledInput?.checked,
+        nightBonusPercent: nightPercentInput?.value,
+      });
+      persistState();
+      mountPanel();
+    });
+
+    panel.querySelector('[data-action="use-report-modifiers"]')?.addEventListener("click", () => {
+      const state = getState();
+      state.attackModifiersOverride = null;
+      state.defenseModifiers = normalizeDefenseModifiers({
+        nightBonusEnabled: panel.querySelector('[data-field="night-enabled"]')?.checked,
+        nightBonusPercent: panel.querySelector('[data-field="night-percent"]')?.value,
+      });
+      persistState();
+      mountPanel();
+    });
+
+    panel
+      .querySelectorAll(
+        '[data-field="morale"], [data-field="luck"], [data-field="night-percent"]'
+      )
+      .forEach((field) => {
+      field.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          panel.querySelector('[data-action="apply-modifiers"]')?.click();
+        }
+      });
     });
 
     panel.querySelector('[data-action="reserve"]')?.addEventListener("click", () => {
