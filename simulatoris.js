@@ -1046,13 +1046,13 @@
     return Math.max(minimumPreBattleLevel, wallLevel - reduction);
   }
 
-  function calculatePostBattleWallLevel(preBattleWallLevel, survivingRams) {
-    if (preBattleWallLevel <= 0) {
+  function calculatePostBattleWallLevel(startWallLevel, survivingRams) {
+    if (startWallLevel <= 0) {
       return 0;
     }
 
-    const reduction = calculateWallReductionFromRams(survivingRams, preBattleWallLevel);
-    return Math.max(0, preBattleWallLevel - reduction);
+    const reduction = calculateWallReductionFromRams(survivingRams, startWallLevel);
+    return Math.max(0, startWallLevel - reduction);
   }
 
   function simulateTemplateWaves(
@@ -1085,7 +1085,7 @@
       );
       const remainingUnits = applyLossFraction(currentUnits, losses.defenderLossFraction);
       const survivingRams = templateRams * (1 - losses.attackerLossFraction);
-      const endWallLevel = calculatePostBattleWallLevel(preBattleWallLevel, survivingRams);
+      const endWallLevel = calculatePostBattleWallLevel(startWallLevel, survivingRams);
       const remainingBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(endWallLevel));
       const remainingDefense = calculateDefense(remainingUnits, remainingBonusMap);
       const remainingTemplateResult = calculateTemplateResult(
