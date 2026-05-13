@@ -2,6 +2,7 @@
   const CONFIG = {
     safetyMarginPercent: 5,
     casualtyExponent: 1.5,
+    catapultWallDamageFactor: 14.5,
     defaultAttackModifiers: {
       moralePercent: 100,
       luckPercent: 0,
@@ -13,6 +14,7 @@
     defaultSimulationSettings: {
       wallLevel: null,
       maxWaves: 6,
+      catapultsTargetWall: false,
     },
     offTemplates: [
       {
@@ -308,6 +310,7 @@
     return {
       wallLevel,
       maxWaves,
+      catapultsTargetWall: Boolean(settings?.catapultsTargetWall),
     };
   }
 
@@ -380,6 +383,7 @@
                 ? null
                 : clamp(Math.round(state.simulationSettings.wallLevel), 0, 20),
             maxWaves: normalizeSimulationSettings(state.simulationSettings).maxWaves,
+            catapultsTargetWall: Boolean(state.simulationSettings?.catapultsTargetWall),
           },
           manualReserveScenario: state.manualReserveScenario
             ? {
@@ -1046,13 +1050,24 @@
     return Math.max(minimumPreBattleLevel, wallLevel - reduction);
   }
 
-  function calculatePostBattleWallLevel(startWallLevel, survivingRams) {
+  function calculatePostBattleWallLevel(startWallLevel, ramCount, defenderLossFraction) {
     if (startWallLevel <= 0) {
       return 0;
     }
 
-    const reduction = calculateWallReductionFromRams(survivingRams, startWallLevel);
+    const rawReduction = calculateWallReductionFromRams(ramCount, startWallLevel);
+    const reduction = Math.max(0, Math.round(rawReduction * defenderLossFraction));
     return Math.max(0, startWallLevel - reduction);
+  }
+
+  function calculateCatapultWallReduction(catapultCount, defenderLossFraction, wallLevel) {
+    if (!catapultCount || wallLevel <= 0 || defenderLossFraction <= 0) {
+      return 0;
+    }
+
+    const estimatedDamage =
+      (catapultCount * defenderLossFraction) / CONFIG.catapultWallDamageFactor;
+    return Math.max(0, Math.min(wallLevel, Math.round(estimatedDamage)));
   }
 
   function simulateTemplateWaves(
@@ -1061,7 +1076,8 @@
     baseBonusMap,
     wallLevel,
     attackModifiers,
-    maxWaves
+    maxWaves,
+    simulationSettings
   ) {
     const rows = [];
     let currentUnits = { ...startingUnits };
@@ -1070,6 +1086,7 @@
     for (let waveNumber = 1; waveNumber <= maxWaves; waveNumber += 1) {
       const startWallLevel = currentWallLevel;
       const templateRams = Number(template.units?.ram || 0);
+      const templateCatapults = Number(template.units?.catapult || 0);
       const preBattleWallLevel = calculatePreBattleWallLevel(startWallLevel, templateRams);
       const battleBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(preBattleWallLevel));
       const defense = calculateDefense(currentUnits, battleBonusMap);
@@ -1084,8 +1101,19 @@
         templateResult.effectiveDefense
       );
       const remainingUnits = applyLossFraction(currentUnits, losses.defenderLossFraction);
-      const survivingRams = templateRams * (1 - losses.attackerLossFraction);
-      const endWallLevel = calculatePostBattleWallLevel(startWallLevel, survivingRams);
+      let endWallLevel = calculatePostBattleWallLevel(
+        startWallLevel,
+        templateRams,
+        losses.defenderLossFraction
+      );
+      const catapultWallReduction = simulationSettings?.catapultsTargetWall
+        ? calculateCatapultWallReduction(
+            templateCatapults,
+            losses.defenderLossFraction,
+            endWallLevel
+          )
+        : 0;
+      endWallLevel = Math.max(0, endWallLevel - catapultWallReduction);
       const remainingBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(endWallLevel));
       const remainingDefense = calculateDefense(remainingUnits, remainingBonusMap);
       const remainingTemplateResult = calculateTemplateResult(
@@ -1101,6 +1129,7 @@
         startWallLevel,
         preBattleWallLevel,
         endWallLevel,
+        catapultWallReduction,
         defenderLossPercent: losses.defenderLossFraction * 100,
         attackerLossPercent: losses.attackerLossFraction * 100,
         remainingDefense,
@@ -1173,7 +1202,7 @@
                 (row) => `
                   <tr>
                     <td>${row.waveNumber}</td>
-                    <td>${row.startWallLevel} -> ${row.preBattleWallLevel} -> ${row.endWallLevel}</td>
+                    <td>${row.startWallLevel}-${row.endWallLevel}</td>
                     <td>${formatDecimal(row.defenderLossPercent)}%</td>
                     <td>${formatDecimal(row.attackerLossPercent)}%</td>
                     <td>${row.cleared ? "Vymazane" : formatDecimal(row.remainingExactOffs)}</td>
@@ -1322,6 +1351,14 @@
                   step="1"
                   data-field="max-waves"
                   value="${escapeHtml(result.simulationSettings.maxWaves)}"
+                >
+              </label>
+              <label class="tw-off-field tw-off-check">
+                <span>Katy na opevko</span>
+                <input
+                  type="checkbox"
+                  data-field="catapult-wall"
+                  ${result.simulationSettings.catapultsTargetWall ? "checked" : ""}
                 >
               </label>
               <button type="button" data-action="apply-modifiers">Pouzit</button>
@@ -1526,7 +1563,8 @@
     label,
     attackModifiers,
     wallLevel,
-    maxWaves
+    maxWaves,
+    simulationSettings
   ) {
     const mergedBonusMap = mergeBonusMaps(detectedBonuses, summaryBonusMap);
     const defense = calculateDefense(units, mergedBonusMap);
@@ -1541,7 +1579,8 @@
         mergeBonusMaps(detectedBonuses, waveBaseBonusMap),
         wallLevel,
         attackModifiers,
-        maxWaves
+        maxWaves,
+        simulationSettings
       ),
     }));
 
@@ -1622,7 +1661,8 @@
         "Aktualny stav",
         attackModifiers,
         wallLevel,
-        simulationSettings.maxWaves
+        simulationSettings.maxWaves,
+        simulationSettings
       )
     );
 
@@ -1644,7 +1684,8 @@
           CONFIG.reserveScenario.label || "Rezervny bonus",
           attackModifiers,
           wallLevel,
-          simulationSettings.maxWaves
+          simulationSettings.maxWaves,
+          simulationSettings
         )
       );
     }
@@ -1659,7 +1700,8 @@
           state.manualReserveScenario.label,
           attackModifiers,
           wallLevel,
-          simulationSettings.maxWaves
+          simulationSettings.maxWaves,
+          simulationSettings
         )
       );
     }
@@ -1699,6 +1741,7 @@
       const nightPercentInput = panel.querySelector('[data-field="night-percent"]');
       const wallLevelInput = panel.querySelector('[data-field="wall-level"]');
       const maxWavesInput = panel.querySelector('[data-field="max-waves"]');
+      const catapultWallInput = panel.querySelector('[data-field="catapult-wall"]');
       const state = getState();
 
       state.attackModifiersOverride = normalizeAttackModifiers({
@@ -1712,6 +1755,7 @@
       state.simulationSettings = normalizeSimulationSettings({
         wallLevel: wallLevelInput?.value,
         maxWaves: maxWavesInput?.value,
+        catapultsTargetWall: catapultWallInput?.checked,
       });
       persistState();
       mountPanel();
@@ -1727,6 +1771,7 @@
       state.simulationSettings = normalizeSimulationSettings({
         wallLevel: null,
         maxWaves: panel.querySelector('[data-field="max-waves"]')?.value,
+        catapultsTargetWall: panel.querySelector('[data-field="catapult-wall"]')?.checked,
       });
       persistState();
       mountPanel();
