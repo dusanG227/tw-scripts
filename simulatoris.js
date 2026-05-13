@@ -627,17 +627,21 @@
     }
 
     nodes.add(table);
-    let current = table.parentElement;
-    for (let depth = 0; current && depth < 4; depth += 1) {
-      nodes.add(current);
+    const parent = table.parentElement;
+    if (parent) {
+      nodes.add(parent);
 
-      let sibling = current.nextElementSibling;
+      let sibling = parent.nextElementSibling;
       for (let steps = 0; sibling && steps < 4; steps += 1) {
         nodes.add(sibling);
         sibling = sibling.nextElementSibling;
       }
+    }
 
-      current = current.parentElement;
+    let tableSibling = table.nextElementSibling;
+    for (let steps = 0; tableSibling && steps < 4; steps += 1) {
+      nodes.add(tableSibling);
+      tableSibling = tableSibling.nextElementSibling;
     }
 
     return Array.from(nodes);
@@ -646,10 +650,18 @@
   function collectBonusSources(troopTable) {
     const sources = new Map();
 
+    const existingPanel = document.getElementById(PANEL_ID);
+    if (existingPanel) {
+      existingPanel.remove();
+    }
+
     addBonusSource(sources, document.body?.innerText || "", false);
 
     const bonusAttributes = ["title", "data-title", "data-tooltip-content", "aria-label", "alt"];
     for (const element of document.querySelectorAll("*")) {
+      if (element.closest?.(`#${PANEL_ID}`)) {
+        continue;
+      }
       for (const attribute of bonusAttributes) {
         const value = element.getAttribute(attribute);
         if (value && value.includes("%")) {
@@ -715,6 +727,7 @@
     const bonusMap = buildEmptyBonusMap();
     const seen = new Set();
     const wallKeywords = ["wall", "palisad", "opevn", "opevk", "hradb"];
+    const ignoredKeywords = ["moralka", "stastie", "luck", "utocnika", "attacker"];
 
     for (const sourceInfo of collectBonusSources(troopTable)) {
       const source = sourceInfo.text.trim();
@@ -725,10 +738,7 @@
       }
       seen.add(normalized);
 
-      if (
-        !sourceInfo.isContextual &&
-        !BONUS_KEYWORDS.some((keyword) => normalized.includes(keyword))
-      ) {
+      if (ignoredKeywords.some((keyword) => normalized.includes(keyword))) {
         continue;
       }
 
@@ -749,6 +759,12 @@
       const matchingUnits = UNIT_ORDER.filter((unitName) =>
         matchesAlias(normalized, UNIT_STATS[unitName].aliases)
       );
+      const categoryUnits = findUnitsForCategory(normalized);
+      const hasDefenseKeyword = BONUS_KEYWORDS.some((keyword) => normalized.includes(keyword));
+
+      if (!hasDefenseKeyword && matchingUnits.length === 0 && categoryUnits.length === 0) {
+        continue;
+      }
 
       if (matchingUnits.length > 0) {
         matchingUnits.forEach((unitName) => {
@@ -757,7 +773,6 @@
         continue;
       }
 
-      const categoryUnits = findUnitsForCategory(normalized);
       if (categoryUnits.length > 0) {
         categoryUnits.forEach((unitName) => {
           addUnitBonus(bonusMap, unitName, percent, source);
@@ -884,21 +899,24 @@
     const lines = [];
     const seen = new Set();
 
-    if (bonusMap.globalDefensePercent) {
-      lines.push(`Global defense: +${formatPercent(bonusMap.globalDefensePercent)}%`);
-    }
-
-    for (const unitName of UNIT_ORDER) {
-      const percent = bonusMap.unitDefensePercent[unitName] || 0;
-      if (percent) {
-        lines.push(`${UNIT_STATS[unitName].label}: +${formatPercent(percent)}%`);
-      }
-    }
-
     for (const entry of bonusMap.entries || []) {
       const normalized = normalizeText(entry.label);
       if (normalized && !seen.has(normalized)) {
         seen.add(normalized);
+        lines.push(entry.label);
+      }
+    }
+
+    if (lines.length === 0) {
+      if (bonusMap.globalDefensePercent) {
+        lines.push(`Global defense: +${formatPercent(bonusMap.globalDefensePercent)}%`);
+      }
+
+      for (const unitName of UNIT_ORDER) {
+        const percent = bonusMap.unitDefensePercent[unitName] || 0;
+        if (percent) {
+          lines.push(`${UNIT_STATS[unitName].label}: +${formatPercent(percent)}%`);
+        }
       }
     }
 
@@ -1116,6 +1134,11 @@
 
   function buildPanelHtml(result) {
     const attackEfficiencyPercent = calculateAttackMultiplier(result.attackModifiers) * 100;
+    const activeAttackText = `Aktivne: moralka ${formatPercent(
+      result.attackModifiers.moralePercent
+    )}% / stastie ${formatPercent(result.attackModifiers.luckPercent, {
+      decimals: 1,
+    })}%`;
     const reportAttackText = result.reportAttackModifiers
       ? `Report: moralka ${formatPercent(
           result.reportAttackModifiers.moralePercent
@@ -1305,6 +1328,7 @@
               <button type="button" data-action="use-report-modifiers">Z reportu</button>
               <button type="button" data-action="reset-all">Reset</button>
             </div>
+            <p class="tw-off-meta">${escapeHtml(activeAttackText)}</p>
             <p class="tw-off-meta">${escapeHtml(reportAttackText)}</p>
             <p class="tw-off-meta">${escapeHtml(reportWallText)}</p>
             <p class="tw-off-meta">
@@ -1656,6 +1680,7 @@
   }
 
   function mountPanel() {
+    document.getElementById(PANEL_ID)?.remove();
     const result = buildResult();
     const panel = renderPanel(buildPanelHtml(result));
 
