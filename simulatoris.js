@@ -1,6 +1,7 @@
 (() => {
   const CONFIG = {
     safetyMarginPercent: 5,
+    casualtyExponent: 1.5,
     defaultAttackModifiers: {
       moralePercent: 100,
       luckPercent: 0,
@@ -9,14 +10,18 @@
       nightBonusEnabled: false,
       nightBonusPercent: 100,
     },
+    defaultSimulationSettings: {
+      wallLevel: null,
+      maxWaves: 6,
+    },
     offTemplates: [
       {
-        name: "Full OFF Axe/LC",
-        units: { axe: 6800, light: 2650, ram: 350, catapult: 125 },
+        name: "A",
+        units: { axe: 6850, light: 2650, spy: 40, ram: 350, catapult: 125 },
       },
       {
-        name: "Full OFF Axe/MA",
-        units: { axe: 6800, marcher: 2650, ram: 350, catapult: 125 },
+        name: "B",
+        units: { axe: 7000, light: 2700, ram: 500 },
       },
     ],
     reserveScenario: {
@@ -149,8 +154,12 @@
 
   const PANEL_ID = "tw-report-off-bookmarklet-panel";
   const STATE_KEY = "__twReportOffBookmarkletState";
-  const STORAGE_KEY = "twReportOffBookmarkletStateV2";
+  const STORAGE_KEY = "twReportOffBookmarkletStateV3";
   const UNIT_ORDER = Object.keys(UNIT_STATS);
+  const WALL_BONUS_BY_LEVEL = [
+    0, 4, 8, 12, 16, 20, 24, 29, 34, 39, 44, 49, 55, 60, 66, 72, 79, 85, 92,
+    99, 106,
+  ];
   const CATEGORY_UNITS = {
     infantry: UNIT_ORDER.filter((unit) => UNIT_STATS[unit].group === "infantry"),
     cavalry: UNIT_ORDER.filter((unit) => UNIT_STATS[unit].group === "cavalry"),
@@ -278,17 +287,46 @@
     };
   }
 
+  function normalizeSimulationSettings(settings) {
+    const parsedWallLevel = parseNumber(settings?.wallLevel);
+    const wallLevel =
+      settings?.wallLevel === null ||
+      settings?.wallLevel === undefined ||
+      settings?.wallLevel === ""
+        ? null
+        : clamp(
+            Math.round(parsedWallLevel ?? CONFIG.defaultSimulationSettings.wallLevel ?? 0),
+            0,
+            20
+          );
+    const maxWaves = clamp(
+      Math.round(parseNumber(settings?.maxWaves) ?? CONFIG.defaultSimulationSettings.maxWaves),
+      1,
+      20
+    );
+
+    return {
+      wallLevel,
+      maxWaves,
+    };
+  }
+
   function calculateAttackMultiplier(attackModifiers) {
     const normalized = normalizeAttackModifiers(attackModifiers);
     return (normalized.moralePercent / 100) * (1 + normalized.luckPercent / 100);
   }
 
-  function buildInitialState() {
-    const defaults = {
+  function getDefaultState() {
+    return {
       manualReserveScenario: null,
       attackModifiersOverride: null,
       defenseModifiers: normalizeDefenseModifiers(CONFIG.defaultDefenseModifiers),
+      simulationSettings: normalizeSimulationSettings(CONFIG.defaultSimulationSettings),
     };
+  }
+
+  function buildInitialState() {
+    const defaults = getDefaultState();
 
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -302,6 +340,7 @@
         defaults.attackModifiersOverride = normalizeAttackModifiers(savedAttackModifiers);
       }
       defaults.defenseModifiers = normalizeDefenseModifiers(saved?.defenseModifiers);
+      defaults.simulationSettings = normalizeSimulationSettings(saved?.simulationSettings);
 
       if (saved?.manualReserveScenario?.raw) {
         defaults.manualReserveScenario = {
@@ -334,6 +373,14 @@
             ? normalizeAttackModifiers(state.attackModifiersOverride)
             : null,
           defenseModifiers: normalizeDefenseModifiers(state.defenseModifiers),
+          simulationSettings: {
+            wallLevel:
+              state.simulationSettings?.wallLevel === null ||
+              state.simulationSettings?.wallLevel === undefined
+                ? null
+                : clamp(Math.round(state.simulationSettings.wallLevel), 0, 20),
+            maxWaves: normalizeSimulationSettings(state.simulationSettings).maxWaves,
+          },
           manualReserveScenario: state.manualReserveScenario
             ? {
                 raw: state.manualReserveScenario.raw,
@@ -345,6 +392,19 @@
     } catch (error) {
       // Ignore localStorage issues and keep the bookmarklet functional.
     }
+  }
+
+  function resetState() {
+    const defaults = getDefaultState();
+    window[STATE_KEY] = defaults;
+
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      // Ignore storage issues and keep the bookmarklet functional.
+    }
+
+    return defaults;
   }
 
   function extractReportAttackModifiers() {
@@ -375,6 +435,35 @@
           ? CONFIG.defaultAttackModifiers.luckPercent
           : luckPercent,
     });
+  }
+
+  function extractReportWallLevel() {
+    const wallLabels = ["opevnenie", "opevko", "palisada", "wall"];
+    const rowCandidates = [];
+
+    for (const row of document.querySelectorAll("tr")) {
+      const text = row.textContent || "";
+      const normalized = normalizeText(text);
+      if (wallLabels.some((label) => normalized.includes(label))) {
+        rowCandidates.push(text);
+      }
+    }
+
+    rowCandidates.push(document.body?.innerText || "");
+
+    for (const candidate of rowCandidates) {
+      const normalized = normalizeText(candidate);
+      for (const label of wallLabels) {
+        const regex = new RegExp(`${label}\\s*:?\\s*(\\d{1,2})`, "i");
+        const match = normalized.match(regex);
+        const value = parseInteger(match?.[1]);
+        if (value !== null) {
+          return clamp(value, 0, 20);
+        }
+      }
+    }
+
+    return null;
   }
 
   function matchesAlias(text, aliases) {
@@ -625,6 +714,7 @@
   function collectDetectedBonuses(troopTable) {
     const bonusMap = buildEmptyBonusMap();
     const seen = new Set();
+    const wallKeywords = ["wall", "palisad", "opevn", "opevk", "hradb"];
 
     for (const sourceInfo of collectBonusSources(troopTable)) {
       const source = sourceInfo.text.trim();
@@ -649,6 +739,10 @@
 
       const percent = parseNumber(percentMatch[1]);
       if (!Number.isFinite(percent) || percent === 0) {
+        continue;
+      }
+
+      if (wallKeywords.some((keyword) => normalized.includes(keyword))) {
         continue;
       }
 
@@ -855,6 +949,158 @@
     return map;
   }
 
+  function buildWallBonusMap(wallLevel) {
+    const level = clamp(Math.round(wallLevel || 0), 0, WALL_BONUS_BY_LEVEL.length - 1);
+    const percent = WALL_BONUS_BY_LEVEL[level] || 0;
+    const map = buildEmptyBonusMap();
+
+    if (percent > 0) {
+      addGlobalBonus(map, percent, `Opevnenie ${level}: +${formatPercent(percent)}%`);
+    }
+
+    return map;
+  }
+
+  function calculateWaveLosses(attackPower, defensePower) {
+    if (attackPower <= 0) {
+      return {
+        attackerLossFraction: 1,
+        defenderLossFraction: 0,
+      };
+    }
+
+    if (defensePower <= 0) {
+      return {
+        attackerLossFraction: 0,
+        defenderLossFraction: 1,
+      };
+    }
+
+    if (attackPower >= defensePower) {
+      return {
+        attackerLossFraction: clamp(
+          Math.pow(defensePower / attackPower, CONFIG.casualtyExponent),
+          0,
+          1
+        ),
+        defenderLossFraction: 1,
+      };
+    }
+
+    return {
+      attackerLossFraction: 1,
+      defenderLossFraction: clamp(
+        Math.pow(attackPower / defensePower, CONFIG.casualtyExponent),
+        0,
+        1
+      ),
+    };
+  }
+
+  function applyLossFraction(units, lossFraction) {
+    const remaining = {};
+    for (const unitName of UNIT_ORDER) {
+      const count = Number(units[unitName] || 0);
+      remaining[unitName] = Math.max(0, count * (1 - lossFraction));
+    }
+    return remaining;
+  }
+
+  function getTotalUnits(units) {
+    return Object.values(units || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+  }
+
+  function calculateWallReductionFromRams(ramCount, wallLevel) {
+    if (!ramCount || wallLevel <= 0) {
+      return 0;
+    }
+
+    return Math.max(0, Math.round((ramCount / 4) * Math.pow(1.09, -wallLevel)));
+  }
+
+  function calculatePreBattleWallLevel(wallLevel, ramCount) {
+    if (wallLevel <= 0) {
+      return 0;
+    }
+
+    const reduction = calculateWallReductionFromRams(ramCount, wallLevel);
+    const minimumPreBattleLevel = Math.ceil(wallLevel / 2);
+    return Math.max(minimumPreBattleLevel, wallLevel - reduction);
+  }
+
+  function calculatePostBattleWallLevel(preBattleWallLevel, survivingRams) {
+    if (preBattleWallLevel <= 0) {
+      return 0;
+    }
+
+    const reduction = calculateWallReductionFromRams(survivingRams, preBattleWallLevel);
+    return Math.max(0, preBattleWallLevel - reduction);
+  }
+
+  function simulateTemplateWaves(
+    template,
+    startingUnits,
+    baseBonusMap,
+    wallLevel,
+    attackModifiers,
+    maxWaves
+  ) {
+    const rows = [];
+    let currentUnits = { ...startingUnits };
+    let currentWallLevel = clamp(Math.round(wallLevel || 0), 0, 20);
+
+    for (let waveNumber = 1; waveNumber <= maxWaves; waveNumber += 1) {
+      const startWallLevel = currentWallLevel;
+      const templateRams = Number(template.units?.ram || 0);
+      const preBattleWallLevel = calculatePreBattleWallLevel(startWallLevel, templateRams);
+      const battleBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(preBattleWallLevel));
+      const defense = calculateDefense(currentUnits, battleBonusMap);
+      const templateResult = calculateTemplateResult(template, defense, attackModifiers);
+
+      if (!templateResult) {
+        break;
+      }
+
+      const losses = calculateWaveLosses(
+        templateResult.totalAttack,
+        templateResult.effectiveDefense
+      );
+      const remainingUnits = applyLossFraction(currentUnits, losses.defenderLossFraction);
+      const survivingRams = templateRams * (1 - losses.attackerLossFraction);
+      const endWallLevel = calculatePostBattleWallLevel(preBattleWallLevel, survivingRams);
+      const remainingBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(endWallLevel));
+      const remainingDefense = calculateDefense(remainingUnits, remainingBonusMap);
+      const remainingTemplateResult = calculateTemplateResult(
+        template,
+        remainingDefense,
+        attackModifiers
+      );
+      const remainingUnitTotal = getTotalUnits(remainingUnits);
+      const cleared = remainingUnitTotal < 1;
+
+      rows.push({
+        waveNumber,
+        startWallLevel,
+        preBattleWallLevel,
+        endWallLevel,
+        defenderLossPercent: losses.defenderLossFraction * 100,
+        attackerLossPercent: losses.attackerLossFraction * 100,
+        remainingDefense,
+        remainingExactOffs: remainingTemplateResult?.exactOffs || 0,
+        cleared,
+      });
+
+      currentUnits = remainingUnits;
+      currentWallLevel = endWallLevel;
+
+      if (cleared) {
+        break;
+      }
+    }
+
+    return rows;
+  }
+
   function renderPanel(html) {
     const existing = document.getElementById(PANEL_ID);
     if (existing) {
@@ -877,6 +1123,10 @@
           decimals: 1,
         })}%`
       : "Report: moralku ani stastie sa nepodarilo precitat.";
+    const reportWallText =
+      result.reportWallLevel === null
+        ? "Report: opevnenie sa nepodarilo precitat, pouzivam rucnu hodnotu."
+        : `Report: opevnenie ${result.reportWallLevel}`;
     const unitLines = summarizeUnits(result.units)
       .map(
         (entry) =>
@@ -892,6 +1142,41 @@
       .map((scenario) => {
         const scenarioBonusLines = summarizeBonuses(scenario.bonusMap)
           .map((line) => `<li>${escapeHtml(line)}</li>`)
+          .join("");
+        const waveSimulationHtml = scenario.waveSimulations
+          .map((simulation) => {
+            const waveRows = simulation.rows
+              .map(
+                (row) => `
+                  <tr>
+                    <td>${row.waveNumber}</td>
+                    <td>${row.startWallLevel} -> ${row.preBattleWallLevel} -> ${row.endWallLevel}</td>
+                    <td>${formatDecimal(row.defenderLossPercent)}%</td>
+                    <td>${formatDecimal(row.attackerLossPercent)}%</td>
+                    <td>${row.cleared ? "Vymazane" : formatDecimal(row.remainingExactOffs)}</td>
+                  </tr>
+                `
+              )
+              .join("");
+
+            return `
+              <div class="tw-off-wave-card">
+                <h5>Simulacia vln - template ${escapeHtml(simulation.templateName)}</h5>
+                <table class="tw-off-table tw-off-wave-table">
+                  <thead>
+                    <tr>
+                      <th>Vlna</th>
+                      <th>Opevko</th>
+                      <th>Pad DEF</th>
+                      <th>Pad OFF</th>
+                      <th>Zost. exact OFF</th>
+                    </tr>
+                  </thead>
+                  <tbody>${waveRows}</tbody>
+                </table>
+              </div>
+            `;
+          })
           .join("");
         const templateRows = scenario.templates
           .map(
@@ -927,6 +1212,7 @@
               </thead>
               <tbody>${templateRows}</tbody>
             </table>
+            ${waveSimulationHtml}
           </section>
         `;
       })
@@ -993,10 +1279,34 @@
                   value="${escapeHtml(result.defenseModifiers.nightBonusPercent)}"
                 >
               </label>
+              <label class="tw-off-field">
+                <span>Opevko</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="1"
+                  data-field="wall-level"
+                  value="${escapeHtml(result.simulationSettings.wallLevel)}"
+                >
+              </label>
+              <label class="tw-off-field">
+                <span>Max vln</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  data-field="max-waves"
+                  value="${escapeHtml(result.simulationSettings.maxWaves)}"
+                >
+              </label>
               <button type="button" data-action="apply-modifiers">Pouzit</button>
               <button type="button" data-action="use-report-modifiers">Z reportu</button>
+              <button type="button" data-action="reset-all">Reset</button>
             </div>
             <p class="tw-off-meta">${escapeHtml(reportAttackText)}</p>
+            <p class="tw-off-meta">${escapeHtml(reportWallText)}</p>
             <p class="tw-off-meta">
               Efektivita utoku: <strong>${formatDecimal(attackEfficiencyPercent)}%</strong>
               povodnej sily jednej OFF.
@@ -1133,6 +1443,13 @@
           margin: 0 0 8px;
           font-size: 15px;
         }
+        #${PANEL_ID} .tw-off-wave-card {
+          margin-top: 12px;
+        }
+        #${PANEL_ID} .tw-off-wave-card h5 {
+          margin: 0 0 6px;
+          font-size: 13px;
+        }
         #${PANEL_ID} ul {
           margin: 0;
           padding-left: 18px;
@@ -1177,18 +1494,39 @@
     `;
   }
 
-  function calculateScenario(units, detectedBonuses, extraBonusMap, label, attackModifiers) {
-    const mergedBonusMap = mergeBonusMaps(detectedBonuses, extraBonusMap);
+  function calculateScenario(
+    units,
+    detectedBonuses,
+    summaryBonusMap,
+    waveBaseBonusMap,
+    label,
+    attackModifiers,
+    wallLevel,
+    maxWaves
+  ) {
+    const mergedBonusMap = mergeBonusMaps(detectedBonuses, summaryBonusMap);
     const defense = calculateDefense(units, mergedBonusMap);
     const templates = CONFIG.offTemplates
       .map((template) => calculateTemplateResult(template, defense, attackModifiers))
       .filter(Boolean);
+    const waveSimulations = CONFIG.offTemplates.map((template) => ({
+      templateName: template.name,
+      rows: simulateTemplateWaves(
+        template,
+        units,
+        mergeBonusMaps(detectedBonuses, waveBaseBonusMap),
+        wallLevel,
+        attackModifiers,
+        maxWaves
+      ),
+    }));
 
     return {
       label,
       defense,
       templates,
       bonusMap: mergedBonusMap,
+      waveSimulations,
     };
   }
 
@@ -1236,19 +1574,31 @@
     const scenarios = [];
     const state = getState();
     const reportAttackModifiers = extractReportAttackModifiers();
+    const reportWallLevel = extractReportWallLevel();
     const attackModifiers = normalizeAttackModifiers(
       state.attackModifiersOverride || reportAttackModifiers || CONFIG.defaultAttackModifiers
     );
     const defenseModifiers = normalizeDefenseModifiers(state.defenseModifiers);
     const defenseModifierBonusMap = buildDefenseModifierBonusMap(defenseModifiers);
+    const simulationSettings = normalizeSimulationSettings(state.simulationSettings);
+    const wallLevel =
+      simulationSettings.wallLevel ??
+      reportWallLevel ??
+      (CONFIG.defaultSimulationSettings.wallLevel ?? 0);
+    const wallBonusMap = buildWallBonusMap(wallLevel);
+    const baseWaveBonusMap = defenseModifierBonusMap;
+    const baseScenarioBonusMap = mergeBonusMaps(baseWaveBonusMap, wallBonusMap);
 
     scenarios.push(
       calculateScenario(
         units,
         detectedBonuses,
-        defenseModifierBonusMap,
+        baseScenarioBonusMap,
+        baseWaveBonusMap,
         "Aktualny stav",
-        attackModifiers
+        attackModifiers,
+        wallLevel,
+        simulationSettings.maxWaves
       )
     );
 
@@ -1257,13 +1607,20 @@
         calculateScenario(
           units,
           detectedBonuses,
-          mergeBonusMaps(defenseModifierBonusMap, {
+          mergeBonusMaps(baseScenarioBonusMap, {
+            globalDefensePercent: CONFIG.reserveScenario.globalDefensePercent || 0,
+            unitDefensePercent: CONFIG.reserveScenario.unitDefensePercent || {},
+            entries: [{ label: CONFIG.reserveScenario.label || "Rezervny bonus" }],
+          }),
+          mergeBonusMaps(baseWaveBonusMap, {
             globalDefensePercent: CONFIG.reserveScenario.globalDefensePercent || 0,
             unitDefensePercent: CONFIG.reserveScenario.unitDefensePercent || {},
             entries: [{ label: CONFIG.reserveScenario.label || "Rezervny bonus" }],
           }),
           CONFIG.reserveScenario.label || "Rezervny bonus",
-          attackModifiers
+          attackModifiers,
+          wallLevel,
+          simulationSettings.maxWaves
         )
       );
     }
@@ -1273,9 +1630,12 @@
         calculateScenario(
           units,
           detectedBonuses,
-          mergeBonusMaps(defenseModifierBonusMap, state.manualReserveScenario.bonusMap),
+          mergeBonusMaps(baseScenarioBonusMap, state.manualReserveScenario.bonusMap),
+          mergeBonusMaps(baseWaveBonusMap, state.manualReserveScenario.bonusMap),
           state.manualReserveScenario.label,
-          attackModifiers
+          attackModifiers,
+          wallLevel,
+          simulationSettings.maxWaves
         )
       );
     }
@@ -1284,6 +1644,11 @@
       attackModifiers,
       defenseModifiers,
       reportAttackModifiers,
+      reportWallLevel,
+      simulationSettings: {
+        ...simulationSettings,
+        wallLevel,
+      },
       units,
       detectedBonuses,
       scenarios,
@@ -1307,6 +1672,8 @@
       const luckInput = panel.querySelector('[data-field="luck"]');
       const nightEnabledInput = panel.querySelector('[data-field="night-enabled"]');
       const nightPercentInput = panel.querySelector('[data-field="night-percent"]');
+      const wallLevelInput = panel.querySelector('[data-field="wall-level"]');
+      const maxWavesInput = panel.querySelector('[data-field="max-waves"]');
       const state = getState();
 
       state.attackModifiersOverride = normalizeAttackModifiers({
@@ -1316,6 +1683,10 @@
       state.defenseModifiers = normalizeDefenseModifiers({
         nightBonusEnabled: nightEnabledInput?.checked,
         nightBonusPercent: nightPercentInput?.value,
+      });
+      state.simulationSettings = normalizeSimulationSettings({
+        wallLevel: wallLevelInput?.value,
+        maxWaves: maxWavesInput?.value,
       });
       persistState();
       mountPanel();
@@ -1328,18 +1699,27 @@
         nightBonusEnabled: panel.querySelector('[data-field="night-enabled"]')?.checked,
         nightBonusPercent: panel.querySelector('[data-field="night-percent"]')?.value,
       });
+      state.simulationSettings = normalizeSimulationSettings({
+        wallLevel: null,
+        maxWaves: panel.querySelector('[data-field="max-waves"]')?.value,
+      });
       persistState();
+      mountPanel();
+    });
+
+    panel.querySelector('[data-action="reset-all"]')?.addEventListener("click", () => {
+      resetState();
       mountPanel();
     });
 
     panel
       .querySelectorAll(
-        '[data-field="morale"], [data-field="luck"], [data-field="night-percent"]'
+        '[data-field="morale"], [data-field="luck"], [data-field="night-percent"], [data-field="wall-level"], [data-field="max-waves"]'
       )
       .forEach((field) => {
-      field.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          panel.querySelector('[data-action="apply-modifiers"]')?.click();
+        field.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            panel.querySelector('[data-action="apply-modifiers"]')?.click();
         }
       });
     });
