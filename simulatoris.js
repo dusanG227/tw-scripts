@@ -1,7 +1,7 @@
 (() => {
   const CONFIG = {
     safetyMarginPercent: 5,
-    casualtyExponent: 1.5,
+    casualtyExponent: 1.35,
     catapultWallDamageFactor: 14.5,
     defaultAttackModifiers: {
       moralePercent: 100,
@@ -1088,7 +1088,7 @@
       const templateRams = Number(template.units?.ram || 0);
       const templateCatapults = Number(template.units?.catapult || 0);
       const preBattleWallLevel = calculatePreBattleWallLevel(startWallLevel, templateRams);
-      const battleBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(preBattleWallLevel));
+      const battleBonusMap = mergeBonusMaps(baseBonusMap, buildWallBonusMap(startWallLevel));
       const defense = calculateDefense(currentUnits, battleBonusMap);
       const templateResult = calculateTemplateResult(template, defense, attackModifiers);
 
