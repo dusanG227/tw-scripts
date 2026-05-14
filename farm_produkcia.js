@@ -159,16 +159,15 @@
       || "";
     const currentVillage = getCurrentVillageLabel(doc);
     const seenIds = new Set();
-    const rows = Array.from(doc.querySelectorAll("tr"));
+    const scopedRows = Array.from(doc.querySelectorAll("#commands_outgoings tr.command-row"));
+    const rows = scopedRows.length ? scopedRows : Array.from(doc.querySelectorAll("tr.command-row, tr"));
 
     for (const row of rows) {
-      const text = normalizeText(row.textContent || "");
-      const asciiText = toAsciiLower(text);
-
-      if (!asciiText.includes("navrat z dedina barbarov")) {
+      if (!isReturnFarmRow(row)) {
         continue;
       }
 
+      const text = normalizeText(row.textContent || "");
       const detailLink = findCommandDetailLink(row);
       const homeVillage = extractHomeVillageFromRow(row, currentVillage);
       const targetVillage = extractTargetVillageFromText(text);
@@ -209,6 +208,11 @@
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(rawHtml, "text/html");
+    const explicitRowLoot = extractLootFromDetailRows(doc);
+    if (explicitRowLoot) {
+      return explicitRowLoot;
+    }
+
     const containers = Array.from(doc.querySelectorAll("tr, td, th, div, span, table, li, p"));
 
     for (const container of containers) {
@@ -223,6 +227,51 @@
       const resources = parseStrictLootText(snippet);
       if (resources) {
         return resources;
+      }
+    }
+
+    const bodySnippet = extractLootOnlyText(doc.body ? doc.body.innerText || doc.body.textContent || "" : "");
+    if (bodySnippet) {
+      const resources = parseStrictLootText(bodySnippet);
+      if (resources) {
+        return resources;
+      }
+    }
+
+    return null;
+  }
+
+  function extractLootFromDetailRows(doc) {
+    const rows = Array.from(doc.querySelectorAll("tr"));
+    for (const row of rows) {
+      const cells = Array.from(row.querySelectorAll("th, td"));
+      if (!cells.length) {
+        continue;
+      }
+
+      const combined = normalizeText(row.textContent || "");
+      const firstCellText = normalizeText(cells[0].textContent || "");
+      if (!LOOT_LABEL_REGEX.test(firstCellText) && !LOOT_LABEL_REGEX.test(combined)) {
+        continue;
+      }
+
+      for (const cell of cells.slice(1)) {
+        const fromElement = extractResourcesFromElement(cell);
+        if (fromElement) {
+          return fromElement;
+        }
+
+        const lootText = extractLootOnlyText(cell.textContent || "") || normalizeText(cell.textContent || "");
+        const fromText = parseStrictLootText(lootText);
+        if (fromText) {
+          return fromText;
+        }
+      }
+
+      const rowLootText = extractLootOnlyText(combined) || combined;
+      const fromRowText = parseStrictLootText(rowLootText);
+      if (fromRowText) {
+        return fromRowText;
       }
     }
 
@@ -786,7 +835,31 @@
     return row.querySelector("a[href*='screen=info_command'][href*='id='], a[href*='info_command&id='], a[href*='screen=info_command']");
   }
 
+  function isReturnFarmRow(row) {
+    if (!row) {
+      return false;
+    }
+
+    const returnHover = row.querySelector(".command_hover_details[data-command-type='return']");
+    if (returnHover) {
+      return true;
+    }
+
+    const returnImage = row.querySelector("img[src*='return_farm']");
+    if (returnImage) {
+      return true;
+    }
+
+    const asciiText = toAsciiLower(row.textContent || "");
+    return asciiText.includes("navrat z dedina barbarov");
+  }
+
   function findLootTriggerElement(row) {
+    const exactTrigger = row.querySelector(".command_hover_details[data-command-type='return']");
+    if (exactTrigger) {
+      return exactTrigger;
+    }
+
     const candidates = [row, ...Array.from(row.querySelectorAll("img, a, span, td, div"))];
     let bestElement = null;
     let bestScore = 0;
