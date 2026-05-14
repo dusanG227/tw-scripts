@@ -170,28 +170,29 @@
       }
 
       const detailLink = findCommandDetailLink(row);
-      if (!detailLink) {
-        continue;
-      }
-
-      const commandId = extractCommandIdFromUrl(detailLink.href) || extractReportId(text);
-      if (!commandId || seenIds.has(commandId)) {
-        continue;
-      }
-
       const homeVillage = extractHomeVillageFromRow(row, currentVillage);
       const targetVillage = extractTargetVillageFromText(text);
       const arrivalText = extractArrivalTextFromRow(row);
       const inlineLoot = extractResourcesFromCommandRow(row);
+      const lootTriggerElement = findLootTriggerElement(row);
+      const commandId = extractCommandIdFromUrl(detailLink && detailLink.href)
+        || extractReportId(text)
+        || buildSyntheticCommandId(homeVillage, targetVillage, arrivalText, commands.length);
+
+      if (seenIds.has(commandId)) {
+        continue;
+      }
 
       commands.push({
         id: commandId,
         key: commandId,
-        detailUrl: new URL(detailLink.getAttribute("href"), baseUrl).href,
+        detailUrl: detailLink ? new URL(detailLink.getAttribute("href"), baseUrl).href : null,
         homeVillage,
         targetVillage,
         arrivalText,
         inlineLoot,
+        lootTriggerElement,
+        rowElement: row,
         rawText: text,
       });
 
@@ -785,6 +786,63 @@
     return row.querySelector("a[href*='screen=info_command'][href*='id='], a[href*='info_command&id='], a[href*='screen=info_command']");
   }
 
+  function findLootTriggerElement(row) {
+    const candidates = [row, ...Array.from(row.querySelectorAll("img, a, span, td, div"))];
+    let bestElement = null;
+    let bestScore = 0;
+
+    for (const candidate of candidates) {
+      const score = scoreLootTriggerElement(candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        bestElement = candidate;
+      }
+    }
+
+    return bestScore > 0 ? bestElement : row;
+  }
+
+  function scoreLootTriggerElement(element) {
+    if (!element) {
+      return 0;
+    }
+
+    const html = toAsciiLower((element.outerHTML || "").slice(0, 4000));
+    const text = toAsciiLower(element.textContent || "");
+    let score = 0;
+
+    if (/korist|loot|beute|lup/.test(html) || /korist|loot|beute|lup/.test(text)) {
+      score += 8;
+    }
+
+    if (/onmouseover|onmouseenter|overlib|tooltip/.test(html)) {
+      score += 6;
+    }
+
+    if (/wood|holz|stone|clay|lehm|iron|eisen|res/.test(html)) {
+      score += 4;
+    }
+
+    if (element.tagName === "IMG") {
+      score += 2;
+    }
+
+    if (/screen=info_command|info_command&id=/.test(html)) {
+      score -= 3;
+    }
+
+    return score;
+  }
+
+  function buildSyntheticCommandId(homeVillage, targetVillage, arrivalText, index) {
+    const base = [homeVillage, targetVillage, arrivalText, index + 1]
+      .map((value) => String(value || "").replace(/[^\w|]+/g, "_"))
+      .filter(Boolean)
+      .join("|");
+
+    return `row-${base || index + 1}`;
+  }
+
   function extractCommandIdFromUrl(url) {
     const match = String(url || "").match(/[?&]id=(\d{4,})/i);
     return match ? match[1] : null;
@@ -1190,6 +1248,7 @@
     const ROOT_ID = "tw-farm-tracker-root";
     const MAX_VISIBLE_COMMANDS = 50;
     const FETCH_CONCURRENCY = 4;
+    const HOVER_WAIT_MS = 90;
 
     const state = {
       currentVillage: core.getCurrentVillageLabel(document),
@@ -1201,6 +1260,7 @@
       refs: {},
       scanMeta: {
         inlineHits: 0,
+        hoverHits: 0,
         detailHits: 0,
         failed: 0,
       },
@@ -1516,13 +1576,14 @@
         state.currentRows = resolution.records;
         state.scanMeta = {
           inlineHits: resolution.inlineHits,
+          hoverHits: resolution.hoverHits,
           detailHits: resolution.detailHits,
           failed: resolution.failed,
         };
 
         const prefix = isAutomatic ? "Automaticky scan hotovy." : "Prepocet hotovy.";
         setStatus(
-          `${prefix} Navratov: ${resolution.records.length}, priamo z riadkov: ${resolution.inlineHits}, dotiahnute detailom: ${resolution.detailHits}, zlyhalo: ${resolution.failed}.`
+          `${prefix} Navratov: ${resolution.records.length}, z riadkov: ${resolution.inlineHits}, z tooltipu: ${resolution.hoverHits}, z detailu: ${resolution.detailHits}, zlyhalo: ${resolution.failed}.`
         );
       } catch (error) {
         console.error("Farm Tracker single-village scan failed", error);
@@ -1538,9 +1599,9 @@
       const records = [];
       const missing = [];
       let inlineHits = 0;
+      let hoverHits = 0;
       let detailHits = 0;
       let failed = 0;
-      let processed = 0;
 
       for (const command of commands) {
         if (isValidLoot(command.inlineLoot)) {
@@ -1549,11 +1610,25 @@
           continue;
         }
 
+        setStatus(`Citam tooltipy navratov... ${records.length + missing.length + 1}/${commands.length}`);
+        render();
+        const hoverLoot = await readLootFromHover(command);
+        if (isValidLoot(hoverLoot)) {
+          hoverHits += 1;
+          records.push(buildResolvedRecord(command, hoverLoot, "tooltip"));
+          continue;
+        }
+
         missing.push(command);
       }
 
+      let processed = 0;
       await runPool(missing, FETCH_CONCURRENCY, async (command) => {
         try {
+          if (!command.detailUrl) {
+            throw new Error(`Missing detail URL for command ${command.id}`);
+          }
+
           const html = await fetchCommandDetail(command.detailUrl);
           const resources = core.parseCommandDetailHtml(html);
           if (!isValidLoot(resources)) {
@@ -1578,6 +1653,7 @@
       return {
         records,
         inlineHits,
+        hoverHits,
         detailHits,
         failed,
       };
@@ -1594,6 +1670,111 @@
       }
 
       return response.text();
+    }
+
+    async function readLootFromHover(command) {
+      const trigger = command.lootTriggerElement || command.rowElement;
+      if (!trigger || !document.contains(trigger)) {
+        return null;
+      }
+
+      const tooltip = await revealTooltip(trigger);
+      const resources = tooltip ? parseTooltipResources(tooltip) : null;
+      hideTooltip(trigger);
+      return resources;
+    }
+
+    async function revealTooltip(trigger) {
+      dispatchPointerEvent(trigger, "mouseenter");
+      dispatchPointerEvent(trigger, "mouseover");
+      dispatchPointerEvent(trigger, "mousemove");
+      await delay(HOVER_WAIT_MS);
+      return findVisibleLootTooltip();
+    }
+
+    function hideTooltip(trigger) {
+      dispatchPointerEvent(trigger, "mouseout");
+      dispatchPointerEvent(trigger, "mouseleave");
+    }
+
+    function dispatchPointerEvent(element, type) {
+      const rect = typeof element.getBoundingClientRect === "function"
+        ? element.getBoundingClientRect()
+        : { left: 0, top: 0, width: 0, height: 0 };
+      const clientX = Math.round(rect.left + (rect.width / 2 || 1));
+      const clientY = Math.round(rect.top + (rect.height / 2 || 1));
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX,
+        clientY,
+      });
+
+      element.dispatchEvent(event);
+      const handlerName = `on${type}`;
+      if (typeof element[handlerName] === "function") {
+        try {
+          element[handlerName](event);
+        } catch (error) {
+          console.debug(`Farm Tracker pointer handler ${type} failed`, error);
+        }
+      }
+    }
+
+    function findVisibleLootTooltip() {
+      const explicitCandidates = Array.from(document.querySelectorAll("#tooltip, #overDiv, .tooltip, [role='tooltip']"));
+      const genericCandidates = Array.from(document.querySelectorAll("body div, body table, body td, body span"));
+      const candidates = explicitCandidates.length ? explicitCandidates : genericCandidates;
+
+      const viable = candidates.filter((element) => {
+        if (!element || element === state.root || (state.root && state.root.contains(element))) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        if (!style || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") === 0) {
+          return false;
+        }
+
+        const text = normalizeLooseText(element.innerText || element.textContent || "");
+        const html = String(element.innerHTML || "");
+        if (!/\d/.test(text)) {
+          return false;
+        }
+
+        return /(korist|loot|beute|lup)/i.test(text)
+          || /(korist|loot|beute|lup)/i.test(html)
+          || ((/wood|holz|stone|clay|lehm|iron|eisen/i.test(html)) && /\d/.test(text));
+      });
+
+      viable.sort((left, right) => {
+        const leftText = normalizeLooseText(left.innerText || left.textContent || "");
+        const rightText = normalizeLooseText(right.innerText || right.textContent || "");
+        return rightText.length - leftText.length;
+      });
+
+      return viable[0] || null;
+    }
+
+    function parseTooltipResources(tooltip) {
+      const html = tooltip.outerHTML || tooltip.innerHTML || "";
+      const text = normalizeLooseText(tooltip.innerText || tooltip.textContent || "");
+      return core.parseCommandDetailHtml(html)
+        || core.extractResources(text);
+    }
+
+    function normalizeLooseText(value) {
+      return String(value || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function delay(ms) {
+      return new Promise((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
     }
 
     function render() {
@@ -1617,6 +1798,7 @@
         makeSummaryCard("Zelezo", core.formatNumber(totals.iron), "Sucet zeleza"),
         makeSummaryCard("Spolu", core.formatNumber(totals.total), "Drevo + hlina + zelezo"),
         makeSummaryCard("Riadok", state.scanMeta.inlineHits, "Precitanie koristi priamo z tabulky"),
+        makeSummaryCard("Tooltip", state.scanMeta.hoverHits, "Precitanie koristi cez hover ikonky"),
         makeSummaryCard("Detail", state.scanMeta.detailHits, "Dopoctene z detailu prikazu"),
       ].join("");
     }
