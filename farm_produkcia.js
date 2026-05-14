@@ -34,6 +34,7 @@
   const FarmTrackerCore = {
     dedupeRecords,
     extractResources,
+    extractResourcesFromCommandRow,
     formatDateForFile,
     formatDateTime,
     formatNumber,
@@ -181,6 +182,7 @@
       const homeVillage = extractHomeVillageFromRow(row, currentVillage);
       const targetVillage = extractTargetVillageFromText(text);
       const arrivalText = extractArrivalTextFromRow(row);
+      const inlineLoot = extractResourcesFromCommandRow(row);
 
       commands.push({
         id: commandId,
@@ -189,6 +191,7 @@
         homeVillage,
         targetVillage,
         arrivalText,
+        inlineLoot,
         rawText: text,
       });
 
@@ -219,6 +222,40 @@
       const resources = parseStrictLootText(snippet);
       if (resources) {
         return resources;
+      }
+    }
+
+    return null;
+  }
+
+  function extractResourcesFromCommandRow(row) {
+    const directText = normalizeText(row.textContent || "");
+    const directLootText = extractLootOnlyText(directText);
+    if (directLootText) {
+      const fromDirectText = parseStrictLootText(directLootText);
+      if (fromDirectText) {
+        return fromDirectText;
+      }
+    }
+
+    const elements = [row, ...Array.from(row.querySelectorAll("*"))];
+    for (const element of elements) {
+      const attributeSnippet = extractLootSnippetFromElementAttributes(element);
+      if (!attributeSnippet) {
+        continue;
+      }
+
+      const fromAttribute = parseStrictLootText(attributeSnippet);
+      if (fromAttribute) {
+        return fromAttribute;
+      }
+    }
+
+    const htmlSnippet = extractLootSnippetFromHtml(row.outerHTML || "");
+    if (htmlSnippet) {
+      const fromHtml = parseStrictLootText(htmlSnippet);
+      if (fromHtml) {
+        return fromHtml;
       }
     }
 
@@ -945,12 +982,42 @@
     return match ? stripHtml(match[0]) : null;
   }
 
+  function extractLootSnippetFromElementAttributes(element) {
+    if (!element || !element.getAttributeNames) {
+      return null;
+    }
+
+    const values = element.getAttributeNames()
+      .map((name) => element.getAttribute(name))
+      .filter(Boolean);
+
+    for (const value of values) {
+      const decoded = decodeHtmlEntities(value);
+      const snippet = extractLootSnippetFromHtml(decoded);
+      if (snippet) {
+        return snippet;
+      }
+    }
+
+    return null;
+  }
+
   function stripHtml(raw) {
     return raw
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/gi, " ");
+  }
+
+  function decodeHtmlEntities(value) {
+    const container = globalScope.document ? globalScope.document.createElement("textarea") : null;
+    if (!container) {
+      return String(value || "");
+    }
+
+    container.innerHTML = String(value || "");
+    return container.value;
   }
 
   function normalizeText(value) {
@@ -1129,7 +1196,7 @@
   }
 
   function createApp(core) {
-    const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v5:${window.location.host}`;
+    const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v6:${window.location.host}`;
     const AUTO_SCAN_KEY = `tw-farm-tracker-autoscan-v1:${window.location.host}`;
     const ROOT_ID = "tw-farm-tracker-root";
     const MAX_VISIBLE_COMMANDS = 30;
@@ -1497,7 +1564,7 @@
           : "";
 
         setStatus(
-          `${prefix} Navratov: ${resolution.records.length}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.${paginationNote}`
+          `${prefix} Navratov: ${resolution.records.length}, priamo z riadkov: ${resolution.inlineHits}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.${paginationNote}`
         );
       } catch (error) {
         console.error("Farm Tracker scan failed", error);
@@ -1571,7 +1638,7 @@
         };
 
         setStatus(
-          `Plny scan hotovy. Stran: ${pages.length}, navratov: ${resolution.records.length}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.`
+          `Plny scan hotovy. Stran: ${pages.length}, navratov: ${resolution.records.length}, priamo z riadkov: ${resolution.inlineHits}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.`
         );
       } catch (error) {
         console.error("Farm Tracker all-pages scan failed", error);
@@ -1587,8 +1654,15 @@
       const records = [];
       const missing = [];
       let cacheHits = 0;
+      let inlineHits = 0;
 
       for (const command of commands) {
+        if (isValidCachedLoot(command.inlineLoot)) {
+          inlineHits += 1;
+          records.push(buildResolvedRecord(command, command.inlineLoot));
+          continue;
+        }
+
         const cached = state.cache[command.id];
         if (isValidCachedLoot(cached)) {
           cacheHits += 1;
@@ -1640,6 +1714,7 @@
 
       return {
         records,
+        inlineHits,
         cacheHits,
         fetched,
         failed,
