@@ -1100,8 +1100,10 @@
 (function bootFarmTrackerBookmarklet() {
   "use strict";
 
-  if (shouldRedirectToReturnPage()) {
-    redirectToReturnPage();
+  const AUTO_SCAN_KEY = `tw-farm-tracker-autoscan-single-v1:${window.location.host}`;
+
+  if (shouldRedirectToVillageOverview()) {
+    redirectToVillageOverview();
     return;
   }
 
@@ -1126,7 +1128,6 @@
   }
 
   const coreUrl = new URL("tracker-core.js", baseUrl).href;
-
   const existingCore = document.getElementById("tw-farm-tracker-core-loader");
   if (existingCore) {
     existingCore.addEventListener("load", () => start(window.FarmTrackerCore), { once: true });
@@ -1163,58 +1164,46 @@
     return candidates.find((script) => /(?:farm-tracker|bookmarklet)\.js/i.test(script.src)) || null;
   }
 
-  function shouldRedirectToReturnPage() {
+  function shouldRedirectToVillageOverview() {
     const url = new URL(window.location.href);
-    const isGamePage = /\/game\.php$/i.test(url.pathname);
-    const screen = url.searchParams.get("screen");
-    const mode = url.searchParams.get("mode");
-    const type = url.searchParams.get("type");
-
-    if (!isGamePage) {
+    if (!/\/game\.php$/i.test(url.pathname)) {
       return false;
     }
 
-    return !(screen === "overview_villages" && mode === "commands" && type === "return");
+    return url.searchParams.get("screen") !== "overview";
   }
 
-  function redirectToReturnPage() {
-    const targetUrl = buildReturnPageUrl();
-    window.location.assign(targetUrl.href);
-  }
-
-  function buildReturnPageUrl() {
+  function redirectToVillageOverview() {
     const url = new URL(window.location.href);
     url.pathname = url.pathname.replace(/\/+$/, "") || "/game.php";
-    url.searchParams.set("screen", "overview_villages");
-    url.searchParams.set("mode", "commands");
-    url.searchParams.set("type", "return");
-    url.searchParams.delete("try");
-    url.searchParams.delete("subtype");
-    url.searchParams.delete("view");
+    url.searchParams.set("screen", "overview");
+    url.searchParams.delete("mode");
+    url.searchParams.delete("type");
+    url.searchParams.delete("page");
     url.searchParams.delete("id");
-    return url;
+    url.searchParams.delete("try");
+    window.sessionStorage.setItem(AUTO_SCAN_KEY, "1");
+    window.location.assign(url.href);
   }
 
   function createApp(core) {
-    const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v6:${window.location.host}`;
-    const AUTO_SCAN_KEY = `tw-farm-tracker-autoscan-v1:${window.location.host}`;
     const ROOT_ID = "tw-farm-tracker-root";
-    const MAX_VISIBLE_COMMANDS = 30;
-    const FETCH_CONCURRENCY = 6;
+    const MAX_VISIBLE_COMMANDS = 50;
+    const FETCH_CONCURRENCY = 4;
 
     const state = {
-      cache: loadCache(),
+      currentVillage: core.getCurrentVillageLabel(document),
       currentRows: [],
-      lastSummary: [],
-      lastScanInfo: {
-        pages: 1,
-        mode: "current",
-      },
       status: "Pripraveny.",
       isScanning: false,
       root: null,
       shadowRoot: null,
       refs: {},
+      scanMeta: {
+        inlineHits: 0,
+        detailHits: 0,
+        failed: 0,
+      },
     };
 
     return {
@@ -1226,9 +1215,9 @@
       mount();
       render();
       if (consumePendingAutoScan()) {
-        scanCurrentView(true);
+        scanCurrentVillage(true);
       } else {
-        scanCurrentView(true);
+        scanCurrentVillage(true);
       }
     }
 
@@ -1268,7 +1257,7 @@
             position: fixed;
             right: 16px;
             bottom: 16px;
-            width: min(960px, calc(100vw - 24px));
+            width: min(980px, calc(100vw - 24px));
             max-height: calc(100vh - 24px);
             overflow: hidden;
             border-radius: 18px;
@@ -1377,6 +1366,10 @@
             line-height: 1.2;
           }
 
+          .muted {
+            color: #75583e;
+          }
+
           .section-title {
             margin: 0 0 8px;
             font-size: 14px;
@@ -1415,10 +1408,6 @@
             color: #6e563d;
           }
 
-          .muted {
-            color: #75583e;
-          }
-
           @media (max-width: 860px) {
             .summary {
               grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1452,47 +1441,28 @@
               <h2 class="title">Farm Tracker</h2>
               <button type="button" data-action="close" class="secondary">Zavriet</button>
             </div>
-            <p class="meta">Host: ${escapeHtml(window.location.host)} | Rezim: navraty z barbarov</p>
+            <p class="meta">Host: ${escapeHtml(window.location.host)} | Dedina: ${escapeHtml(state.currentVillage)} | Rezim: jedna dedina</p>
           </header>
           <div class="body">
             <div class="actions">
-              <button type="button" data-action="scan">Prepocitat navraty</button>
-              <button type="button" data-action="scan-all">Vsetky stranky</button>
+              <button type="button" data-action="scan">Prepocitat navraty tejto dediny</button>
               <button type="button" data-action="export" class="secondary">Export aktualneho skenu</button>
-              <button type="button" data-action="clear-cache" class="secondary">Vymazat cache detailov</button>
               <button type="button" data-action="close" class="danger">Zavriet</button>
             </div>
             <p class="status" data-role="status"></p>
             <div class="summary" data-role="summary"></div>
 
-            <h3 class="section-title">Rozpis po dedinach</h3>
+            <h3 class="section-title">Nacitane navraty z barbarov</h3>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Dedina</th>
-                    <th>Prikazy</th>
-                    <th>Drevo</th>
-                    <th>Hlina</th>
-                    <th>Zelezo</th>
-                    <th>Spolu</th>
-                  </tr>
-                </thead>
-                <tbody data-role="villages"></tbody>
-              </table>
-            </div>
-
-            <h3 class="section-title">Naposledy nacitane navraty</h3>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Domovska dedina</th>
                     <th>Barbarka</th>
                     <th>Cas navratu</th>
                     <th>Drevo</th>
                     <th>Hlina</th>
                     <th>Zelezo</th>
+                    <th>Zdroj</th>
                   </tr>
                 </thead>
                 <tbody data-role="rows"></tbody>
@@ -1504,16 +1474,13 @@
 
       state.refs.status = mountPoint.querySelector("[data-role='status']");
       state.refs.summary = mountPoint.querySelector("[data-role='summary']");
-      state.refs.villages = mountPoint.querySelector("[data-role='villages']");
       state.refs.rows = mountPoint.querySelector("[data-role='rows']");
 
       mountPoint.querySelectorAll("[data-action='close']").forEach((button) => {
         button.addEventListener("click", closePanel);
       });
-      mountPoint.querySelector("[data-action='scan']").addEventListener("click", () => scanCurrentView(false));
-      mountPoint.querySelector("[data-action='scan-all']").addEventListener("click", scanAllPages);
+      mountPoint.querySelector("[data-action='scan']").addEventListener("click", () => scanCurrentVillage(false));
       mountPoint.querySelector("[data-action='export']").addEventListener("click", exportData);
-      mountPoint.querySelector("[data-action='clear-cache']").addEventListener("click", clearCache);
     }
 
     function closePanel() {
@@ -1527,122 +1494,39 @@
       delete window.__TW_FARM_TRACKER_APP__;
     }
 
-    async function scanCurrentView(isAutomatic) {
+    async function scanCurrentVillage(isAutomatic) {
       if (state.isScanning) {
-        return;
-      }
-
-      const switchedToAll = ensureAllCommandsVisible();
-      if (switchedToAll) {
         return;
       }
 
       const commands = core.scanReturnCommands(document, { baseUrl: window.location.href });
       if (!commands.length) {
-        setStatus("Na tejto stranke som nenasiel navraty z barbarov. Otvor `Nahlady > Prikazy > Navrat` alebo prehlad dediny s vlastnymi prikazmi.");
+        setStatus("Na stranke tejto dediny som nenasiel `Navrat z Dedina barbarov`. Otvor prehlad dediny s tabulkou `Vlastne prikazy`.");
         render();
         return;
       }
 
       state.isScanning = true;
       toggleBusy(true);
-      setStatus(`Nasiel som ${commands.length} navratov. Nacitavam detaily koristi...`);
+      setStatus(`Nasiel som ${commands.length} navratov v dedine ${state.currentVillage}. Pocitam korist...`);
       render();
 
       try {
         const resolution = await resolveCommands(commands);
         state.currentRows = resolution.records;
-        state.lastSummary = core.summarizeByVillage(resolution.records);
-        state.lastScanInfo = {
-          pages: 1,
-          mode: "current",
+        state.scanMeta = {
+          inlineHits: resolution.inlineHits,
+          detailHits: resolution.detailHits,
+          failed: resolution.failed,
         };
 
         const prefix = isAutomatic ? "Automaticky scan hotovy." : "Prepocet hotovy.";
-        const paginationNote = hasVillagePagination(document) && !isCurrentPageShowingAll()
-          ? " Vidim strankovanie prehladu dedin, takze tento sucet je len z aktualne zobrazenej stranky. Ak chces, pouzi `Vsetky stranky`."
-          : "";
-
         setStatus(
-          `${prefix} Navratov: ${resolution.records.length}, priamo z riadkov: ${resolution.inlineHits}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.${paginationNote}`
+          `${prefix} Navratov: ${resolution.records.length}, priamo z riadkov: ${resolution.inlineHits}, dotiahnute detailom: ${resolution.detailHits}, zlyhalo: ${resolution.failed}.`
         );
       } catch (error) {
-        console.error("Farm Tracker scan failed", error);
-        setStatus("Nepodarilo sa dokoncit scan. Skus stranku obnovit a spustit bookmarklet este raz.");
-      } finally {
-        state.isScanning = false;
-        toggleBusy(false);
-        render();
-      }
-    }
-
-    async function scanAllPages() {
-      if (state.isScanning) {
-        return;
-      }
-
-      const switchedToAll = ensureAllCommandsVisible();
-      if (switchedToAll) {
-        return;
-      }
-
-      const currentCommands = core.scanReturnCommands(document, { baseUrl: window.location.href });
-      if (currentCommands.length > 0 && isCurrentPageShowingAll()) {
-        await scanCurrentView(false);
-        return;
-      }
-
-      const pages = discoverAllReturnPages(document);
-      if (!pages.length) {
-        setStatus("Nepodarilo sa zistit stranky prehladu navratov.");
-        render();
-        return;
-      }
-
-      if (pages.length === 1) {
-        await scanCurrentView(false);
-        return;
-      }
-
-      if (pages.length > 25) {
-        const confirmed = window.confirm(
-          `Nasiel som ${pages.length} stran navratov. Toto moze znamenat vela requestov na zoznamy aj detaily prikazov. Chces spustit plny scan vsetkych stran?`
-        );
-
-        if (!confirmed) {
-          return;
-        }
-      }
-
-      state.isScanning = true;
-      toggleBusy(true);
-      setStatus(`Pripravujem scan vsetkych stran... 1/${pages.length}`);
-      render();
-
-      try {
-        const commands = await collectCommandsFromPages(pages);
-        if (!commands.length) {
-          setStatus("Zo ziadnej stranky som nevytiahol navraty z barbarov.");
-          return;
-        }
-
-        setStatus(`Nasiel som ${commands.length} navratov na ${pages.length} stranach. Nacitavam detaily koristi...`);
-        render();
-
-        const resolution = await resolveCommands(commands);
-        state.currentRows = resolution.records;
-        state.lastSummary = core.summarizeByVillage(resolution.records);
-        state.lastScanInfo = {
-          pages: pages.length,
-          mode: "all",
-        };
-
-        setStatus(
-          `Plny scan hotovy. Stran: ${pages.length}, navratov: ${resolution.records.length}, priamo z riadkov: ${resolution.inlineHits}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.`
-        );
-      } catch (error) {
-        console.error("Farm Tracker all-pages scan failed", error);
-        setStatus("Nepodarilo sa dokoncit scan vsetkych stran. Skus to este raz alebo pouzi iba aktualnu stranku.");
+        console.error("Farm Tracker single-village scan failed", error);
+        setStatus("Nepodarilo sa dokoncit scan tejto dediny. Skus otvorit prehlad dediny a spustit bookmarklet este raz.");
       } finally {
         state.isScanning = false;
         toggleBusy(false);
@@ -1653,70 +1537,48 @@
     async function resolveCommands(commands) {
       const records = [];
       const missing = [];
-      let cacheHits = 0;
       let inlineHits = 0;
+      let detailHits = 0;
+      let failed = 0;
+      let processed = 0;
 
       for (const command of commands) {
-        if (isValidCachedLoot(command.inlineLoot)) {
+        if (isValidLoot(command.inlineLoot)) {
           inlineHits += 1;
-          records.push(buildResolvedRecord(command, command.inlineLoot));
-          continue;
-        }
-
-        const cached = state.cache[command.id];
-        if (isValidCachedLoot(cached)) {
-          cacheHits += 1;
-          records.push(buildResolvedRecord(command, cached));
+          records.push(buildResolvedRecord(command, command.inlineLoot, "riadok"));
           continue;
         }
 
         missing.push(command);
       }
 
-      let fetched = 0;
-      let failed = 0;
-      let processed = 0;
-
       await runPool(missing, FETCH_CONCURRENCY, async (command) => {
         try {
           const html = await fetchCommandDetail(command.detailUrl);
           const resources = core.parseCommandDetailHtml(html);
-          if (!resources) {
+          if (!isValidLoot(resources)) {
             throw new Error(`Missing loot for command ${command.id}`);
           }
 
-          const cacheEntry = {
-            id: command.id,
-            wood: resources.wood,
-            clay: resources.clay,
-            iron: resources.iron,
-            total: resources.wood + resources.clay + resources.iron,
-            cachedAt: new Date().toISOString(),
-          };
-
-          state.cache[command.id] = cacheEntry;
-          records.push(buildResolvedRecord(command, cacheEntry));
-          fetched += 1;
+          detailHits += 1;
+          records.push(buildResolvedRecord(command, resources, "detail"));
         } catch (error) {
           console.error(`Farm Tracker failed for command ${command.id}`, error);
           failed += 1;
         } finally {
           processed += 1;
           if (missing.length) {
-            setStatus(`Nacitavam detaily koristi... ${processed}/${missing.length}`);
+            setStatus(`Dopocitavam detail prikazov... ${processed}/${missing.length}`);
             render();
           }
         }
       });
 
-      persistCache();
-      records.sort(compareArrivalThenVillage);
-
+      records.sort(compareArrival);
       return {
         records,
         inlineHits,
-        cacheHits,
-        fetched,
+        detailHits,
         failed,
       };
     }
@@ -1734,7 +1596,50 @@
       return response.text();
     }
 
-    async function exportData() {
+    function render() {
+      if (!state.refs.status || !state.refs.summary || !state.refs.rows) {
+        return;
+      }
+
+      state.refs.status.textContent = state.status;
+      renderSummary();
+      renderRows();
+    }
+
+    function renderSummary() {
+      const totals = sumResolvedRows(state.currentRows);
+
+      state.refs.summary.innerHTML = [
+        makeSummaryCard("Dedina", state.currentVillage, "Aktualne otvorena dedina"),
+        makeSummaryCard("Prikazy", state.currentRows.length, "Nacitane navraty z barbarov"),
+        makeSummaryCard("Drevo", core.formatNumber(totals.wood), "Sucet dreva"),
+        makeSummaryCard("Hlina", core.formatNumber(totals.clay), "Sucet hliny"),
+        makeSummaryCard("Zelezo", core.formatNumber(totals.iron), "Sucet zeleza"),
+        makeSummaryCard("Spolu", core.formatNumber(totals.total), "Drevo + hlina + zelezo"),
+        makeSummaryCard("Riadok", state.scanMeta.inlineHits, "Precitanie koristi priamo z tabulky"),
+        makeSummaryCard("Detail", state.scanMeta.detailHits, "Dopoctene z detailu prikazu"),
+      ].join("");
+    }
+
+    function renderRows() {
+      if (!state.currentRows.length) {
+        state.refs.rows.innerHTML = `<tr><td colspan="6" class="empty">Zatial tu nie su ziadne nacitane navraty.</td></tr>`;
+        return;
+      }
+
+      state.refs.rows.innerHTML = state.currentRows.slice(0, MAX_VISIBLE_COMMANDS).map((row) => `
+        <tr>
+          <td>${escapeHtml(row.targetVillage || "Dedina barbarov")}</td>
+          <td>${escapeHtml(row.arrivalText || "-")}</td>
+          <td>${escapeHtml(core.formatNumber(row.wood))}</td>
+          <td>${escapeHtml(core.formatNumber(row.clay))}</td>
+          <td>${escapeHtml(core.formatNumber(row.iron))}</td>
+          <td>${escapeHtml(row.source || "-")}</td>
+        </tr>
+      `).join("");
+    }
+
+    function exportData() {
       if (!state.currentRows.length) {
         setStatus("Najprv sprav scan, potom je co exportovat.");
         render();
@@ -1744,12 +1649,13 @@
       const payload = {
         scannedAt: new Date().toISOString(),
         host: window.location.host,
+        village: state.currentVillage,
         sourceUrl: window.location.href,
-        villages: state.lastSummary,
+        meta: state.scanMeta,
         commands: state.currentRows,
       };
 
-      const filename = `farm-return-scan-${window.location.host.replace(/[^\w.-]+/g, "_")}-${core.formatDateForFile(new Date())}.json`;
+      const filename = `farm-single-village-${window.location.host.replace(/[^\w.-]+/g, "_")}-${core.formatDateForFile(new Date())}.json`;
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -1760,37 +1666,6 @@
 
       setStatus("Export aktualneho skenu je pripraveny.");
       render();
-    }
-
-    function clearCache() {
-      const confirmed = window.confirm("Naozaj chces vymazat lokalnu cache detailov prikazov?");
-      if (!confirmed) {
-        return;
-      }
-
-      state.cache = {};
-      persistCache();
-      setStatus("Cache detailov bola vymazana.");
-      render();
-    }
-
-    function loadCache() {
-      try {
-        const raw = window.localStorage.getItem(CACHE_STORAGE_KEY);
-        if (!raw) {
-          return {};
-        }
-
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : {};
-      } catch (error) {
-        console.error("Farm Tracker cache load failed", error);
-        return {};
-      }
-    }
-
-    function persistCache() {
-      window.localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(state.cache));
     }
 
     function setStatus(message) {
@@ -1805,88 +1680,33 @@
         return;
       }
 
-      state.shadowRoot.querySelectorAll("button[data-action='scan'], button[data-action='scan-all'], button[data-action='export'], button[data-action='clear-cache']")
+      state.shadowRoot.querySelectorAll("button[data-action='scan'], button[data-action='export']")
         .forEach((button) => {
           button.disabled = isBusy;
         });
     }
 
-    function render() {
-      if (!state.refs.status || !state.refs.summary || !state.refs.villages || !state.refs.rows) {
-        return;
-      }
-
-      state.refs.status.textContent = state.status;
-      renderSummary();
-      renderVillages();
-      renderRows();
+    function buildResolvedRecord(command, loot, source) {
+      return {
+        id: command.id,
+        key: command.id,
+        detailUrl: command.detailUrl,
+        homeVillage: command.homeVillage,
+        targetVillage: command.targetVillage,
+        arrivalText: command.arrivalText,
+        source,
+        wood: loot.wood || 0,
+        clay: loot.clay || 0,
+        iron: loot.iron || 0,
+        total: (loot.wood || 0) + (loot.clay || 0) + (loot.iron || 0),
+      };
     }
 
-    function renderSummary() {
-      const totals = sumResolvedRows(state.currentRows);
-      const villageCount = state.lastSummary.length;
-      const scanLabel = isCurrentPageShowingAll() && state.lastScanInfo.mode === "current"
-        ? "vsetko"
-        : state.lastScanInfo.mode === "all"
-        ? `${state.lastScanInfo.pages} stran`
-        : "1 strana";
-
-      state.refs.summary.innerHTML = [
-        makeSummaryCard("Prikazy", state.currentRows.length, "Naposledy nacitane navraty"),
-        makeSummaryCard("Dediny", villageCount, "Kolko vlastnych dedin prave dostava korist"),
-        makeSummaryCard("Drevo", core.formatNumber(totals.wood), "Sucet dreva"),
-        makeSummaryCard("Hlina", core.formatNumber(totals.clay), "Sucet hliny"),
-        makeSummaryCard("Zelezo", core.formatNumber(totals.iron), "Sucet zeleza"),
-        makeSummaryCard("Spolu", core.formatNumber(totals.total), "Drevo + hlina + zelezo"),
-        makeSummaryCard("Rozsah", scanLabel, "Kolko stran prehladu bolo zahrnutych"),
-        makeSummaryCard("Cache", core.formatNumber(Object.keys(state.cache).length), "Pocet ulozenych detailov prikazov"),
-      ].join("");
-    }
-
-    function renderVillages() {
-      if (!state.lastSummary.length) {
-        state.refs.villages.innerHTML = `<tr><td colspan="6" class="empty">Zatial tu nie je ziadny prepocitany navrat.</td></tr>`;
-        return;
-      }
-
-      state.refs.villages.innerHTML = state.lastSummary.map((entry) => `
-        <tr>
-          <td>${escapeHtml(entry.village)}</td>
-          <td>${entry.count}</td>
-          <td>${escapeHtml(core.formatNumber(entry.wood))}</td>
-          <td>${escapeHtml(core.formatNumber(entry.clay))}</td>
-          <td>${escapeHtml(core.formatNumber(entry.iron))}</td>
-          <td>${escapeHtml(core.formatNumber(entry.total))}</td>
-        </tr>
-      `).join("");
-    }
-
-    function renderRows() {
-      if (!state.currentRows.length) {
-        state.refs.rows.innerHTML = `<tr><td colspan="6" class="empty">Zatial tu nie su ziadne nacitane navraty.</td></tr>`;
-        return;
-      }
-
-      state.refs.rows.innerHTML = state.currentRows.slice(0, MAX_VISIBLE_COMMANDS).map((row) => `
-        <tr>
-          <td>${escapeHtml(row.homeVillage)}</td>
-          <td>${escapeHtml(row.targetVillage || "Dedina barbarov")}</td>
-          <td>${escapeHtml(row.arrivalText || "-")}</td>
-          <td>${escapeHtml(core.formatNumber(row.wood))}</td>
-          <td>${escapeHtml(core.formatNumber(row.clay))}</td>
-          <td>${escapeHtml(core.formatNumber(row.iron))}</td>
-        </tr>
-      `).join("");
-    }
-
-    function makeSummaryCard(title, value, note) {
-      return `
-        <article class="card">
-          <h3>${escapeHtml(title)}</h3>
-          <strong>${escapeHtml(String(value))}</strong>
-          <div class="muted">${escapeHtml(note)}</div>
-        </article>
-      `;
+    function isValidLoot(entry) {
+      return entry
+        && Number.isFinite(entry.wood)
+        && Number.isFinite(entry.clay)
+        && Number.isFinite(entry.iron);
     }
 
     function sumResolvedRows(rows) {
@@ -1899,279 +1719,18 @@
       }, { wood: 0, clay: 0, iron: 0, total: 0 });
     }
 
-    function buildResolvedRecord(command, loot) {
-      return {
-        id: command.id,
-        key: command.id,
-        detailUrl: command.detailUrl,
-        homeVillage: command.homeVillage,
-        targetVillage: command.targetVillage,
-        arrivalText: command.arrivalText,
-        wood: loot.wood || 0,
-        clay: loot.clay || 0,
-        iron: loot.iron || 0,
-        total: loot.total || ((loot.wood || 0) + (loot.clay || 0) + (loot.iron || 0)),
-      };
+    function compareArrival(left, right) {
+      return String(left.arrivalText || "").localeCompare(String(right.arrivalText || ""), "sk");
     }
 
-    function isValidCachedLoot(entry) {
-      return entry
-        && Number.isFinite(entry.wood)
-        && Number.isFinite(entry.clay)
-        && Number.isFinite(entry.iron);
-    }
-
-    function compareArrivalThenVillage(left, right) {
-      const arrivalCompare = String(left.arrivalText || "").localeCompare(String(right.arrivalText || ""), "sk");
-      if (arrivalCompare !== 0) {
-        return arrivalCompare;
-      }
-
-      return String(left.homeVillage || "").localeCompare(String(right.homeVillage || ""), "sk");
-    }
-
-    function hasVillagePagination(doc) {
-      return Boolean(doc.querySelector("a[href*='overview_villages'][href*='page=']"));
-    }
-
-    function ensureAllCommandsVisible() {
-      if (isCurrentPageShowingAll()) {
-        return false;
-      }
-
-      const select = findAllCommandsSelect();
-      if (!select) {
-        return false;
-      }
-
-      const targetOption = findAllOption(select);
-      if (!targetOption) {
-        return false;
-      }
-
-      persistPendingAutoScan();
-      setStatus("Prepinem prehlad na `vsetko`, aby som pocital z celeho zoznamu navratov...");
-      render();
-
-      select.value = targetOption.value;
-      targetOption.selected = true;
-      select.dispatchEvent(new Event("input", { bubbles: true }));
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-
-      const form = select.form || select.closest("form");
-      if (form) {
-        if (typeof form.requestSubmit === "function") {
-          form.requestSubmit();
-        } else {
-          form.submit();
-        }
-        return true;
-      }
-
-      const fallbackUrl = buildAllCommandsUrl(select, targetOption);
-      if (fallbackUrl) {
-        window.location.assign(fallbackUrl);
-        return true;
-      }
-
-      return false;
-    }
-
-    function isCurrentPageShowingAll() {
-      const select = findAllCommandsSelect();
-      if (!select) {
-        return false;
-      }
-
-      const selectedOption = select.options[select.selectedIndex];
-      if (!selectedOption) {
-        return false;
-      }
-
-      const selectedLabel = normalizeAscii(selectedOption.textContent || selectedOption.label || "");
-      const selectedValue = String(selectedOption.value || "").trim().toLowerCase();
-      return selectedLabel === "vsetko" || selectedValue === "-1" || selectedValue === "all" || selectedValue === "vsetko";
-    }
-
-    function findAllCommandsSelect() {
-      const selects = Array.from(document.querySelectorAll("select"));
-      return selects.find((select) => findAllOption(select));
-    }
-
-    function findAllOption(select) {
-      return Array.from(select.options).find((option) => {
-        const label = normalizeAscii(option.textContent || option.label || "");
-        const value = String(option.value || "").trim().toLowerCase();
-        return label === "vsetko" || value === "-1" || value === "all" || value === "vsetko";
-      }) || null;
-    }
-
-    function buildAllCommandsUrl(select, option) {
-      const url = new URL(window.location.href);
-      const fieldName = select.name || select.id;
-      if (!fieldName) {
-        return null;
-      }
-
-      url.searchParams.set(fieldName, option.value);
-      return url.href;
-    }
-
-    function persistPendingAutoScan() {
-      window.sessionStorage.setItem(AUTO_SCAN_KEY, "1");
-    }
-
-    function consumePendingAutoScan() {
-      const pending = window.sessionStorage.getItem(AUTO_SCAN_KEY) === "1";
-      if (pending) {
-        window.sessionStorage.removeItem(AUTO_SCAN_KEY);
-      }
-      return pending;
-    }
-
-    function discoverAllReturnPages(doc) {
-      const currentUrl = new URL(window.location.href);
-      const pageLinks = Array.from(doc.querySelectorAll("a[href*='screen=overview_villages'][href*='mode=commands'][href*='type=return']"));
-      const numberedLinks = pageLinks.map((link) => {
-        const label = parsePageNumber(link.textContent || "");
-        if (!label) {
-          return null;
-        }
-
-        const url = new URL(link.getAttribute("href"), currentUrl.href);
-        const rawParam = url.searchParams.get("page");
-        const param = rawParam !== null && /^-?\d+$/.test(rawParam) ? Number.parseInt(rawParam, 10) : null;
-        return {
-          label,
-          url: url.href,
-          param,
-        };
-      }).filter(Boolean);
-
-      const maxLabel = Math.max(1, ...numberedLinks.map((entry) => entry.label));
-      const knownPages = new Map();
-      knownPages.set(1, stripPageParam(currentUrl).href);
-
-      for (const entry of numberedLinks) {
-        knownPages.set(entry.label, entry.url);
-      }
-
-      const builder = makePageUrlBuilder(currentUrl, numberedLinks);
-      const pages = [];
-
-      for (let pageNumber = 1; pageNumber <= maxLabel; pageNumber += 1) {
-        const knownUrl = knownPages.get(pageNumber);
-        if (knownUrl) {
-          pages.push({ pageNumber, url: knownUrl, live: sameUrl(knownUrl, currentUrl.href) });
-          continue;
-        }
-
-        if (!builder) {
-          continue;
-        }
-
-        pages.push({ pageNumber, url: builder(pageNumber), live: false });
-      }
-
-      return dedupePages(pages).sort((left, right) => left.pageNumber - right.pageNumber);
-    }
-
-    function makePageUrlBuilder(currentUrl, numberedLinks) {
-      const samples = numberedLinks.filter((entry) => Number.isFinite(entry.param));
-      if (!samples.length) {
-        return null;
-      }
-
-      const sample = samples[samples.length - 1];
-      const offset = sample.param - sample.label;
-
-      return (pageNumber) => {
-        const url = new URL(currentUrl.href);
-        const paramValue = pageNumber + offset;
-
-        if (pageNumber === 1 && !currentUrl.searchParams.has("page") && offset <= -1) {
-          url.searchParams.delete("page");
-        } else {
-          url.searchParams.set("page", String(paramValue));
-        }
-
-        return url.href;
-      };
-    }
-
-    async function collectCommandsFromPages(pages) {
-      const commands = [];
-      const seenIds = new Set();
-
-      for (let index = 0; index < pages.length; index += 1) {
-        const page = pages[index];
-        setStatus(`Nacitavam zoznam navratov... ${index + 1}/${pages.length}`);
-        render();
-
-        let pageCommands = [];
-        if (page.live || sameUrl(page.url, window.location.href)) {
-          pageCommands = core.scanReturnCommands(document, { baseUrl: page.url });
-        } else {
-          const html = await fetchPageHtml(page.url);
-          const parsedDoc = parseHtmlDocument(html);
-          pageCommands = core.scanReturnCommands(parsedDoc, { baseUrl: page.url });
-        }
-
-        for (const command of pageCommands) {
-          if (seenIds.has(command.id)) {
-            continue;
-          }
-
-          commands.push(command);
-          seenIds.add(command.id);
-        }
-      }
-
-      return commands;
-    }
-
-    async function fetchPageHtml(url) {
-      const response = await window.fetch(url, {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      return response.text();
-    }
-
-    function parseHtmlDocument(html) {
-      return new DOMParser().parseFromString(html, "text/html");
-    }
-
-    function parsePageNumber(text) {
-      const match = String(text || "").match(/(\d{1,5})/);
-      return match ? Number.parseInt(match[1], 10) : null;
-    }
-
-    function stripPageParam(urlLike) {
-      const url = new URL(urlLike, window.location.href);
-      url.searchParams.delete("page");
-      return url;
-    }
-
-    function sameUrl(left, right) {
-      return new URL(left, window.location.href).href === new URL(right, window.location.href).href;
-    }
-
-    function dedupePages(pages) {
-      const seen = new Set();
-      return pages.filter((page) => {
-        if (!page || seen.has(page.url)) {
-          return false;
-        }
-
-        seen.add(page.url);
-        return true;
-      });
+    function makeSummaryCard(title, value, note) {
+      return `
+        <article class="card">
+          <h3>${escapeHtml(title)}</h3>
+          <strong>${escapeHtml(String(value))}</strong>
+          <div class="muted">${escapeHtml(note)}</div>
+        </article>
+      `;
     }
 
     async function runPool(items, concurrency, worker) {
@@ -2186,13 +1745,12 @@
       await Promise.all(workers);
     }
 
-    function normalizeAscii(value) {
-      return String(value || "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
+    function consumePendingAutoScan() {
+      const pending = window.sessionStorage.getItem(AUTO_SCAN_KEY) === "1";
+      if (pending) {
+        window.sessionStorage.removeItem(AUTO_SCAN_KEY);
+      }
+      return pending;
     }
   }
 
