@@ -1130,6 +1130,7 @@
 
   function createApp(core) {
     const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v5:${window.location.host}`;
+    const AUTO_SCAN_KEY = `tw-farm-tracker-autoscan-v1:${window.location.host}`;
     const ROOT_ID = "tw-farm-tracker-root";
     const MAX_VISIBLE_COMMANDS = 30;
     const FETCH_CONCURRENCY = 6;
@@ -1157,7 +1158,11 @@
     function init() {
       mount();
       render();
-      scanCurrentView(true);
+      if (consumePendingAutoScan()) {
+        scanCurrentView(true);
+      } else {
+        scanCurrentView(true);
+      }
     }
 
     function reopen() {
@@ -1460,6 +1465,11 @@
         return;
       }
 
+      const switchedToAll = ensureAllCommandsVisible();
+      if (switchedToAll) {
+        return;
+      }
+
       const commands = core.scanReturnCommands(document, { baseUrl: window.location.href });
       if (!commands.length) {
         setStatus("Na tejto stranke som nenasiel navraty z barbarov. Otvor `Nahlady > Prikazy > Navrat` alebo prehlad dediny s vlastnymi prikazmi.");
@@ -1482,7 +1492,7 @@
         };
 
         const prefix = isAutomatic ? "Automaticky scan hotovy." : "Prepocet hotovy.";
-        const paginationNote = hasVillagePagination(document)
+        const paginationNote = hasVillagePagination(document) && !isCurrentPageShowingAll()
           ? " Vidim strankovanie prehladu dedin, takze tento sucet je len z aktualne zobrazenej stranky. Ak chces, pouzi `Vsetky stranky`."
           : "";
 
@@ -1501,6 +1511,17 @@
 
     async function scanAllPages() {
       if (state.isScanning) {
+        return;
+      }
+
+      const switchedToAll = ensureAllCommandsVisible();
+      if (switchedToAll) {
+        return;
+      }
+
+      const currentCommands = core.scanReturnCommands(document, { baseUrl: window.location.href });
+      if (currentCommands.length > 0 && isCurrentPageShowingAll()) {
+        await scanCurrentView(false);
         return;
       }
 
@@ -1729,7 +1750,9 @@
     function renderSummary() {
       const totals = sumResolvedRows(state.currentRows);
       const villageCount = state.lastSummary.length;
-      const scanLabel = state.lastScanInfo.mode === "all"
+      const scanLabel = isCurrentPageShowingAll() && state.lastScanInfo.mode === "current"
+        ? "vsetko"
+        : state.lastScanInfo.mode === "all"
         ? `${state.lastScanInfo.pages} stran`
         : "1 strana";
 
@@ -1834,6 +1857,101 @@
 
     function hasVillagePagination(doc) {
       return Boolean(doc.querySelector("a[href*='overview_villages'][href*='page=']"));
+    }
+
+    function ensureAllCommandsVisible() {
+      if (isCurrentPageShowingAll()) {
+        return false;
+      }
+
+      const select = findAllCommandsSelect();
+      if (!select) {
+        return false;
+      }
+
+      const targetOption = findAllOption(select);
+      if (!targetOption) {
+        return false;
+      }
+
+      persistPendingAutoScan();
+      setStatus("Prepinem prehlad na `vsetko`, aby som pocital z celeho zoznamu navratov...");
+      render();
+
+      select.value = targetOption.value;
+      targetOption.selected = true;
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+
+      const form = select.form || select.closest("form");
+      if (form) {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        } else {
+          form.submit();
+        }
+        return true;
+      }
+
+      const fallbackUrl = buildAllCommandsUrl(select, targetOption);
+      if (fallbackUrl) {
+        window.location.assign(fallbackUrl);
+        return true;
+      }
+
+      return false;
+    }
+
+    function isCurrentPageShowingAll() {
+      const select = findAllCommandsSelect();
+      if (!select) {
+        return false;
+      }
+
+      const selectedOption = select.options[select.selectedIndex];
+      if (!selectedOption) {
+        return false;
+      }
+
+      const selectedLabel = normalizeAscii(selectedOption.textContent || selectedOption.label || "");
+      const selectedValue = String(selectedOption.value || "").trim().toLowerCase();
+      return selectedLabel === "vsetko" || selectedValue === "-1" || selectedValue === "all" || selectedValue === "vsetko";
+    }
+
+    function findAllCommandsSelect() {
+      const selects = Array.from(document.querySelectorAll("select"));
+      return selects.find((select) => findAllOption(select));
+    }
+
+    function findAllOption(select) {
+      return Array.from(select.options).find((option) => {
+        const label = normalizeAscii(option.textContent || option.label || "");
+        const value = String(option.value || "").trim().toLowerCase();
+        return label === "vsetko" || value === "-1" || value === "all" || value === "vsetko";
+      }) || null;
+    }
+
+    function buildAllCommandsUrl(select, option) {
+      const url = new URL(window.location.href);
+      const fieldName = select.name || select.id;
+      if (!fieldName) {
+        return null;
+      }
+
+      url.searchParams.set(fieldName, option.value);
+      return url.href;
+    }
+
+    function persistPendingAutoScan() {
+      window.sessionStorage.setItem(AUTO_SCAN_KEY, "1");
+    }
+
+    function consumePendingAutoScan() {
+      const pending = window.sessionStorage.getItem(AUTO_SCAN_KEY) === "1";
+      if (pending) {
+        window.sessionStorage.removeItem(AUTO_SCAN_KEY);
+      }
+      return pending;
     }
 
     function discoverAllReturnPages(doc) {
@@ -1991,6 +2109,15 @@
       });
 
       await Promise.all(workers);
+    }
+
+    function normalizeAscii(value) {
+      return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
     }
   }
 
