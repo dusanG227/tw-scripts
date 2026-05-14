@@ -11,6 +11,7 @@
     aborted: false,
     abortController: new AbortController(),
     loadingEl: null,
+    nextRequestAt: 0,
     selectorEl: null,
     panelEl: null,
     styleEl: null,
@@ -33,6 +34,8 @@
     warningHours: 8,
     soonHours: 12,
   };
+  const MAX_REQUESTS_PER_SECOND = 4;
+  const REQUEST_INTERVAL_MS = Math.ceil(1000 / MAX_REQUESTS_PER_SECOND);
 
   function normalizeText(value) {
     return String(value || '')
@@ -1328,10 +1331,23 @@
   }
 
   function getScanConcurrency() {
-    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 2 : 6;
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 2 : MAX_REQUESTS_PER_SECOND;
+  }
+
+  async function waitForRequestSlot() {
+    const now = Date.now();
+    const startAt = Math.max(state.nextRequestAt, now);
+    state.nextRequestAt = startAt + REQUEST_INTERVAL_MS;
+
+    const waitMs = startAt - now;
+    if (waitMs > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+    }
   }
 
   async function fetchClaimLock(village) {
+    await waitForRequestSlot();
+
     const response = await fetch(buildVillageInfoUrl(village.id), {
       credentials: 'same-origin',
       signal: state.abortController.signal,
