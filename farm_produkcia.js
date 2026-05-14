@@ -147,8 +147,13 @@
     return dedupeRecords(records);
   }
 
-  function scanReturnCommands(doc) {
+  function scanReturnCommands(doc, options = {}) {
     const commands = [];
+    const baseUrl = options.baseUrl
+      || (doc.location && doc.location.href)
+      || doc.baseURI
+      || (globalScope.location && globalScope.location.href)
+      || "";
     const currentVillage = getCurrentVillageLabel(doc);
     const seenIds = new Set();
     const rows = Array.from(doc.querySelectorAll("tr"));
@@ -178,7 +183,7 @@
       commands.push({
         id: commandId,
         key: commandId,
-        detailUrl: new URL(detailLink.getAttribute("href"), doc.location.href).href,
+        detailUrl: new URL(detailLink.getAttribute("href"), baseUrl).href,
         homeVillage,
         targetVillage,
         arrivalText,
@@ -989,17 +994,10 @@
 (function bootFarmTrackerBookmarklet() {
   "use strict";
 
-  const currentScript = document.currentScript || document.getElementById("tw-farm-tracker-loader");
-  const baseUrl = currentScript && currentScript.src
-    ? new URL(".", currentScript.src).href
-    : "";
-
-  if (!baseUrl) {
-    window.alert("Farm Tracker: nepodarilo sa zistit URL bookmarkletu.");
+  if (shouldRedirectToReturnPage()) {
+    redirectToReturnPage();
     return;
   }
-
-  const coreUrl = new URL("tracker-core.js", baseUrl).href;
 
   if (window.__TW_FARM_TRACKER_APP__ && typeof window.__TW_FARM_TRACKER_APP__.reopen === "function") {
     window.__TW_FARM_TRACKER_APP__.reopen();
@@ -1010,6 +1008,18 @@
     start(window.FarmTrackerCore);
     return;
   }
+
+  const currentScript = resolveCurrentScript();
+  const baseUrl = currentScript && currentScript.src
+    ? new URL(".", currentScript.src).href
+    : "";
+
+  if (!baseUrl) {
+    window.alert("Farm Tracker: nepodarilo sa zistit URL bookmarkletu.");
+    return;
+  }
+
+  const coreUrl = new URL("tracker-core.js", baseUrl).href;
 
   const existingCore = document.getElementById("tw-farm-tracker-core-loader");
   if (existingCore) {
@@ -1037,6 +1047,48 @@
     app.init();
   }
 
+  function resolveCurrentScript() {
+    const direct = document.currentScript || document.getElementById("tw-farm-tracker-loader");
+    if (direct && direct.src) {
+      return direct;
+    }
+
+    const candidates = Array.from(document.querySelectorAll("script[src]"));
+    return candidates.find((script) => /(?:farm-tracker|bookmarklet)\.js/i.test(script.src)) || null;
+  }
+
+  function shouldRedirectToReturnPage() {
+    const url = new URL(window.location.href);
+    const isGamePage = /\/game\.php$/i.test(url.pathname);
+    const screen = url.searchParams.get("screen");
+    const mode = url.searchParams.get("mode");
+    const type = url.searchParams.get("type");
+
+    if (!isGamePage) {
+      return false;
+    }
+
+    return !(screen === "overview_villages" && mode === "commands" && type === "return");
+  }
+
+  function redirectToReturnPage() {
+    const targetUrl = buildReturnPageUrl();
+    window.location.assign(targetUrl.href);
+  }
+
+  function buildReturnPageUrl() {
+    const url = new URL(window.location.href);
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/game.php";
+    url.searchParams.set("screen", "overview_villages");
+    url.searchParams.set("mode", "commands");
+    url.searchParams.set("type", "return");
+    url.searchParams.delete("try");
+    url.searchParams.delete("subtype");
+    url.searchParams.delete("view");
+    url.searchParams.delete("id");
+    return url;
+  }
+
   function createApp(core) {
     const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v4:${window.location.host}`;
     const ROOT_ID = "tw-farm-tracker-root";
@@ -1047,6 +1099,10 @@
       cache: loadCache(),
       currentRows: [],
       lastSummary: [],
+      lastScanInfo: {
+        pages: 1,
+        mode: "current",
+      },
       status: "Pripraveny.",
       isScanning: false,
       root: null,
@@ -1290,6 +1346,7 @@
           <div class="body">
             <div class="actions">
               <button type="button" data-action="scan">Prepocitat navraty</button>
+              <button type="button" data-action="scan-all">Vsetky stranky</button>
               <button type="button" data-action="export" class="secondary">Export aktualneho skenu</button>
               <button type="button" data-action="clear-cache" class="secondary">Vymazat cache detailov</button>
               <button type="button" data-action="close" class="danger">Zavriet</button>
@@ -1343,6 +1400,7 @@
         button.addEventListener("click", closePanel);
       });
       mountPoint.querySelector("[data-action='scan']").addEventListener("click", () => scanCurrentView(false));
+      mountPoint.querySelector("[data-action='scan-all']").addEventListener("click", scanAllPages);
       mountPoint.querySelector("[data-action='export']").addEventListener("click", exportData);
       mountPoint.querySelector("[data-action='clear-cache']").addEventListener("click", clearCache);
     }
@@ -1363,7 +1421,7 @@
         return;
       }
 
-      const commands = core.scanReturnCommands(document);
+      const commands = core.scanReturnCommands(document, { baseUrl: window.location.href });
       if (!commands.length) {
         setStatus("Na tejto stranke som nenasiel navraty z barbarov. Otvor `Nahlady > Prikazy > Navrat` alebo prehlad dediny s vlastnymi prikazmi.");
         render();
@@ -1379,10 +1437,14 @@
         const resolution = await resolveCommands(commands);
         state.currentRows = resolution.records;
         state.lastSummary = core.summarizeByVillage(resolution.records);
+        state.lastScanInfo = {
+          pages: 1,
+          mode: "current",
+        };
 
         const prefix = isAutomatic ? "Automaticky scan hotovy." : "Prepocet hotovy.";
         const paginationNote = hasVillagePagination(document)
-          ? " Vidim strankovanie prehladu dedin, takze sucet sa tyka len aktualne zobrazeneho zoznamu."
+          ? " Vidim strankovanie prehladu dedin, takze tento sucet je len z aktualne zobrazenej stranky. Ak chces, pouzi `Vsetky stranky`."
           : "";
 
         setStatus(
@@ -1391,6 +1453,69 @@
       } catch (error) {
         console.error("Farm Tracker scan failed", error);
         setStatus("Nepodarilo sa dokoncit scan. Skus stranku obnovit a spustit bookmarklet este raz.");
+      } finally {
+        state.isScanning = false;
+        toggleBusy(false);
+        render();
+      }
+    }
+
+    async function scanAllPages() {
+      if (state.isScanning) {
+        return;
+      }
+
+      const pages = discoverAllReturnPages(document);
+      if (!pages.length) {
+        setStatus("Nepodarilo sa zistit stranky prehladu navratov.");
+        render();
+        return;
+      }
+
+      if (pages.length === 1) {
+        await scanCurrentView(false);
+        return;
+      }
+
+      if (pages.length > 25) {
+        const confirmed = window.confirm(
+          `Nasiel som ${pages.length} stran navratov. Toto moze znamenat vela requestov na zoznamy aj detaily prikazov. Chces spustit plny scan vsetkych stran?`
+        );
+
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      state.isScanning = true;
+      toggleBusy(true);
+      setStatus(`Pripravujem scan vsetkych stran... 1/${pages.length}`);
+      render();
+
+      try {
+        const commands = await collectCommandsFromPages(pages);
+        if (!commands.length) {
+          setStatus("Zo ziadnej stranky som nevytiahol navraty z barbarov.");
+          return;
+        }
+
+        setStatus(`Nasiel som ${commands.length} navratov na ${pages.length} stranach. Nacitavam detaily koristi...`);
+        render();
+
+        const resolution = await resolveCommands(commands);
+        state.currentRows = resolution.records;
+        state.lastSummary = core.summarizeByVillage(resolution.records);
+        state.lastScanInfo = {
+          pages: pages.length,
+          mode: "all",
+        };
+
+        setStatus(
+          `Plny scan hotovy. Stran: ${pages.length}, navratov: ${resolution.records.length}, z cache: ${resolution.cacheHits}, dotiahnute detailom: ${resolution.fetched}, zlyhalo: ${resolution.failed}.`
+        );
+      } catch (error) {
+        console.error("Farm Tracker all-pages scan failed", error);
+        setStatus("Nepodarilo sa dokoncit scan vsetkych stran. Skus to este raz alebo pouzi iba aktualnu stranku.");
       } finally {
         state.isScanning = false;
         toggleBusy(false);
@@ -1545,7 +1670,7 @@
         return;
       }
 
-      state.shadowRoot.querySelectorAll("button[data-action='scan'], button[data-action='export'], button[data-action='clear-cache']")
+      state.shadowRoot.querySelectorAll("button[data-action='scan'], button[data-action='scan-all'], button[data-action='export'], button[data-action='clear-cache']")
         .forEach((button) => {
           button.disabled = isBusy;
         });
@@ -1565,11 +1690,15 @@
     function renderSummary() {
       const totals = sumResolvedRows(state.currentRows);
       const villageCount = state.lastSummary.length;
+      const scanLabel = state.lastScanInfo.mode === "all"
+        ? `${state.lastScanInfo.pages} stran`
+        : "1 strana";
 
       state.refs.summary.innerHTML = [
         makeSummaryCard("Prikazy", state.currentRows.length, "Naposledy nacitane navraty"),
         makeSummaryCard("Dediny", villageCount, "Kolko vlastnych dedin prave dostava korist"),
         makeSummaryCard("Suroviny spolu", core.formatNumber(totals.total), "Drevo + hlina + zelezo"),
+        makeSummaryCard("Rozsah", scanLabel, "Kolko stran prehladu bolo zahrnutych"),
         makeSummaryCard("Cache", core.formatNumber(Object.keys(state.cache).length), "Pocet ulozenych detailov prikazov"),
       ].join("");
     }
@@ -1663,6 +1792,151 @@
 
     function hasVillagePagination(doc) {
       return Boolean(doc.querySelector("a[href*='overview_villages'][href*='page=']"));
+    }
+
+    function discoverAllReturnPages(doc) {
+      const currentUrl = new URL(window.location.href);
+      const pageLinks = Array.from(doc.querySelectorAll("a[href*='screen=overview_villages'][href*='mode=commands'][href*='type=return']"));
+      const numberedLinks = pageLinks.map((link) => {
+        const label = parsePageNumber(link.textContent || "");
+        if (!label) {
+          return null;
+        }
+
+        const url = new URL(link.getAttribute("href"), currentUrl.href);
+        const rawParam = url.searchParams.get("page");
+        const param = rawParam !== null && /^-?\d+$/.test(rawParam) ? Number.parseInt(rawParam, 10) : null;
+        return {
+          label,
+          url: url.href,
+          param,
+        };
+      }).filter(Boolean);
+
+      const maxLabel = Math.max(1, ...numberedLinks.map((entry) => entry.label));
+      const knownPages = new Map();
+      knownPages.set(1, stripPageParam(currentUrl).href);
+
+      for (const entry of numberedLinks) {
+        knownPages.set(entry.label, entry.url);
+      }
+
+      const builder = makePageUrlBuilder(currentUrl, numberedLinks);
+      const pages = [];
+
+      for (let pageNumber = 1; pageNumber <= maxLabel; pageNumber += 1) {
+        const knownUrl = knownPages.get(pageNumber);
+        if (knownUrl) {
+          pages.push({ pageNumber, url: knownUrl, live: sameUrl(knownUrl, currentUrl.href) });
+          continue;
+        }
+
+        if (!builder) {
+          continue;
+        }
+
+        pages.push({ pageNumber, url: builder(pageNumber), live: false });
+      }
+
+      return dedupePages(pages).sort((left, right) => left.pageNumber - right.pageNumber);
+    }
+
+    function makePageUrlBuilder(currentUrl, numberedLinks) {
+      const samples = numberedLinks.filter((entry) => Number.isFinite(entry.param));
+      if (!samples.length) {
+        return null;
+      }
+
+      const sample = samples[samples.length - 1];
+      const offset = sample.param - sample.label;
+
+      return (pageNumber) => {
+        const url = new URL(currentUrl.href);
+        const paramValue = pageNumber + offset;
+
+        if (pageNumber === 1 && !currentUrl.searchParams.has("page") && offset <= -1) {
+          url.searchParams.delete("page");
+        } else {
+          url.searchParams.set("page", String(paramValue));
+        }
+
+        return url.href;
+      };
+    }
+
+    async function collectCommandsFromPages(pages) {
+      const commands = [];
+      const seenIds = new Set();
+
+      for (let index = 0; index < pages.length; index += 1) {
+        const page = pages[index];
+        setStatus(`Nacitavam zoznam navratov... ${index + 1}/${pages.length}`);
+        render();
+
+        let pageCommands = [];
+        if (page.live || sameUrl(page.url, window.location.href)) {
+          pageCommands = core.scanReturnCommands(document, { baseUrl: page.url });
+        } else {
+          const html = await fetchPageHtml(page.url);
+          const parsedDoc = parseHtmlDocument(html);
+          pageCommands = core.scanReturnCommands(parsedDoc, { baseUrl: page.url });
+        }
+
+        for (const command of pageCommands) {
+          if (seenIds.has(command.id)) {
+            continue;
+          }
+
+          commands.push(command);
+          seenIds.add(command.id);
+        }
+      }
+
+      return commands;
+    }
+
+    async function fetchPageHtml(url) {
+      const response = await window.fetch(url, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return response.text();
+    }
+
+    function parseHtmlDocument(html) {
+      return new DOMParser().parseFromString(html, "text/html");
+    }
+
+    function parsePageNumber(text) {
+      const match = String(text || "").match(/(\d{1,5})/);
+      return match ? Number.parseInt(match[1], 10) : null;
+    }
+
+    function stripPageParam(urlLike) {
+      const url = new URL(urlLike, window.location.href);
+      url.searchParams.delete("page");
+      return url;
+    }
+
+    function sameUrl(left, right) {
+      return new URL(left, window.location.href).href === new URL(right, window.location.href).href;
+    }
+
+    function dedupePages(pages) {
+      const seen = new Set();
+      return pages.filter((page) => {
+        if (!page || seen.has(page.url)) {
+          return false;
+        }
+
+        seen.add(page.url);
+        return true;
+      });
     }
 
     async function runPool(items, concurrency, worker) {
