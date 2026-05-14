@@ -28,6 +28,8 @@
       "img[src*='eisen']",
     ],
   };
+  const LOOT_LABEL_REGEX = /(korist|lup|loot|haul|beute)/i;
+  const NUMBER_GROUP_REGEX = /\d{1,3}(?:[ .,'\u00a0]\d{3})*|\d+/g;
 
   const FarmTrackerCore = {
     dedupeRecords,
@@ -203,43 +205,24 @@
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(rawHtml, "text/html");
-    const hintRegex = createLootHintRegex();
-    const candidates = [];
+    const containers = Array.from(doc.querySelectorAll("tr, td, th, div, span, table, li, p"));
 
-    for (const element of Array.from(doc.querySelectorAll("tr, td, th, div, span, table"))) {
-      const text = normalizeText(element.textContent || "");
-      if (!text || text.length > 260) {
-        continue;
-      }
-
-      if (!hintRegex.test(text)) {
-        continue;
-      }
-
-      candidates.push(text);
-    }
-
-    for (const candidate of candidates) {
-      const resources = extractResources(candidate);
+    for (const container of containers) {
+      const resources = extractLootFromElement(container);
       if (resources) {
         return resources;
       }
     }
 
-    const bodyText = normalizeText(doc.body ? doc.body.textContent : "");
-    if (!bodyText) {
-      return null;
-    }
-
-    const lootChunkMatch = bodyText.match(/(?:korist|loot|lup|haul|beute)[\s\S]{0,160}/i);
-    if (lootChunkMatch) {
-      const resources = extractResources(lootChunkMatch[0]);
+    const snippet = extractLootSnippetFromHtml(rawHtml);
+    if (snippet) {
+      const resources = parseStrictLootText(snippet);
       if (resources) {
         return resources;
       }
     }
 
-    return extractResources(bodyText);
+    return null;
   }
 
   function summarizeByVillage(records) {
@@ -507,6 +490,24 @@
     }
 
     return { wood, clay, iron };
+  }
+
+  function extractLootFromElement(element) {
+    const text = normalizeText(element.textContent || "");
+    if (!text || text.length > 320 || !LOOT_LABEL_REGEX.test(text)) {
+      return null;
+    }
+
+    const lootOnlyText = extractLootOnlyText(text);
+    if (lootOnlyText) {
+      const fromText = parseStrictLootText(lootOnlyText);
+      if (fromText) {
+        return fromText;
+      }
+    }
+
+    const fromIcons = extractResourcesFromElement(element);
+    return fromIcons || null;
   }
 
   function readResourceValueFromElement(element, selectors) {
@@ -906,6 +907,44 @@
     return text.replace(createDateRegex("g"), " ");
   }
 
+  function extractLootOnlyText(text) {
+    const match = normalizeText(text).match(/(?:korist|lup|loot|haul|beute)\s*:?\s*([\s\S]{0,120})/i);
+    return match ? normalizeText(match[1]) : null;
+  }
+
+  function parseStrictLootText(text) {
+    const normalized = normalizeText(text)
+      .replace(/\(\d{1,3}\|\d{1,3}\)/g, " ")
+      .replace(/\bK\d{1,3}\b/gi, " ")
+      .replace(/(?:drevo|wood|holz|hlina|clay|stone|lehm|zelezo|iron|eisen|korist|lup|loot|haul|beute)/gi, " ")
+      .replace(/[:=|]/g, " ")
+      .trim();
+
+    const numberMatches = normalized.match(NUMBER_GROUP_REGEX) || [];
+    if (numberMatches.length < 3) {
+      return null;
+    }
+
+    const parsedNumbers = numberMatches
+      .slice(0, 3)
+      .map(parseWholeNumber);
+
+    if (!parsedNumbers.every((value) => Number.isFinite(value))) {
+      return null;
+    }
+
+    return {
+      wood: parsedNumbers[0],
+      clay: parsedNumbers[1],
+      iron: parsedNumbers[2],
+    };
+  }
+
+  function extractLootSnippetFromHtml(rawHtml) {
+    const match = String(rawHtml).match(/(?:korist|lup|loot|haul|beute)(?:.|\n|\r){0,180}/i);
+    return match ? stripHtml(match[0]) : null;
+  }
+
   function stripHtml(raw) {
     return raw
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -1090,7 +1129,7 @@
   }
 
   function createApp(core) {
-    const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v4:${window.location.host}`;
+    const CACHE_STORAGE_KEY = `tw-farm-tracker-cache-v5:${window.location.host}`;
     const ROOT_ID = "tw-farm-tracker-root";
     const MAX_VISIBLE_COMMANDS = 30;
     const FETCH_CONCURRENCY = 6;
@@ -1697,7 +1736,10 @@
       state.refs.summary.innerHTML = [
         makeSummaryCard("Prikazy", state.currentRows.length, "Naposledy nacitane navraty"),
         makeSummaryCard("Dediny", villageCount, "Kolko vlastnych dedin prave dostava korist"),
-        makeSummaryCard("Suroviny spolu", core.formatNumber(totals.total), "Drevo + hlina + zelezo"),
+        makeSummaryCard("Drevo", core.formatNumber(totals.wood), "Sucet dreva"),
+        makeSummaryCard("Hlina", core.formatNumber(totals.clay), "Sucet hliny"),
+        makeSummaryCard("Zelezo", core.formatNumber(totals.iron), "Sucet zeleza"),
+        makeSummaryCard("Spolu", core.formatNumber(totals.total), "Drevo + hlina + zelezo"),
         makeSummaryCard("Rozsah", scanLabel, "Kolko stran prehladu bolo zahrnutych"),
         makeSummaryCard("Cache", core.formatNumber(Object.keys(state.cache).length), "Pocet ulozenych detailov prikazov"),
       ].join("");
