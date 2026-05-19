@@ -21,6 +21,7 @@
     targets: [],
     queue: [],
     queueIndex: 0,
+    duplicateTargets: 0,
     skippedTargets: 0,
     isLaunching: false,
     message: "Pripraveny.",
@@ -122,9 +123,11 @@
     const matches = String(text || "").match(/\d{3}\|\d{3}/g) || [];
     const seen = new Set();
     const result = [];
+    let duplicateTargets = 0;
 
     for (const item of matches) {
       if (seen.has(item)) {
+        duplicateTargets += 1;
         continue;
       }
 
@@ -133,7 +136,10 @@
       result.push({ x, y, key: item });
     }
 
-    return result;
+    return {
+      targets: result,
+      duplicateTargets,
+    };
   }
 
   function parseVillagesFromCombined() {
@@ -245,8 +251,10 @@
 
   function rebuildQueue() {
     state.villages = parseVillagesFromCombined();
-    state.targets = parseTargets(state.targetsText);
+    const parsedTargets = parseTargets(state.targetsText);
+    state.targets = parsedTargets.targets;
     state.queueIndex = 0;
+    state.duplicateTargets = parsedTargets.duplicateTargets;
     state.skippedTargets = 0;
 
     if (!state.villages.length) {
@@ -554,7 +562,7 @@
             <div class="tw-barb-spy-stat">Ciele<strong>${targetsCount}</strong></div>
             <div class="tw-barb-spy-stat">Queue / zostava<strong>${queueCount} / ${remaining}</strong></div>
           </div>
-          <p class="tw-barb-spy-message">${escapeHtml(state.message)}${state.skippedTargets ? ` Bez spehov ostalo ${state.skippedTargets} cielov.` : ""}</p>
+          <p class="tw-barb-spy-message">${escapeHtml(state.message)}${state.duplicateTargets ? ` Duplicitnych coordov preskocenych: ${state.duplicateTargets}.` : ""}${state.skippedTargets ? ` Bez spehov ostalo ${state.skippedTargets} cielov.` : ""}</p>
           <div class="tw-barb-spy-actions">
             <button type="button" class="tw-barb-spy-primary" id="tw-barb-open-batch" ${state.isLaunching || !remaining ? "disabled" : ""}>${primaryLabel}</button>
             <button type="button" class="tw-barb-spy-secondary" id="tw-barb-set-targets">Vlozit ciele</button>
