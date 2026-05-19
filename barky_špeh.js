@@ -5,6 +5,8 @@
   const PANEL_ID = "tw-barb-spy-panel";
   const STYLE_ID = "tw-barb-spy-style";
   const STORAGE_KEY = `tw-barb-spy-launcher-v1:${window.location.host}`;
+  const CLOSE_MESSAGE_TYPE = "tw-barb-spy-close-tab";
+  const WINDOW_NAME_PREFIX = "twBarbSpyClose:";
   const DEFAULT_BATCH_SIZE = 8;
   const DEFAULT_OPEN_DELAY_MS = 120;
 
@@ -12,6 +14,13 @@
     window[APP_KEY].reopen();
     return;
   }
+
+  const app = window[APP_KEY] = {
+    openedTabs: {},
+    closeListenerBound: false,
+    reopen,
+    destroy,
+  };
 
   const state = {
     targetsText: "",
@@ -27,11 +36,6 @@
     message: "Pripraveny.",
   };
 
-  window[APP_KEY] = {
-    reopen,
-    destroy,
-  };
-
   if (!isCombinedOverview()) {
     window.alert("Otvor Kombinovane dediny (overview_villages&mode=combined) a spusti bookmarklet znova.");
     return;
@@ -39,6 +43,7 @@
 
   hydrateState();
   rebuildQueue();
+  bindCloseListener();
   mount();
   render();
 
@@ -332,6 +337,42 @@
     return `/game.php?${params.toString()}`;
   }
 
+  function bindCloseListener() {
+    if (app.closeListenerBound) {
+      return;
+    }
+
+    window.addEventListener("message", function(event) {
+      const data = event && event.data;
+      const closeToken = data && data.token;
+      const targetWindow = closeToken ? app.openedTabs[closeToken] : null;
+
+      if (!data || data.type !== CLOSE_MESSAGE_TYPE || !closeToken) {
+        return;
+      }
+
+      if (targetWindow && !targetWindow.closed) {
+        try {
+          targetWindow.close();
+        } catch (error) {
+          console.warn("[TW-BarbSpy] Nepodarilo sa zavriet child tab.", error);
+        }
+      }
+
+      delete app.openedTabs[closeToken];
+    });
+
+    app.closeListenerBound = true;
+  }
+
+  function createCloseToken(index) {
+    return [
+      Date.now(),
+      index,
+      Math.random().toString(36).slice(2, 10)
+    ].join("-");
+  }
+
   function openNextBatch() {
     if (state.isLaunching) {
       return;
@@ -356,7 +397,25 @@
     state.message = `Otvram ${batch.length} tabov...`;
     render();
 
-    const openedWindows = batch.map(() => window.open("about:blank", "_blank"));
+    const batchEntries = batch.map((attack, index) => ({
+      attack,
+      closeToken: createCloseToken(index)
+    }));
+    const openedWindows = batchEntries.map((entry) => {
+      const childWindow = window.open("about:blank", "_blank");
+
+      if (childWindow) {
+        try {
+          childWindow.name = WINDOW_NAME_PREFIX + entry.closeToken;
+        } catch (error) {
+          console.warn("[TW-BarbSpy] Nepodarilo sa nastavit meno tabu.", error);
+        }
+
+        app.openedTabs[entry.closeToken] = childWindow;
+      }
+
+      return childWindow;
+    });
     if (openedWindows.every((entry) => !entry)) {
       state.isLaunching = false;
       state.queueIndex -= batch.length;
@@ -367,7 +426,8 @@
 
     batch.forEach((attack, index) => {
       window.setTimeout(() => {
-        const url = buildAttackUrl(attack);
+        const batchEntry = batchEntries[index];
+        const url = buildAttackUrl(batchEntry.attack);
         const targetWindow = openedWindows[index];
 
         if (targetWindow) {
