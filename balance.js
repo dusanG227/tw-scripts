@@ -24,6 +24,8 @@ var links = [];
 var cleanLinks = [];
 var stillShortage = [];
 var stillExcess = [];
+var availableGroupOptions = [];
+var excludedSourceVillageIds = {};
 
 
 
@@ -51,6 +53,8 @@ function init() {
     cleanLinks = [];
     stillShortage = [];
     stillExcess = [];
+    availableGroupOptions = mergeGroupOptions([], parseGroupOptionsFromContext($(document)));
+    excludedSourceVillageIds = {};
 }
 
 function cleanup() {
@@ -69,6 +73,8 @@ function cleanup() {
     merchantOrders = [];
     links = [];
     cleanLinks = [];
+    availableGroupOptions = mergeGroupOptions([], parseGroupOptionsFromContext($(document)));
+    excludedSourceVillageIds = {};
 }
 
 
@@ -883,10 +889,43 @@ function clampSetting(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
+function parseNumericIdList(rawValue) {
+    var sourceValue = rawValue;
+    if (Array.isArray(sourceValue)) {
+        sourceValue = sourceValue.join(" ");
+    }
+    else if (typeof sourceValue != "string") {
+        sourceValue = "";
+    }
+    var ids = [];
+    var seen = {};
+    var parts = sourceValue.split(/[\s,;|]+/);
+    for (var i = 0; i < parts.length; i++) {
+        var part = parts[i].trim();
+        if (!/^\d+$/.test(part) || seen[part]) {
+            continue;
+        }
+        seen[part] = true;
+        ids.push(part);
+    }
+    return ids;
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function normaliseSettings(rawSettings) {
     var settingsToNormalise = rawSettings || {};
     var equalizePercentage = parseFloatSetting(settingsToNormalise.equalizePercentage, parseFloatSetting(settingsToNormalise.needsMorePercentage, 0.85));
     var frontierPercentage = parseFloatSetting(settingsToNormalise.frontierPercentage, 0.95);
+    var excludedSourceGroupIds = parseNumericIdList(settingsToNormalise.excludedSourceGroupIds);
+    var excludedSourceGroupIdsManual = parseNumericIdList(settingsToNormalise.excludedSourceGroupIdsManual);
 
     var normalisedSettings = {
         "equalizePercentage": clampSetting(equalizePercentage, 0.1, 1),
@@ -895,7 +934,8 @@ function normaliseSettings(rawSettings) {
         "reserveWood": Math.max(0, parseIntegerSetting(settingsToNormalise.reserveWood, 90692)),
         "reserveStone": Math.max(0, parseIntegerSetting(settingsToNormalise.reserveStone, 125517)),
         "reserveIron": Math.max(0, parseIntegerSetting(settingsToNormalise.reserveIron, 48331)),
-        "frontierVillages": typeof settingsToNormalise.frontierVillages == "string" ? settingsToNormalise.frontierVillages.trim() : ""
+        "frontierVillages": typeof settingsToNormalise.frontierVillages == "string" ? settingsToNormalise.frontierVillages.trim() : "",
+        "excludedSourceGroupIds": parseNumericIdList(excludedSourceGroupIds.concat(excludedSourceGroupIdsManual)).join(" ")
     };
 
     if (normalisedSettings.frontierPercentage < normalisedSettings.equalizePercentage) {
@@ -940,6 +980,141 @@ function villageIsFrontier(village, frontierLookup) {
     return frontierLookup.ids[String(village.id)] === true || frontierLookup.coords[getVillageCoordString(village)] === true;
 }
 
+function extractGroupIdFromElement($element) {
+    var href = $element.attr("href") || "";
+    var parentHref = $element.parent().attr("href") || "";
+    var closestHref = $element.closest("a").attr("href") || "";
+    var value = $element.attr("value") || "";
+    var dataGroupId = $element.attr("data-group-id") || $element.data("groupId") || "";
+    var closestDataGroupId = $element.closest("[data-group-id]").attr("data-group-id") || "";
+    var candidates = [href, parentHref, closestHref, value, dataGroupId, closestDataGroupId];
+    for (var i = 0; i < candidates.length; i++) {
+        var candidate = String(candidates[i] || "");
+        var match = candidate.match(/(?:^|[?&])(group|group_id)=(-?\d+)/);
+        if (match && match[2] && match[2] !== "0") {
+            return match[2];
+        }
+        if (/^\d+$/.test(candidate) && candidate !== "0") {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+function parseGroupOptionsFromContext($context) {
+    var groups = [];
+    var seen = {};
+    var selectors = [
+        "strong.group-menu-item",
+        ".group-menu-item",
+        "a[href*='group=']",
+        "a[href*='group_id=']",
+        "option[value*='group=']",
+        "option[data-group-id]"
+    ];
+    $context.find(selectors.join(",")).each(function () {
+        var $element = $(this);
+        var groupId = extractGroupIdFromElement($element);
+        var label = ($element.text() || "").replace(/\s+/g, " ").trim();
+        if (!groupId || !label || seen[groupId]) {
+            return;
+        }
+        if (/^(all|combined|filter|manage groups)$/i.test(label)) {
+            return;
+        }
+        seen[groupId] = true;
+        groups.push({
+            id: groupId,
+            name: label
+        });
+    });
+    return groups;
+}
+
+function mergeGroupOptions(currentOptions, newOptions) {
+    var merged = [];
+    var seen = {};
+    var allOptions = (currentOptions || []).concat(newOptions || []);
+    for (var i = 0; i < allOptions.length; i++) {
+        var option = allOptions[i];
+        if (!option || !option.id || seen[option.id]) {
+            continue;
+        }
+        seen[option.id] = true;
+        merged.push(option);
+    }
+    merged.sort(function (left, right) {
+        return left.name.localeCompare(right.name);
+    });
+    return merged;
+}
+
+function renderExcludedSourceGroupsHtml() {
+    var selectedGroups = parseNumericIdList(settings.excludedSourceGroupIds);
+    var selectedLookup = {};
+    var checkboxHtml = "";
+    for (var i = 0; i < selectedGroups.length; i++) {
+        selectedLookup[selectedGroups[i]] = true;
+    }
+    if (availableGroupOptions.length > 0) {
+        for (var j = 0; j < availableGroupOptions.length; j++) {
+            var option = availableGroupOptions[j];
+            var isChecked = selectedLookup[option.id] ? " checked" : "";
+            checkboxHtml += `<label class="item-padded" style="display:block"><input type="checkbox" name="excludedSourceGroupIds" value="${option.id}"${isChecked}> ${escapeHtml(option.name)} (${option.id})</label>`;
+        }
+    }
+    else {
+        checkboxHtml = `<div class="item-padded">No group menu detected automatically. You can still enter group IDs manually below.</div>`;
+    }
+
+    return `<tr>
+        <td style="padding: 6px; vertical-align: top;">
+        <label for="excludedSourceGroupIdsManual">Blocked source groups</label></td><td style="padding: 6px;">
+        <div style="max-height: 130px; overflow-y: auto; border: 1px solid #999; padding: 4px; margin-bottom: 6px;">${checkboxHtml}</div>
+        <textarea name="excludedSourceGroupIdsManual" rows="2" style="width: 280px;">${settings.excludedSourceGroupIds}</textarea><br>
+        <font size="1">Checked or entered group IDs will not send resources out, but those villages can still receive.</font></td></tr>`;
+}
+
+function loadExcludedSourceVillages(callback) {
+    excludedSourceVillageIds = {};
+    var selectedGroups = parseNumericIdList(settings.excludedSourceGroupIds);
+    if (selectedGroups.length === 0) {
+        callback();
+        return;
+    }
+
+    var currentGroupIndex = 0;
+    function loadNextGroup() {
+        if (currentGroupIndex >= selectedGroups.length) {
+            callback();
+            return;
+        }
+        var groupId = selectedGroups[currentGroupIndex];
+        currentGroupIndex++;
+        $.get(URLProd + "group=" + encodeURIComponent(groupId), function () {
+            console.log("Loaded source-blocked group " + groupId);
+        })
+            .done(function (page) {
+                var $page = $(page);
+                availableGroupOptions = mergeGroupOptions(availableGroupOptions, parseGroupOptionsFromContext($page));
+                $page.find(".quickedit-vn").each(function () {
+                    var villageId = this.dataset && this.dataset.id ? this.dataset.id : $(this).data("id");
+                    if (villageId) {
+                        excludedSourceVillageIds[String(villageId)] = true;
+                    }
+                });
+            })
+            .fail(function () {
+                console.log("Failed to load blocked source group " + groupId);
+            })
+            .always(function () {
+                loadNextGroup();
+            });
+    }
+
+    loadNextGroup();
+}
+
 //setting base settings if no player defined ones are present
 var storedSettings = {};
 if (localStorage.getItem("settingsWHBalancerSophie") != null) {
@@ -947,6 +1122,7 @@ if (localStorage.getItem("settingsWHBalancerSophie") != null) {
 }
 var settings = normaliseSettings(storedSettings);
 localStorage.setItem("settingsWHBalancerSophie", JSON.stringify(settings));
+availableGroupOptions = mergeGroupOptions(availableGroupOptions, parseGroupOptionsFromContext($(document)));
 
 // if (settings.isMinting == true) {
 //     settings = {
@@ -1086,6 +1262,8 @@ function displayEverything() {
                 })
                     .done(function (page) {
                         testPage = page;
+                        availableGroupOptions = mergeGroupOptions(availableGroupOptions, parseGroupOptionsFromContext($(page)));
+                        loadExcludedSourceVillages(function () {
                         //again, make the difference between mobile or desktop. Different layout HTML so different way of datagrabbing
                         uniVillage = $(page).find("span.bonus_icon_33");
                         if (uniVillage.length > 0) {
@@ -1216,8 +1394,10 @@ function displayEverything() {
                         ironAverage = Math.floor(totalIron / warehouseCapacity.length);
 
 
-                        frontierLookup = parseFrontierVillages(settings.frontierVillages);
-                        frontierVillageCount = 0;
+                        var frontierLookup = parseFrontierVillages(settings.frontierVillages);
+                        var selectedBlockedGroupIds = parseNumericIdList(settings.excludedSourceGroupIds);
+                        var blockedSourceVillageCount = Object.keys(excludedSourceVillageIds).length;
+                        var frontierVillageCount = 0;
                         for (let i = 0; i < villagesData.length; i++) {
                             if (villageIsFrontier(villagesData[i], frontierLookup)) {
                                 frontierVillageCount++;
@@ -1288,6 +1468,11 @@ function displayEverything() {
                     <td>Protected clay reserve: ${numberWithCommas(settings.reserveStone)}</td>
                     <td>Protected iron reserve: ${numberWithCommas(settings.reserveIron)}</td>
                     </tr>
+                    <tr class='sophRowB'>
+                    <td>Blocked source groups: ${selectedBlockedGroupIds.length}</td>
+                    <td>Blocked source villages found: ${blockedSourceVillageCount}</td>
+                    <td>Excluded groups never send out</td>
+                    </tr>
                     </table>`;
 
                         $(".content-border").eq(0).prepend(`
@@ -1320,7 +1505,9 @@ function displayEverything() {
                             villageWarehouseCapacity = parseInt(villagesData[v].warehouseCapacity);
                             villagePointsCurrent = parseInt(villagesData[v].points);
                             thisVillageIsFrontier = villageIsFrontier(villagesData[v], frontierLookup);
-                            thisVillageIsDonor = villagePointsCurrent >= settings.donorMinPoints;
+                            thisVillageIsBlockedSource = excludedSourceVillageIds[String(villagesData[v].id)] === true;
+                            thisVillageCanDonateByPoints = villagePointsCurrent >= settings.donorMinPoints;
+                            thisVillageIsDonor = thisVillageCanDonateByPoints && !thisVillageIsBlockedSource;
                             if (typeof incomingRes[villagesData[v].id] == "undefined") {
                                 //no incoming res to this village
                                 incomingWood = 0;
@@ -1347,7 +1534,7 @@ function displayEverything() {
                                 defaultIronTarget = Math.max(defaultIronTarget, Math.round(villageWarehouseCapacity * settings.frontierPercentage));
                             }
 
-                            if (!thisVillageIsDonor) {
+                            if (!thisVillageCanDonateByPoints) {
                                 defaultWoodTarget = Math.max(defaultWoodTarget, Math.min(settings.reserveWood, villageWarehouseCapacity));
                                 defaultStoneTarget = Math.max(defaultStoneTarget, Math.min(settings.reserveStone, villageWarehouseCapacity));
                                 defaultIronTarget = Math.max(defaultIronTarget, Math.min(settings.reserveIron, villageWarehouseCapacity));
@@ -1370,7 +1557,12 @@ function displayEverything() {
                                 tempIron = Math.max(tempIron, Math.round((incomingIron + currentIron) - villageWarehouseCapacity));
                             }
 
-                            if (!thisVillageIsDonor) {
+                            if (thisVillageIsBlockedSource) {
+                                tempWood = Math.min(tempWood, 0);
+                                tempStone = Math.min(tempStone, 0);
+                                tempIron = Math.min(tempIron, 0);
+                            }
+                            else if (!thisVillageCanDonateByPoints) {
                                 overflowWood = Math.max(0, Math.round((incomingWood + currentWood) - villageWarehouseCapacity));
                                 overflowStone = Math.max(0, Math.round((incomingStone + currentStone) - villageWarehouseCapacity));
                                 overflowIron = Math.max(0, Math.round((incomingIron + currentIron) - villageWarehouseCapacity));
@@ -1395,7 +1587,7 @@ function displayEverything() {
 
 
 
-                            console.log("Village: " + villagesData[v].name + '\n' + "                    Frontier: " + thisVillageIsFrontier + '\n' + "                    Donor eligible: " + thisVillageIsDonor + '\n' + "                    Warehouse capacity: " + villageWarehouseCapacity + '\n' + "                    Targets (wood/clay/iron): " + defaultWoodTarget + "/" + defaultStoneTarget + "/" + defaultIronTarget + '\n' + "                    Wood: " + currentWood + '\n' + "                    Clay: " + currentStone + '\n' + "                    Iron: " + currentIron);
+                            console.log("Village: " + villagesData[v].name + '\n' + "                    Frontier: " + thisVillageIsFrontier + '\n' + "                    Source blocked by group: " + thisVillageIsBlockedSource + '\n' + "                    Donor eligible by points: " + thisVillageCanDonateByPoints + '\n' + "                    Warehouse capacity: " + villageWarehouseCapacity + '\n' + "                    Targets (wood/clay/iron): " + defaultWoodTarget + "/" + defaultStoneTarget + "/" + defaultIronTarget + '\n' + "                    Wood: " + currentWood + '\n' + "                    Clay: " + currentStone + '\n' + "                    Iron: " + currentIron);
                             console.log("Woodadjustement: " + tempWood + ", clayadjustement: " + tempStone + ", ironadjustement: " + tempIron);
 
 
@@ -1607,10 +1799,11 @@ function displayEverything() {
                         $("#progress").remove();
                         //assigned all merchants
 
+                        var excludedSourceGroupsHtml = renderExcludedSourceGroupsHtml();
                         htmlCode = `<div id="restart">${totalsAndAverages}</div>
                 <div id="sendResources" class="flex-container sophHeader" style="position: relative">
                     <button class="sophRowA collapsible" style="width: 250px;min-width: 230px;">Open settings menu</button>
-                    <div class="content submenu" style="width: 540px;height:560px;z-index:99999">
+                    <div class="content submenu" style="width: 540px;height:690px;z-index:99999">
                         <form id="settings">
                             <table style="border-spacing: 2px;">
                             <tr>
@@ -1641,6 +1834,7 @@ function displayEverything() {
                             <td style="padding: 6px; vertical-align: top;">
                             <label for="frontierVillages">Frontier villages</label></td><td style="padding: 6px;"><textarea name="frontierVillages" rows="4" style="width: 280px;">${settings.frontierVillages}</textarea><br>
                             <font size="1">Use village IDs or coordinates, separated by spaces, commas or new lines. Example: 512|487 513|488 123456</font></td></tr>
+                            ${excludedSourceGroupsHtml}
                             <tr>
                             <td style="padding: 6px;">
                             <input type="button" class="btn evt-confirm-btn btn-confirm-yes" value="Save" onclick="saveSettings();"/></td></tr>
@@ -1682,6 +1876,7 @@ function displayEverything() {
                         sliderChange('frontierPercentage', settings.frontierPercentage);
                         makeThingsCollapsible();
                         createList();
+                        });
                     })
 
                     .fail(function () {
@@ -1921,7 +2116,15 @@ function saveSettings() {
     var tempArray = $("#settings").serializeArray();
     var rawSettings = {};
     for (let i = 0; i < tempArray.length; i++) {
-        rawSettings[tempArray[i].name] = tempArray[i].value;
+        if (typeof rawSettings[tempArray[i].name] == "undefined") {
+            rawSettings[tempArray[i].name] = tempArray[i].value;
+        }
+        else if (Array.isArray(rawSettings[tempArray[i].name])) {
+            rawSettings[tempArray[i].name].push(tempArray[i].value);
+        }
+        else {
+            rawSettings[tempArray[i].name] = [rawSettings[tempArray[i].name], tempArray[i].value];
+        }
     }
     settings = normaliseSettings(rawSettings);
     localStorage.setItem("settingsWHBalancerSophie", JSON.stringify(settings));
