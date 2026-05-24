@@ -5,17 +5,17 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.7.1-nearest-off-icons
+ * Version: v1.8.0-overview-units
  * Last Updated: 2026-05-25
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
  * Mod: JawJaw
- * Local Fix: Codex (nearest off village targeting by icons)
+ * Local Fix: Codex (nearest source village by available units)
  */
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.7.1-nearest-off-icons',
+    version: 'v1.8.0-overview-units',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -39,12 +39,6 @@ if (typeof UNITS_TO_SEND === 'undefined')
         10: '&spy=1&light=6&ram=2&catapult=15',
         '?': '&spy=1&light=6&ram=2&catapult=15',
     };
-// Villages with these icon fragments are treated as valid sources.
-if (typeof SOURCE_VILLAGE_ICON_FILTERS === 'undefined')
-    SOURCE_VILLAGE_ICON_FILTERS = ['unit_axe', 'unit_light'];
-// Name fallback used only if icon detection finds nothing.
-if (typeof SOURCE_VILLAGE_NAME_FILTERS === 'undefined')
-    SOURCE_VILLAGE_NAME_FILTERS = ['off hranica', 'off'];
 
 // Globals
 var ALLOWED_GAME_SCREENS = ['map']; // list of game screens where script can be executed
@@ -55,7 +49,6 @@ if ('TWMap' in window) mapOverlay = TWMap;
 
 // Data Store Config
 var STORAGE_KEY = 'RA_CBW_STORE'; // key for sessionStorage
-var OWN_VILLAGES_STORAGE_KEY = 'RA_CBW_OWN_VILLAGES_BY_ICON';
 var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
@@ -82,6 +75,8 @@ var translations = {
         Distance: 'Distance',
         'Source Village': 'Source Village',
         'Source Distance': 'Source Distance',
+        'Planned Attacks': 'Planned Attacks',
+        'Rams Left': 'Rams Left',
         Wall: 'Wall',
         'Last Attack Time': 'Last Attack Time',
         Actions: 'Actions',
@@ -478,7 +473,11 @@ function buildBarbsTable(villages, maxBarbsToShow) {
                   sourceVillage.name
               )} (${sourceVillage.coord})</a><br><small>${tt(
                   'Source Distance'
-              )}: ${formatDistanceValue(sourceDistance)}</small>`
+              )}: ${formatDistanceValue(sourceDistance)}</small><br><small>${tt(
+                  'Planned Attacks'
+              )}: ${sourceVillage.plannedCommands} | ${tt(
+                  'Rams Left'
+              )}: ${getVillageUnitAmount(sourceVillage.units, 'ram')}</small>`
             : `<span style="color:red;">${tt('No source village')}</span>`;
         const actionHtml = commandUrl
             ? `<a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_blank" rel="noopener noreferrer">${tt(
@@ -618,15 +617,27 @@ function getFABarbarians(rows) {
 }
 
 function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
+    // Plan against a mutable copy so one village cannot "spend" the same rams twice.
+    const plannedSourceVillages = cloneSourceVillages(sourceVillages);
+
     return barbarians.map((barbarian) => {
-        const sourceVillage = getNearestSourceVillage(
+        const commandUnits = parseCommandUnits(calculateUnitsToSend(barbarian.wall));
+        const sourceVillage = getNearestAvailableSourceVillage(
             barbarian.coord,
-            sourceVillages
+            plannedSourceVillages,
+            commandUnits
         );
+
+        if (sourceVillage) {
+            consumeVillageUnits(sourceVillage.units, commandUnits);
+            sourceVillage.plannedCommands += 1;
+        }
 
         return {
             ...barbarian,
-            sourceVillage: sourceVillage,
+            sourceVillage: sourceVillage
+                ? createSourceVillageSnapshot(sourceVillage)
+                : null,
             sourceDistance: sourceVillage
                 ? calculateDistanceBetweenCoords(
                       barbarian.coord,
@@ -638,26 +649,7 @@ function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
 }
 
 async function fetchOwnSourceVillages() {
-    const cachedVillages = readOwnVillagesStorage();
-    if (cachedVillages.length) {
-        return cachedVillages;
-    }
-
-    let ownVillages = [];
-
-    try {
-        ownVillages = await fetchOwnSourceVillagesFromOverview();
-    } catch (error) {
-        console.warn(`${scriptInfo()} Source village overview fetch failed:`, error);
-    }
-
-    if (!ownVillages.length) {
-        ownVillages = await fetchOwnSourceVillagesFromMapFileByName();
-    }
-
-    writeOwnVillagesStorage(ownVillages);
-
-    return ownVillages;
+    return dedupeSourceVillages(await fetchOwnSourceVillagesFromOverview());
 }
 
 async function fetchOwnSourceVillagesFromOverview() {
@@ -710,42 +702,115 @@ function extractOverviewPageUrls(html, firstPageUrl) {
 
 function parseSourceVillagesFromOverviewHtml(html) {
     const htmlDoc = parseHtml(html);
+    const combinedTable = htmlDoc.querySelector('#combined_table');
 
-    return Array.from(htmlDoc.querySelectorAll('.quickedit-vn[data-id]'))
-        .map((villageNameElement) =>
-            parseSourceVillageFromOverviewRow(villageNameElement)
-        )
+    if (!combinedTable) {
+        return [];
+    }
+
+    const unitColumnMap = getCombinedOverviewUnitColumnMap(combinedTable);
+
+    return Array.from(combinedTable.querySelectorAll('tr'))
+        .map((row) => parseSourceVillageFromOverviewRow(row, unitColumnMap))
         .filter(Boolean);
 }
 
-function parseSourceVillageFromOverviewRow(villageNameElement) {
+function getCombinedOverviewUnitColumnMap(combinedTable) {
+    const headerRow = Array.from(combinedTable.querySelectorAll('tr')).find(
+        (row) => row.querySelector('th img[src*="unit_"]')
+    );
+    const unitColumnMap = {};
+
+    if (!headerRow) {
+        return unitColumnMap;
+    }
+
+    // Match each unit icon in the combined overview header to the row cell index below it.
+    Array.from(headerRow.children).forEach((cell, index) => {
+        const unitName = extractUnitNameFromHeaderCell(cell);
+        if (unitName) {
+            unitColumnMap[index] = unitName;
+        }
+    });
+
+    return unitColumnMap;
+}
+
+function extractUnitNameFromHeaderCell(cell) {
+    const unitImage = cell.querySelector('img[src*="unit_"]');
+
+    if (!unitImage) {
+        return null;
+    }
+
+    return extractUnitName(
+        [
+            unitImage.getAttribute('src'),
+            unitImage.getAttribute('title'),
+            unitImage.getAttribute('alt'),
+            unitImage.getAttribute('id'),
+        ]
+            .filter(Boolean)
+            .join(' ')
+    );
+}
+
+function extractUnitName(value) {
+    const match = String(value || '').match(/unit_([a-z_]+)\.(png|webp|gif)/i);
+    if (match) {
+        return match[1];
+    }
+
+    const normalizedValue = String(value || '').toLowerCase();
+    const knownUnits = [
+        'spear',
+        'sword',
+        'axe',
+        'archer',
+        'spy',
+        'light',
+        'marcher',
+        'heavy',
+        'ram',
+        'catapult',
+        'knight',
+        'snob',
+        'militia',
+    ];
+
+    return knownUnits.find((unitName) => normalizedValue.includes(unitName)) || null;
+}
+
+function parseSourceVillageFromOverviewRow(row, unitColumnMap) {
+    const villageNameElement = row.querySelector('.quickedit-vn[data-id]');
+    const villageLabelElement = villageNameElement
+        ? villageNameElement.querySelector('.quickedit-label') ||
+          villageNameElement
+        : null;
+
+    if (!villageNameElement) {
+        return null;
+    }
+
     const villageId = parseInt(
         villageNameElement.getAttribute('data-id'),
         10
     );
     const villageCell = villageNameElement.closest('td');
-    const villageRow = villageNameElement.closest('tr');
     const villageText = villageCell
         ? villageCell.textContent
-        : villageRow
-        ? villageRow.textContent
+        : row
+        ? row.textContent
         : '';
     const coordMatch = villageText.match(COORDS_REGEX);
     const coord = coordMatch ? coordMatch[0] : null;
     const villageName =
-        String(villageNameElement.textContent || '').trim() ||
+        String(villageLabelElement ? villageLabelElement.textContent : '').trim() ||
         villageText.replace(COORDS_REGEX, '').replace(/\s+/g, ' ').trim();
-    let sourceType = getAllowedSourceVillageType(
-        getSourceVillageIconTokens(villageCell || villageRow)
-    );
-    if (!sourceType && villageRow) {
-        sourceType = getAllowedSourceVillageType(
-            getSourceVillageIconTokens(villageRow)
-        );
-    }
     const point = parseCoord(coord);
+    const units = extractVillageUnitsFromRow(row, unitColumnMap);
 
-    if (!villageId || !coord || !point || !sourceType) {
+    if (!villageId || !coord || !point) {
         return null;
     }
 
@@ -755,47 +820,28 @@ function parseSourceVillageFromOverviewRow(villageNameElement) {
         x: point.x,
         y: point.y,
         coord: coord,
-        sourceType: sourceType,
+        units: units,
+        plannedCommands: 0,
     };
 }
 
-function getSourceVillageIconTokens(container) {
-    if (!container) return [];
+function extractVillageUnitsFromRow(row, unitColumnMap) {
+    const cells = Array.from(row.children);
+    const units = {};
 
-    return Array.from(container.querySelectorAll('img'))
-        .map((image) => {
-            return [
-                image.getAttribute('src'),
-                image.getAttribute('title'),
-                image.getAttribute('alt'),
-                image.getAttribute('class'),
-                image.getAttribute('data-title'),
-            ]
-                .filter(Boolean)
-                .join(' ');
-        })
-        .concat([container.innerHTML || ''])
-        .map((value) => normalizeText(value));
+    Object.entries(unitColumnMap).forEach(([cellIndex, unitName]) => {
+        const cell = cells[parseInt(cellIndex, 10)];
+        units[unitName] = extractUnitAmountFromCell(cell);
+    });
+
+    return units;
 }
 
-function getAllowedSourceVillageType(iconTokens) {
-    if (
-        iconTokens.some((token) =>
-            token.includes(normalizeText(SOURCE_VILLAGE_ICON_FILTERS[0]))
-        )
-    ) {
-        return 'off';
-    }
+function extractUnitAmountFromCell(cell) {
+    if (!cell) return 0;
 
-    if (
-        iconTokens.some((token) =>
-            token.includes(normalizeText(SOURCE_VILLAGE_ICON_FILTERS[1]))
-        )
-    ) {
-        return 'off-border';
-    }
-
-    return null;
+    const normalizedAmount = String(cell.textContent || '').replace(/[^\d]/g, '');
+    return normalizedAmount ? parseInt(normalizedAmount, 10) : 0;
 }
 
 function dedupeSourceVillages(villages) {
@@ -813,97 +859,46 @@ function parseHtml(html) {
     return new DOMParser().parseFromString(html, 'text/html');
 }
 
-async function fetchOwnSourceVillagesFromMapFileByName() {
-    const response = await fetch(`${window.location.origin}/map/village.txt`, {
-        credentials: 'same-origin',
+function cloneSourceVillages(sourceVillages) {
+    return sourceVillages.map((sourceVillage) => {
+        return {
+            ...sourceVillage,
+            units: { ...sourceVillage.units },
+            plannedCommands: 0,
+        };
+    });
+}
+
+function parseCommandUnits(unitsToSend) {
+    const commandParams = new URLSearchParams(
+        String(unitsToSend || '').replace(/^&/, '')
+    );
+    const commandUnits = {};
+
+    commandParams.forEach((amount, unitName) => {
+        const parsedAmount = parseInt(amount, 10);
+
+        if (!Number.isNaN(parsedAmount) && parsedAmount > 0) {
+            commandUnits[unitName] = parsedAmount;
+        }
     });
 
-    if (!response.ok) {
-        throw new Error(`Village map request failed with ${response.status}`);
-    }
-
-    const villagesText = await response.text();
-    const ownVillages = villagesText
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map(parseVillageMapLine)
-        .filter((village) => {
-            return (
-                village.playerId === parseInt(game_data.player.id, 10) &&
-                isAllowedSourceVillageName(village.name)
-            );
-        });
-
-    return ownVillages;
+    return commandUnits;
 }
 
-function readOwnVillagesStorage() {
-    let storedVillages = sessionStorage.getItem(OWN_VILLAGES_STORAGE_KEY);
-    if (!storedVillages) return [];
-
-    try {
-        storedVillages = JSON.parse(storedVillages);
-        return Array.isArray(storedVillages) ? storedVillages : [];
-    } catch (error) {
-        return [];
-    }
-}
-
-function writeOwnVillagesStorage(villages) {
-    sessionStorage.setItem(
-        OWN_VILLAGES_STORAGE_KEY,
-        JSON.stringify(villages)
-    );
-}
-
-function parseVillageMapLine(line) {
-    const [id, name, x, y, playerId] = line.split(',');
-
-    return {
-        id: parseInt(id, 10),
-        name: decodeGameText(name),
-        x: parseInt(x, 10),
-        y: parseInt(y, 10),
-        coord: `${x}|${y}`,
-        playerId: parseInt(playerId, 10),
-    };
-}
-
-function decodeGameText(value) {
-    const normalizedValue = String(value || '').replace(/\+/g, ' ');
-
-    try {
-        return decodeURIComponent(normalizedValue);
-    } catch (error) {
-        return normalizedValue;
-    }
-}
-
-function isAllowedSourceVillageName(villageName) {
-    const normalizedVillageName = normalizeText(villageName);
-
-    return SOURCE_VILLAGE_NAME_FILTERS.some((sourcePattern) =>
-        normalizedVillageName.includes(normalizeText(sourcePattern))
-    );
-}
-
-function normalizeText(value) {
-    const normalizedValue = String(value || '').toLowerCase().trim();
-
-    if (typeof normalizedValue.normalize === 'function') {
-        return normalizedValue
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '');
-    }
-
-    return normalizedValue;
-}
-
-function getNearestSourceVillage(targetCoord, sourceVillages) {
+function getNearestAvailableSourceVillage(
+    targetCoord,
+    sourceVillages,
+    commandUnits
+) {
     let nearestVillage = null;
     let shortestDistance = Number.POSITIVE_INFINITY;
 
     sourceVillages.forEach((sourceVillage) => {
+        if (!hasEnoughUnitsForCommand(sourceVillage.units, commandUnits)) {
+            return;
+        }
+
         const currentDistance = calculateDistanceBetweenCoords(
             targetCoord,
             sourceVillage.coord
@@ -916,6 +911,35 @@ function getNearestSourceVillage(targetCoord, sourceVillages) {
     });
 
     return nearestVillage;
+}
+
+function hasEnoughUnitsForCommand(availableUnits, commandUnits) {
+    return Object.entries(commandUnits).every(([unitName, requiredAmount]) => {
+        return getVillageUnitAmount(availableUnits, unitName) >= requiredAmount;
+    });
+}
+
+function consumeVillageUnits(availableUnits, commandUnits) {
+    Object.entries(commandUnits).forEach(([unitName, requiredAmount]) => {
+        availableUnits[unitName] =
+            getVillageUnitAmount(availableUnits, unitName) - requiredAmount;
+    });
+}
+
+function getVillageUnitAmount(availableUnits, unitName) {
+    return parseInt(availableUnits[unitName] || 0, 10);
+}
+
+function createSourceVillageSnapshot(sourceVillage) {
+    return {
+        id: sourceVillage.id,
+        name: sourceVillage.name,
+        coord: sourceVillage.coord,
+        x: sourceVillage.x,
+        y: sourceVillage.y,
+        plannedCommands: sourceVillage.plannedCommands,
+        units: { ...sourceVillage.units },
+    };
 }
 
 function calculateDistanceBetweenCoords(firstCoord, secondCoord) {
