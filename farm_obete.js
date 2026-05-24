@@ -5,17 +5,17 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.7.0-nearest-off
- * Last Updated: 2026-05-24
+ * Version: v1.7.1-nearest-off-icons
+ * Last Updated: 2026-05-25
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
  * Mod: JawJaw
- * Local Fix: Codex (nearest off village targeting)
+ * Local Fix: Codex (nearest off village targeting by icons)
  */
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.7.0-nearest-off',
+    version: 'v1.7.1-nearest-off-icons',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -39,7 +39,10 @@ if (typeof UNITS_TO_SEND === 'undefined')
         10: '&spy=1&light=6&ram=2&catapult=15',
         '?': '&spy=1&light=6&ram=2&catapult=15',
     };
-// Only villages whose names contain one of these fragments can be used as sources.
+// Villages with these icon fragments are treated as valid sources.
+if (typeof SOURCE_VILLAGE_ICON_FILTERS === 'undefined')
+    SOURCE_VILLAGE_ICON_FILTERS = ['unit_axe', 'unit_light'];
+// Name fallback used only if icon detection finds nothing.
 if (typeof SOURCE_VILLAGE_NAME_FILTERS === 'undefined')
     SOURCE_VILLAGE_NAME_FILTERS = ['off hranica', 'off'];
 
@@ -52,12 +55,13 @@ if ('TWMap' in window) mapOverlay = TWMap;
 
 // Data Store Config
 var STORAGE_KEY = 'RA_CBW_STORE'; // key for sessionStorage
-var OWN_VILLAGES_STORAGE_KEY = 'RA_CBW_OWN_VILLAGES';
+var OWN_VILLAGES_STORAGE_KEY = 'RA_CBW_OWN_VILLAGES_BY_ICON';
 var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
 };
 var OPEN_TARGET_DELAY_MS = 3000;
+var SOURCE_OVERVIEW_MAX_PAGES = 15;
 
 // Translations
 var translations = {
@@ -639,6 +643,177 @@ async function fetchOwnSourceVillages() {
         return cachedVillages;
     }
 
+    let ownVillages = [];
+
+    try {
+        ownVillages = await fetchOwnSourceVillagesFromOverview();
+    } catch (error) {
+        console.warn(`${scriptInfo()} Source village overview fetch failed:`, error);
+    }
+
+    if (!ownVillages.length) {
+        ownVillages = await fetchOwnSourceVillagesFromMapFileByName();
+    }
+
+    writeOwnVillagesStorage(ownVillages);
+
+    return ownVillages;
+}
+
+async function fetchOwnSourceVillagesFromOverview() {
+    const firstPageUrl =
+        game_data.link_base_pure + 'overview_villages&mode=combined';
+    const firstPageHtml = await fetchSourceOverviewPage(firstPageUrl);
+    const pageUrls = extractOverviewPageUrls(firstPageHtml, firstPageUrl);
+    const remainingPageUrls = pageUrls.slice(0, SOURCE_OVERVIEW_MAX_PAGES - 1);
+    const otherPagesHtml = await Promise.all(
+        remainingPageUrls.map((url) => fetchSourceOverviewPage(url))
+    );
+
+    return dedupeSourceVillages(
+        [firstPageHtml, ...otherPagesHtml].flatMap((html) =>
+            parseSourceVillagesFromOverviewHtml(html)
+        )
+    );
+}
+
+async function fetchSourceOverviewPage(url) {
+    const response = await fetch(url, {
+        credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+        throw new Error(`Overview request failed with ${response.status}`);
+    }
+
+    return response.text();
+}
+
+function extractOverviewPageUrls(html, firstPageUrl) {
+    const htmlDoc = parseHtml(html);
+    const normalizedFirstPageUrl = new URL(
+        firstPageUrl,
+        window.location.origin
+    ).href;
+    const urls = Array.from(
+        htmlDoc.querySelectorAll(
+            'a[href*="screen=overview_villages"][href*="mode=combined"][href*="page="]'
+        )
+    ).map((link) => {
+        return new URL(link.getAttribute('href'), window.location.origin).href;
+    });
+
+    return Array.from(new Set(urls)).filter(
+        (url) => url !== normalizedFirstPageUrl
+    );
+}
+
+function parseSourceVillagesFromOverviewHtml(html) {
+    const htmlDoc = parseHtml(html);
+
+    return Array.from(htmlDoc.querySelectorAll('.quickedit-vn[data-id]'))
+        .map((villageNameElement) =>
+            parseSourceVillageFromOverviewRow(villageNameElement)
+        )
+        .filter(Boolean);
+}
+
+function parseSourceVillageFromOverviewRow(villageNameElement) {
+    const villageId = parseInt(
+        villageNameElement.getAttribute('data-id'),
+        10
+    );
+    const villageCell = villageNameElement.closest('td');
+    const villageRow = villageNameElement.closest('tr');
+    const villageText = villageCell
+        ? villageCell.textContent
+        : villageRow
+        ? villageRow.textContent
+        : '';
+    const coordMatch = villageText.match(COORDS_REGEX);
+    const coord = coordMatch ? coordMatch[0] : null;
+    const villageName =
+        String(villageNameElement.textContent || '').trim() ||
+        villageText.replace(COORDS_REGEX, '').replace(/\s+/g, ' ').trim();
+    let sourceType = getAllowedSourceVillageType(
+        getSourceVillageIconTokens(villageCell || villageRow)
+    );
+    if (!sourceType && villageRow) {
+        sourceType = getAllowedSourceVillageType(
+            getSourceVillageIconTokens(villageRow)
+        );
+    }
+    const point = parseCoord(coord);
+
+    if (!villageId || !coord || !point || !sourceType) {
+        return null;
+    }
+
+    return {
+        id: villageId,
+        name: villageName,
+        x: point.x,
+        y: point.y,
+        coord: coord,
+        sourceType: sourceType,
+    };
+}
+
+function getSourceVillageIconTokens(container) {
+    if (!container) return [];
+
+    return Array.from(container.querySelectorAll('img'))
+        .map((image) => {
+            return [
+                image.getAttribute('src'),
+                image.getAttribute('title'),
+                image.getAttribute('alt'),
+                image.getAttribute('class'),
+                image.getAttribute('data-title'),
+            ]
+                .filter(Boolean)
+                .join(' ');
+        })
+        .concat([container.innerHTML || ''])
+        .map((value) => normalizeText(value));
+}
+
+function getAllowedSourceVillageType(iconTokens) {
+    if (
+        iconTokens.some((token) =>
+            token.includes(normalizeText(SOURCE_VILLAGE_ICON_FILTERS[0]))
+        )
+    ) {
+        return 'off';
+    }
+
+    if (
+        iconTokens.some((token) =>
+            token.includes(normalizeText(SOURCE_VILLAGE_ICON_FILTERS[1]))
+        )
+    ) {
+        return 'off-border';
+    }
+
+    return null;
+}
+
+function dedupeSourceVillages(villages) {
+    const villagesById = new Map();
+
+    villages.forEach((village) => {
+        if (!village || !village.id || villagesById.has(village.id)) return;
+        villagesById.set(village.id, village);
+    });
+
+    return Array.from(villagesById.values());
+}
+
+function parseHtml(html) {
+    return new DOMParser().parseFromString(html, 'text/html');
+}
+
+async function fetchOwnSourceVillagesFromMapFileByName() {
     const response = await fetch(`${window.location.origin}/map/village.txt`, {
         credentials: 'same-origin',
     });
@@ -658,8 +833,6 @@ async function fetchOwnSourceVillages() {
                 isAllowedSourceVillageName(village.name)
             );
         });
-
-    writeOwnVillagesStorage(ownVillages);
 
     return ownVillages;
 }
