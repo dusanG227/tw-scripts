@@ -86,6 +86,9 @@ var translations = {
             'No eligible source villages found!',
         'Error preparing source villages!':
             'Error preparing source villages!',
+        'Error loading farm pages!': 'Error loading farm pages!',
+        'Error loading combined overview!':
+            'Error loading combined overview!',
         'barbarian villages where found': 'barbarian villages where found',
         'Showing the first': 'Showing the first',
         'barbarian villages.': 'barbarian villages.',
@@ -111,10 +114,8 @@ initDebug();
 async function initClearBarbarianWalls(store) {
     try {
         const { MAX_BARBARIANS, MAX_FA_PAGES_TO_FETCH } = store;
-        const [faURLs, sourceVillages] = await Promise.all([
-            fetchFAPages(MAX_FA_PAGES_TO_FETCH),
-            fetchOwnSourceVillages(),
-        ]);
+        const faURLs = await fetchFAPages(MAX_FA_PAGES_TO_FETCH);
+        const sourceVillages = await fetchOwnSourceVillages();
 
         if (!sourceVillages.length) {
             UI.ErrorMessage(tt('No eligible source villages found!'));
@@ -155,7 +156,9 @@ async function initClearBarbarianWalls(store) {
             }
         );
     } catch (error) {
-        UI.ErrorMessage(tt('Error preparing source villages!'));
+        UI.ErrorMessage(
+            `${tt('Error preparing source villages!')} ${error.message || error}`
+        );
         console.error(`${scriptInfo()} Error:`, error);
     }
 }
@@ -515,42 +518,45 @@ function highlightOpenedCommands(element) {
 }
 
 async function fetchFAPages(maxFAPagesToFetch) {
-    const faPageURLs = await jQuery
-        .get(game_data.link_base_pure + 'am_farm')
-        .then((response) => {
-            const htmlDoc = jQuery.parseHTML(response);
-            const plunderListNav = jQuery(htmlDoc).find(
-                '#plunder_list_nav:eq(0) a'
-            );
-            const firstFApage =
-                game_data.link_base_pure +
-                `am_farm&ajax=page_entries&Farm_page=0&class=&extended=1`;
+    try {
+        const response = await jQuery.get(game_data.link_base_pure + 'am_farm');
+        const htmlDoc = jQuery.parseHTML(response);
+        const plunderListNav = jQuery(htmlDoc).find('#plunder_list_nav:eq(0) a');
+        const firstFApage =
+            game_data.link_base_pure +
+            `am_farm&ajax=page_entries&Farm_page=0&class=&extended=1`;
 
-            const faPageURLs = [firstFApage];
-            jQuery(plunderListNav).each(function (index) {
-                index++;
-                if (index <= maxFAPagesToFetch - 1) {
-                    const currentPageNumber = parseInt(
-                        getParameterByName(
-                            'Farm_page',
-                            window.location.origin + jQuery(this).attr('href')
-                        )
-                    );
+        const faPageURLs = [firstFApage];
+        jQuery(plunderListNav).each(function (index) {
+            index++;
+            if (index <= maxFAPagesToFetch - 1) {
+                const currentPageNumber = parseInt(
+                    getParameterByName(
+                        'Farm_page',
+                        window.location.origin + jQuery(this).attr('href')
+                    ),
+                    10
+                );
+
+                if (!Number.isNaN(currentPageNumber)) {
                     faPageURLs.push(
                         game_data.link_base_pure +
                             `am_farm&ajax=page_entries&Farm_page=${currentPageNumber}&class=&extended=1&order=distance&dir=asc`
                     );
                 }
-            });
-
-            return faPageURLs;
-        })
-        .catch((error) => {
-            UI.ErrorMessage('Error fetching FA page!');
-            console.error(`${scriptInfo()} Error:`, error);
+            }
         });
 
-    return faPageURLs;
+        if (!faPageURLs.length) {
+            throw new Error(tt('Error loading farm pages!'));
+        }
+
+        return faPageURLs;
+    } catch (error) {
+        throw new Error(
+            `${tt('Error loading farm pages!')} ${error.message || error}`
+        );
+    }
 }
 
 function getFATableRows(pages) {
@@ -662,23 +668,22 @@ async function fetchOwnSourceVillagesFromOverview() {
         remainingPageUrls.map((url) => fetchSourceOverviewPage(url))
     );
 
-    return dedupeSourceVillages(
-        [firstPageHtml, ...otherPagesHtml].flatMap((html) =>
-            parseSourceVillagesFromOverviewHtml(html)
-        )
-    );
+    const allOverviewPages = [firstPageHtml].concat(otherPagesHtml);
+    const allSourceVillages = allOverviewPages.reduce((result, html) => {
+        return result.concat(parseSourceVillagesFromOverviewHtml(html));
+    }, []);
+
+    return dedupeSourceVillages(allSourceVillages);
 }
 
 async function fetchSourceOverviewPage(url) {
-    const response = await fetch(url, {
-        credentials: 'same-origin',
-    });
-
-    if (!response.ok) {
-        throw new Error(`Overview request failed with ${response.status}`);
+    try {
+        return await jQuery.get(url);
+    } catch (error) {
+        throw new Error(
+            `${tt('Error loading combined overview!')} ${error.status || ''}`.trim()
+        );
     }
-
-    return response.text();
 }
 
 function extractOverviewPageUrls(html, firstPageUrl) {
@@ -702,17 +707,37 @@ function extractOverviewPageUrls(html, firstPageUrl) {
 
 function parseSourceVillagesFromOverviewHtml(html) {
     const htmlDoc = parseHtml(html);
-    const combinedTable = htmlDoc.querySelector('#combined_table');
+    const combinedTable = findCombinedOverviewTable(htmlDoc);
 
     if (!combinedTable) {
-        return [];
+        throw new Error('Combined overview table not found');
     }
 
     const unitColumnMap = getCombinedOverviewUnitColumnMap(combinedTable);
 
+    if (!Object.keys(unitColumnMap).length) {
+        throw new Error('No unit columns found in combined overview');
+    }
+
     return Array.from(combinedTable.querySelectorAll('tr'))
         .map((row) => parseSourceVillageFromOverviewRow(row, unitColumnMap))
         .filter(Boolean);
+}
+
+function findCombinedOverviewTable(htmlDoc) {
+    const tables = Array.from(htmlDoc.querySelectorAll('table'));
+
+    for (let index = 0; index < tables.length; index++) {
+        const table = tables[index];
+        const hasVillageRows = !!table.querySelector('.quickedit-vn[data-id]');
+        const hasUnitHeader = !!table.querySelector('th img[src*="unit_"]');
+
+        if (hasVillageRows && hasUnitHeader) {
+            return table;
+        }
+    }
+
+    return htmlDoc.querySelector('#combined_table');
 }
 
 function getCombinedOverviewUnitColumnMap(combinedTable) {
