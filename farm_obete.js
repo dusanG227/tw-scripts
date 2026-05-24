@@ -5,17 +5,17 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.6.1-fixed
- * Last Updated: 2026-04-19
+ * Version: v1.7.0-nearest-off
+ * Last Updated: 2026-05-24
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
  * Mod: JawJaw
- * Local Fix: Codex
+ * Local Fix: Codex (nearest off village targeting)
  */
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.6.1-fixed',
+    version: 'v1.7.0-nearest-off',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -39,6 +39,9 @@ if (typeof UNITS_TO_SEND === 'undefined')
         10: '&spy=1&light=6&ram=2&catapult=15',
         '?': '&spy=1&light=6&ram=2&catapult=15',
     };
+// Only villages whose names contain one of these fragments can be used as sources.
+if (typeof SOURCE_VILLAGE_NAME_FILTERS === 'undefined')
+    SOURCE_VILLAGE_NAME_FILTERS = ['off hranica', 'off'];
 
 // Globals
 var ALLOWED_GAME_SCREENS = ['map']; // list of game screens where script can be executed
@@ -49,6 +52,7 @@ if ('TWMap' in window) mapOverlay = TWMap;
 
 // Data Store Config
 var STORAGE_KEY = 'RA_CBW_STORE'; // key for sessionStorage
+var OWN_VILLAGES_STORAGE_KEY = 'RA_CBW_OWN_VILLAGES';
 var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
@@ -72,10 +76,17 @@ var translations = {
         Barbarian: 'Barbarian',
         Report: 'Report',
         Distance: 'Distance',
+        'Source Village': 'Source Village',
+        'Source Distance': 'Source Distance',
         Wall: 'Wall',
         'Last Attack Time': 'Last Attack Time',
         Actions: 'Actions',
         Attack: 'Attack',
+        'No source village': 'No source village',
+        'No eligible source villages found!':
+            'No eligible source villages found!',
+        'Error preparing source villages!':
+            'Error preparing source villages!',
         'barbarian villages where found': 'barbarian villages where found',
         'Showing the first': 'Showing the first',
         'barbarian villages.': 'barbarian villages.',
@@ -99,40 +110,55 @@ initDebug();
 
 // Initialize script logic
 async function initClearBarbarianWalls(store) {
-    const { MAX_BARBARIANS, MAX_FA_PAGES_TO_FETCH } = store;
-    const faURLs = await fetchFAPages(MAX_FA_PAGES_TO_FETCH);
+    try {
+        const { MAX_BARBARIANS, MAX_FA_PAGES_TO_FETCH } = store;
+        const [faURLs, sourceVillages] = await Promise.all([
+            fetchFAPages(MAX_FA_PAGES_TO_FETCH),
+            fetchOwnSourceVillages(),
+        ]);
 
-    // Show progress bar and notify user
-    startProgressBar(faURLs.length);
-    UI.SuccessMessage(tt('Fetching FA pages...'));
-
-    const faPages = [];
-    jQuery.fetchAll(
-        faURLs,
-        function (index, data) {
-            updateProgressBar(index, faURLs.length);
-            const { plunder_list } = data;
-            faPages.push(...plunder_list);
-        },
-        function () {
-            const faTableRows = getFATableRows(faPages);
-            const barbarians = getFABarbarians(faTableRows);
-
-            const content = prepareContent(barbarians, MAX_BARBARIANS);
-            renderUI(content);
-            jQuery('#barbVillagesCount').text(barbarians.length);
-
-            updateMap(barbarians);
-
-            // event handlers
-            showSettingsPanel(store);
-            bindOpenAllTargetsButton();
-        },
-        function (error) {
-            UI.ErrorMessage('Error fetching FA pages!');
-            console.error(`${scriptInfo()} Error:`, error);
+        if (!sourceVillages.length) {
+            UI.ErrorMessage(tt('No eligible source villages found!'));
         }
-    );
+
+        // Show progress bar and notify user
+        startProgressBar(faURLs.length);
+        UI.SuccessMessage(tt('Fetching FA pages...'));
+
+        const faPages = [];
+        jQuery.fetchAll(
+            faURLs,
+            function (index, data) {
+                updateProgressBar(index, faURLs.length);
+                const { plunder_list } = data;
+                faPages.push(...plunder_list);
+            },
+            function () {
+                const faTableRows = getFATableRows(faPages);
+                const barbarians = getBarbariansWithSourceVillages(
+                    getFABarbarians(faTableRows),
+                    sourceVillages
+                );
+
+                const content = prepareContent(barbarians, MAX_BARBARIANS);
+                renderUI(content);
+                jQuery('#barbVillagesCount').text(barbarians.length);
+
+                updateMap(barbarians);
+
+                // event handlers
+                showSettingsPanel(store);
+                bindOpenAllTargetsButton();
+            },
+            function (error) {
+                UI.ErrorMessage('Error fetching FA pages!');
+                console.error(`${scriptInfo()} Error:`, error);
+            }
+        );
+    } catch (error) {
+        UI.ErrorMessage(tt('Error preparing source villages!'));
+        console.error(`${scriptInfo()} Error:`, error);
+    }
 }
 
 function updateMap(barbarians) {
@@ -410,6 +436,7 @@ function buildBarbsTable(villages, maxBarbsToShow) {
 					<th>${tt('Barbarian')}</th>
 					<th>${tt('Report')}</th>
 					<th>${tt('Distance')}</th>
+					<th>${tt('Source Village')}</th>
 					<th>${tt('Wall')}</th>
 					<th>${tt('Last Attack Time')}</th>
 					<th>${tt('Actions')}</th>
@@ -420,14 +447,40 @@ function buildBarbsTable(villages, maxBarbsToShow) {
 
     villages.forEach((village, index) => {
         index++;
-        const { villageId, coord, wall, reportId, reportTime, type, distance } =
-            village;
+        const {
+            villageId,
+            coord,
+            wall,
+            reportId,
+            reportTime,
+            type,
+            distance,
+            sourceVillage,
+            sourceDistance,
+        } = village;
 
         const unitsToSend = calculateUnitsToSend(wall);
 
         const villageUrl = `${game_data.link_base_pure}info_village&id=${villageId}`;
         const reportUrl = `${game_data.link_base_pure}report&mode=all&view=${reportId}`;
-        const commandUrl = `${game_data.link_base_pure}place&target=${villageId}${unitsToSend}&wall=${wall}`;
+        const sourceVillageUrl = sourceVillage
+            ? `${game_data.link_base_pure}info_village&id=${sourceVillage.id}`
+            : null;
+        const commandUrl = sourceVillage
+            ? buildCommandUrl(sourceVillage.id, villageId, unitsToSend, wall)
+            : null;
+        const sourceVillageHtml = sourceVillage
+            ? `<a href="${sourceVillageUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+                  sourceVillage.name
+              )} (${sourceVillage.coord})</a><br><small>${tt(
+                  'Source Distance'
+              )}: ${formatDistanceValue(sourceDistance)}</small>`
+            : `<span style="color:red;">${tt('No source village')}</span>`;
+        const actionHtml = commandUrl
+            ? `<a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_blank" rel="noopener noreferrer">${tt(
+                  'Attack'
+              )}</a>`
+            : `<span class="btn btn-disabled">${tt('Attack')}</span>`;
 
         barbsTable += `
 			<tr>
@@ -436,9 +489,10 @@ function buildBarbsTable(villages, maxBarbsToShow) {
 				<td><a href="${villageUrl}" target="_blank" rel="noopener noreferrer">${coord}</a></td>
 				<td><a href="${reportUrl}" target="_blank" rel="noopener noreferrer"><span class="icon header new_report"></span></a></td>
 				<td>${distance}</td>
+				<td>${sourceVillageHtml}</td>
 				<td>${wall !== '?' ? wall : '<b style="color:red;">?</b>'}</td>
 				<td>${reportTime}</td>
-				<td><a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_blank" rel="noopener noreferrer">${tt('Attack')}</a></td>
+				<td>${actionHtml}</td>
 			</tr>
 		`;
     });
@@ -559,6 +613,198 @@ function getFABarbarians(rows) {
     return barbarians;
 }
 
+function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
+    return barbarians.map((barbarian) => {
+        const sourceVillage = getNearestSourceVillage(
+            barbarian.coord,
+            sourceVillages
+        );
+
+        return {
+            ...barbarian,
+            sourceVillage: sourceVillage,
+            sourceDistance: sourceVillage
+                ? calculateDistanceBetweenCoords(
+                      barbarian.coord,
+                      sourceVillage.coord
+                  )
+                : null,
+        };
+    });
+}
+
+async function fetchOwnSourceVillages() {
+    const cachedVillages = readOwnVillagesStorage();
+    if (cachedVillages.length) {
+        return cachedVillages;
+    }
+
+    const response = await fetch(`${window.location.origin}/map/village.txt`, {
+        credentials: 'same-origin',
+    });
+
+    if (!response.ok) {
+        throw new Error(`Village map request failed with ${response.status}`);
+    }
+
+    const villagesText = await response.text();
+    const ownVillages = villagesText
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map(parseVillageMapLine)
+        .filter((village) => {
+            return (
+                village.playerId === parseInt(game_data.player.id, 10) &&
+                isAllowedSourceVillageName(village.name)
+            );
+        });
+
+    writeOwnVillagesStorage(ownVillages);
+
+    return ownVillages;
+}
+
+function readOwnVillagesStorage() {
+    let storedVillages = sessionStorage.getItem(OWN_VILLAGES_STORAGE_KEY);
+    if (!storedVillages) return [];
+
+    try {
+        storedVillages = JSON.parse(storedVillages);
+        return Array.isArray(storedVillages) ? storedVillages : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function writeOwnVillagesStorage(villages) {
+    sessionStorage.setItem(
+        OWN_VILLAGES_STORAGE_KEY,
+        JSON.stringify(villages)
+    );
+}
+
+function parseVillageMapLine(line) {
+    const [id, name, x, y, playerId] = line.split(',');
+
+    return {
+        id: parseInt(id, 10),
+        name: decodeGameText(name),
+        x: parseInt(x, 10),
+        y: parseInt(y, 10),
+        coord: `${x}|${y}`,
+        playerId: parseInt(playerId, 10),
+    };
+}
+
+function decodeGameText(value) {
+    const normalizedValue = String(value || '').replace(/\+/g, ' ');
+
+    try {
+        return decodeURIComponent(normalizedValue);
+    } catch (error) {
+        return normalizedValue;
+    }
+}
+
+function isAllowedSourceVillageName(villageName) {
+    const normalizedVillageName = normalizeText(villageName);
+
+    return SOURCE_VILLAGE_NAME_FILTERS.some((sourcePattern) =>
+        normalizedVillageName.includes(normalizeText(sourcePattern))
+    );
+}
+
+function normalizeText(value) {
+    const normalizedValue = String(value || '').toLowerCase().trim();
+
+    if (typeof normalizedValue.normalize === 'function') {
+        return normalizedValue
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+    }
+
+    return normalizedValue;
+}
+
+function getNearestSourceVillage(targetCoord, sourceVillages) {
+    let nearestVillage = null;
+    let shortestDistance = Number.POSITIVE_INFINITY;
+
+    sourceVillages.forEach((sourceVillage) => {
+        const currentDistance = calculateDistanceBetweenCoords(
+            targetCoord,
+            sourceVillage.coord
+        );
+
+        if (currentDistance < shortestDistance) {
+            shortestDistance = currentDistance;
+            nearestVillage = sourceVillage;
+        }
+    });
+
+    return nearestVillage;
+}
+
+function calculateDistanceBetweenCoords(firstCoord, secondCoord) {
+    const firstPoint = parseCoord(firstCoord);
+    const secondPoint = parseCoord(secondCoord);
+
+    if (!firstPoint || !secondPoint) {
+        return Number.POSITIVE_INFINITY;
+    }
+
+    return Math.hypot(firstPoint.x - secondPoint.x, firstPoint.y - secondPoint.y);
+}
+
+function parseCoord(coord) {
+    const [x, y] = String(coord || '')
+        .split('|')
+        .map((value) => parseInt(value, 10));
+
+    if (Number.isNaN(x) || Number.isNaN(y)) {
+        return null;
+    }
+
+    return { x, y };
+}
+
+function formatDistanceValue(distance) {
+    return Number.isFinite(distance) ? distance.toFixed(2) : '?';
+}
+
+function buildCommandUrl(sourceVillageId, targetVillageId, unitsToSend, wall) {
+    return `${buildVillageLinkBase(
+        sourceVillageId
+    )}place&target=${targetVillageId}${unitsToSend}&wall=${wall}`;
+}
+
+function buildVillageLinkBase(villageId) {
+    const currentLinkBase = String(game_data.link_base_pure || '');
+
+    if (/village=\d+/.test(currentLinkBase)) {
+        return currentLinkBase.replace(/village=\d+/, `village=${villageId}`);
+    }
+
+    const sitterId = getParameterByName('t');
+    const sitterParameter = sitterId ? `t=${sitterId}&` : '';
+
+    return `${window.location.origin}/game.php?${sitterParameter}village=${villageId}&screen=`;
+}
+
+function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, (character) => {
+        const escapedCharacters = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        };
+
+        return escapedCharacters[character];
+    });
+}
+
 function calculateUnitsToSend(wall) {
     let wallToUnitAmounts = UNITS_TO_SEND;
 
@@ -672,11 +918,16 @@ function initDebug() {
 function tt(string) {
     var gameLocale = game_data.locale;
 
-    if (translations[gameLocale] !== undefined) {
+    if (
+        translations[gameLocale] !== undefined &&
+        translations[gameLocale][string] !== undefined
+    ) {
         return translations[gameLocale][string];
-    } else {
+    } else if (translations['en_DK'][string] !== undefined) {
         return translations['en_DK'][string];
     }
+
+    return string;
 }
 
 (function () {
@@ -696,3 +947,4 @@ function tt(string) {
         UI.ErrorMessage(tt('This script requires PA and FA to be active!'));
     }
 })();
+
