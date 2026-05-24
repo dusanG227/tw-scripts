@@ -80,6 +80,7 @@ var translations = {
         'Source Distance': 'Source Distance',
         'Planned Attacks': 'Planned Attacks',
         'Rams Left': 'Rams Left',
+        'Cats Left': 'Cats Left',
         Wall: 'Wall',
         'Last Attack Time': 'Last Attack Time',
         Actions: 'Actions',
@@ -483,10 +484,12 @@ function buildBarbsTable(villages, maxBarbsToShow) {
                   'Planned Attacks'
               )}: ${sourceVillage.plannedCommands} | ${tt(
                   'Rams Left'
-              )}: ${getVillageUnitAmount(sourceVillage.units, 'ram')}</small>`
+              )}: ${getVillageUnitAmount(sourceVillage.units, 'ram')} | ${tt(
+                  'Cats Left'
+              )}: ${getVillageUnitAmount(sourceVillage.units, 'catapult')}</small>`
             : `<span style="color:red;">${tt('No source village')}</span>`;
         const actionHtml = commandUrl
-            ? `<a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_blank" rel="noopener noreferrer">${tt(
+            ? `<a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_self" rel="noopener noreferrer">${tt(
                   'Attack'
               )}</a>`
             : `<span class="btn btn-disabled">${tt('Attack')}</span>`;
@@ -628,33 +631,104 @@ function getFABarbarians(rows) {
 function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
     // Plan against a mutable copy so one village cannot "spend" the same rams twice.
     const plannedSourceVillages = cloneSourceVillages(sourceVillages);
+    const pendingBarbarians = barbarians.map((barbarian, index) => {
+        return {
+            ...barbarian,
+            originalIndex: index,
+            commandUnits: parseCommandUnits(calculateUnitsToSend(barbarian.wall)),
+        };
+    });
+    const plannedAssignments = new Array(barbarians.length);
 
-    return barbarians.map((barbarian) => {
-        const commandUnits = parseCommandUnits(calculateUnitsToSend(barbarian.wall));
-        const sourceVillage = getNearestAvailableSourceVillage(
-            barbarian.coord,
-            plannedSourceVillages,
-            commandUnits
+    while (pendingBarbarians.length) {
+        const nextAssignment = chooseNextBarbarianAssignment(
+            pendingBarbarians,
+            plannedSourceVillages
         );
+        const { pendingIndex, barbarian, sourceVillage, sourceDistance } =
+            nextAssignment;
 
         if (sourceVillage) {
-            consumeVillageUnits(sourceVillage.units, commandUnits);
+            consumeVillageUnits(sourceVillage.units, barbarian.commandUnits);
             sourceVillage.plannedCommands += 1;
         }
 
-        return {
-            ...barbarian,
+        plannedAssignments[barbarian.originalIndex] = {
+            villageId: barbarian.villageId,
+            coord: barbarian.coord,
+            wall: barbarian.wall,
+            reportId: barbarian.reportId,
+            reportTime: barbarian.reportTime,
+            type: barbarian.type,
+            distance: barbarian.distance,
             sourceVillage: sourceVillage
                 ? createSourceVillageSnapshot(sourceVillage)
                 : null,
-            sourceDistance: sourceVillage
-                ? calculateDistanceBetweenCoords(
-                      barbarian.coord,
-                      sourceVillage.coord
-                  )
-                : null,
+            sourceDistance: sourceDistance,
         };
+
+        pendingBarbarians.splice(pendingIndex, 1);
+    }
+
+    return plannedAssignments;
+}
+
+function chooseNextBarbarianAssignment(pendingBarbarians, sourceVillages) {
+    let bestAssignment = null;
+
+    pendingBarbarians.forEach((barbarian, pendingIndex) => {
+        const eligibleSources = getEligibleSourceVillages(
+            barbarian.coord,
+            sourceVillages,
+            barbarian.commandUnits
+        );
+        const nearestSource = eligibleSources.length ? eligibleSources[0] : null;
+        const currentAssignment = {
+            pendingIndex: pendingIndex,
+            barbarian: barbarian,
+            eligibleCount: eligibleSources.length,
+            sourceVillage: nearestSource ? nearestSource.sourceVillage : null,
+            sourceDistance: nearestSource ? nearestSource.distance : null,
+        };
+
+        if (!bestAssignment) {
+            bestAssignment = currentAssignment;
+            return;
+        }
+
+        if (currentAssignment.eligibleCount < bestAssignment.eligibleCount) {
+            bestAssignment = currentAssignment;
+            return;
+        }
+
+        if (currentAssignment.eligibleCount > bestAssignment.eligibleCount) {
+            return;
+        }
+
+        const currentDistance =
+            currentAssignment.sourceDistance === null
+                ? Number.POSITIVE_INFINITY
+                : currentAssignment.sourceDistance;
+        const bestDistance =
+            bestAssignment.sourceDistance === null
+                ? Number.POSITIVE_INFINITY
+                : bestAssignment.sourceDistance;
+
+        if (currentDistance > bestDistance) {
+            bestAssignment = currentAssignment;
+            return;
+        }
+
+        if (currentDistance < bestDistance) {
+            return;
+        }
+
+        if (barbarian.originalIndex < bestAssignment.barbarian.originalIndex) {
+            bestAssignment = currentAssignment;
+        }
     });
+
+    return bestAssignment;
 }
 
 async function fetchOwnSourceVillages() {
@@ -997,26 +1071,29 @@ function getNearestAvailableSourceVillage(
     sourceVillages,
     commandUnits
 ) {
-    let nearestVillage = null;
-    let shortestDistance = Number.POSITIVE_INFINITY;
+    const eligibleSources = getEligibleSourceVillages(
+        targetCoord,
+        sourceVillages,
+        commandUnits
+    );
+    return eligibleSources.length ? eligibleSources[0].sourceVillage : null;
+}
 
-    sourceVillages.forEach((sourceVillage) => {
-        if (!hasEnoughUnitsForCommand(sourceVillage.units, commandUnits)) {
-            return;
-        }
-
-        const currentDistance = calculateDistanceBetweenCoords(
-            targetCoord,
-            sourceVillage.coord
-        );
-
-        if (currentDistance < shortestDistance) {
-            shortestDistance = currentDistance;
-            nearestVillage = sourceVillage;
-        }
-    });
-
-    return nearestVillage;
+function getEligibleSourceVillages(targetCoord, sourceVillages, commandUnits) {
+    return sourceVillages
+        .filter((sourceVillage) =>
+            hasEnoughUnitsForCommand(sourceVillage.units, commandUnits)
+        )
+        .map((sourceVillage) => {
+            return {
+                sourceVillage: sourceVillage,
+                distance: calculateDistanceBetweenCoords(
+                    targetCoord,
+                    sourceVillage.coord
+                ),
+            };
+        })
+        .sort((left, right) => left.distance - right.distance);
 }
 
 function hasEnoughUnitsForCommand(availableUnits, commandUnits) {
