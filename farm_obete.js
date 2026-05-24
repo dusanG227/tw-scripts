@@ -49,16 +49,12 @@ if ('TWMap' in window) mapOverlay = TWMap;
 
 // Data Store Config
 var STORAGE_KEY = 'RA_CBW_STORE'; // key for sessionStorage
-var SOURCE_VILLAGES_CACHE_KEY = 'RA_CBW_SOURCE_VILLAGES_CACHE';
 var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
 };
 var OPEN_TARGET_DELAY_MS = 3000;
 var SOURCE_OVERVIEW_MAX_PAGES = 15;
-var SOURCE_OVERVIEW_DELAY_MS = 800;
-var SOURCE_OVERVIEW_CACHE_MS = 45000;
-var SOURCE_OVERVIEW_REQUEST_RETRIES = 3;
 
 // Translations
 var translations = {
@@ -659,17 +655,7 @@ function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
 }
 
 async function fetchOwnSourceVillages() {
-    const cachedSourceVillages = readSourceVillagesCache();
-    if (cachedSourceVillages.length) {
-        return cachedSourceVillages;
-    }
-
-    const sourceVillages = dedupeSourceVillages(
-        await fetchOwnSourceVillagesFromOverview()
-    );
-    writeSourceVillagesCache(sourceVillages);
-
-    return sourceVillages;
+    return dedupeSourceVillages(await fetchOwnSourceVillagesFromOverview());
 }
 
 async function fetchOwnSourceVillagesFromOverview() {
@@ -678,9 +664,11 @@ async function fetchOwnSourceVillagesFromOverview() {
     const firstPageHtml = await fetchSourceOverviewPage(firstPageUrl);
     const pageUrls = extractOverviewPageUrls(firstPageHtml, firstPageUrl);
     const remainingPageUrls = pageUrls.slice(0, SOURCE_OVERVIEW_MAX_PAGES - 1);
-    const allOverviewPages = [firstPageHtml].concat(
-        await fetchOverviewPagesSequentially(remainingPageUrls)
+    const otherPagesHtml = await Promise.all(
+        remainingPageUrls.map((url) => fetchSourceOverviewPage(url))
     );
+
+    const allOverviewPages = [firstPageHtml].concat(otherPagesHtml);
     const allSourceVillages = allOverviewPages.reduce((result, html) => {
         return result.concat(parseSourceVillagesFromOverviewHtml(html));
     }, []);
@@ -688,50 +676,14 @@ async function fetchOwnSourceVillagesFromOverview() {
     return dedupeSourceVillages(allSourceVillages);
 }
 
-async function fetchOverviewPagesSequentially(pageUrls) {
-    const pages = [];
-
-    for (let index = 0; index < pageUrls.length; index++) {
-        if (index > 0) {
-            await waitForOverviewRequestSlot(SOURCE_OVERVIEW_DELAY_MS);
-        }
-
-        pages.push(await fetchSourceOverviewPage(pageUrls[index]));
-    }
-
-    return pages;
-}
-
 async function fetchSourceOverviewPage(url) {
-    let lastError = null;
-
-    for (
-        let attemptIndex = 0;
-        attemptIndex < SOURCE_OVERVIEW_REQUEST_RETRIES;
-        attemptIndex++
-    ) {
-        try {
-            if (attemptIndex > 0) {
-                await waitForOverviewRequestSlot(
-                    SOURCE_OVERVIEW_DELAY_MS * (attemptIndex + 1)
-                );
-            }
-
-            return await jQuery.get(url);
-        } catch (error) {
-            lastError = error;
-
-            if (error && error.status !== 429) {
-                break;
-            }
-        }
+    try {
+        return await jQuery.get(url);
+    } catch (error) {
+        throw new Error(
+            `${tt('Error loading combined overview!')} ${error.status || ''}`.trim()
+        );
     }
-
-    throw new Error(
-        `${tt('Error loading combined overview!')} ${
-            lastError && lastError.status ? lastError.status : ''
-        }`.trim()
-    );
 }
 
 function extractOverviewPageUrls(html, firstPageUrl) {
@@ -926,48 +878,6 @@ function dedupeSourceVillages(villages) {
     });
 
     return Array.from(villagesById.values());
-}
-
-function readSourceVillagesCache() {
-    try {
-        const cachedValue = sessionStorage.getItem(SOURCE_VILLAGES_CACHE_KEY);
-        if (!cachedValue) {
-            return [];
-        }
-
-        const cachedPayload = JSON.parse(cachedValue);
-        if (
-            !cachedPayload ||
-            !Array.isArray(cachedPayload.villages) ||
-            !cachedPayload.createdAt
-        ) {
-            return [];
-        }
-
-        if (Date.now() - cachedPayload.createdAt > SOURCE_OVERVIEW_CACHE_MS) {
-            return [];
-        }
-
-        return cachedPayload.villages;
-    } catch (error) {
-        return [];
-    }
-}
-
-function writeSourceVillagesCache(villages) {
-    try {
-        sessionStorage.setItem(
-            SOURCE_VILLAGES_CACHE_KEY,
-            JSON.stringify({
-                createdAt: Date.now(),
-                villages: villages,
-            })
-        );
-    } catch (error) {}
-}
-
-function waitForOverviewRequestSlot(waitMs) {
-    return new Promise((resolve) => setTimeout(resolve, waitMs));
 }
 
 function parseHtml(html) {
@@ -1259,4 +1169,3 @@ function tt(string) {
         UI.ErrorMessage(tt('This script requires PA and FA to be active!'));
     }
 })();
-
