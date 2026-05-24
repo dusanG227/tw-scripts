@@ -49,12 +49,15 @@ if ('TWMap' in window) mapOverlay = TWMap;
 
 // Data Store Config
 var STORAGE_KEY = 'RA_CBW_STORE'; // key for sessionStorage
+var SOURCE_VILLAGES_CACHE_KEY = 'RA_CBW_SOURCE_VILLAGES_CACHE_V2';
 var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
 };
 var OPEN_TARGET_DELAY_MS = 3000;
-var SOURCE_OVERVIEW_MAX_PAGES = 15;
+var SOURCE_OVERVIEW_DELAY_MS = 800;
+var SOURCE_OVERVIEW_CACHE_MS = 45000;
+var SOURCE_OVERVIEW_REQUEST_RETRIES = 3;
 
 // Translations
 var translations = {
@@ -87,8 +90,8 @@ var translations = {
         'Error preparing source villages!':
             'Error preparing source villages!',
         'Error loading farm pages!': 'Error loading farm pages!',
-        'Error loading combined overview!':
-            'Error loading combined overview!',
+        'Error loading units overview!':
+            'Error loading units overview!',
         'barbarian villages where found': 'barbarian villages where found',
         'Showing the first': 'Showing the first',
         'barbarian villages.': 'barbarian villages.',
@@ -655,53 +658,83 @@ function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
 }
 
 async function fetchOwnSourceVillages() {
-    return dedupeSourceVillages(await fetchOwnSourceVillagesFromOverview());
+    const cachedSourceVillages = readSourceVillagesCache();
+    if (cachedSourceVillages.length) {
+        return cachedSourceVillages;
+    }
+
+    const sourceVillages = dedupeSourceVillages(
+        await fetchOwnSourceVillagesFromOverview()
+    );
+    writeSourceVillagesCache(sourceVillages);
+
+    return sourceVillages;
 }
 
 async function fetchOwnSourceVillagesFromOverview() {
-    const firstPageUrl =
-        game_data.link_base_pure + 'overview_villages&mode=combined';
-    const firstPageHtml = await fetchSourceOverviewPage(firstPageUrl);
-    const pageUrls = extractOverviewPageUrls(firstPageHtml, firstPageUrl);
-    const remainingPageUrls = pageUrls.slice(0, SOURCE_OVERVIEW_MAX_PAGES - 1);
-    const otherPagesHtml = await Promise.all(
-        remainingPageUrls.map((url) => fetchSourceOverviewPage(url))
-    );
+    const overviewUrls = [
+        game_data.link_base_pure +
+            'overview_villages&mode=units&type=own_home&page=-1',
+        game_data.link_base_pure +
+            'overview_villages&mode=units&type=own_home&group=0&page=-1',
+    ];
+    let lastError = null;
 
-    const allOverviewPages = [firstPageHtml].concat(otherPagesHtml);
-    const allSourceVillages = allOverviewPages.reduce((result, html) => {
-        return result.concat(parseSourceVillagesFromOverviewHtml(html));
-    }, []);
+    for (let index = 0; index < overviewUrls.length; index++) {
+        try {
+            if (index > 0) {
+                await waitForOverviewRequestSlot(SOURCE_OVERVIEW_DELAY_MS);
+            }
 
-    return dedupeSourceVillages(allSourceVillages);
+            const overviewHtml = await fetchSourceOverviewPage(overviewUrls[index]);
+            const sourceVillages = parseSourceVillagesFromOverviewHtml(
+                overviewHtml
+            );
+
+            if (sourceVillages.length) {
+                return sourceVillages;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    throw new Error(tt('No eligible source villages found!'));
 }
 
 async function fetchSourceOverviewPage(url) {
-    try {
-        return await jQuery.get(url);
-    } catch (error) {
-        throw new Error(
-            `${tt('Error loading combined overview!')} ${error.status || ''}`.trim()
-        );
+    let lastError = null;
+
+    for (
+        let attemptIndex = 0;
+        attemptIndex < SOURCE_OVERVIEW_REQUEST_RETRIES;
+        attemptIndex++
+    ) {
+        try {
+            if (attemptIndex > 0) {
+                await waitForOverviewRequestSlot(
+                    SOURCE_OVERVIEW_DELAY_MS * (attemptIndex + 1)
+                );
+            }
+
+            return await jQuery.get(url);
+        } catch (error) {
+            lastError = error;
+
+            if (error && error.status !== 429) {
+                break;
+            }
+        }
     }
-}
 
-function extractOverviewPageUrls(html, firstPageUrl) {
-    const htmlDoc = parseHtml(html);
-    const normalizedFirstPageUrl = new URL(
-        firstPageUrl,
-        window.location.origin
-    ).href;
-    const urls = Array.from(
-        htmlDoc.querySelectorAll(
-            'a[href*="screen=overview_villages"][href*="mode=combined"][href*="page="]'
-        )
-    ).map((link) => {
-        return new URL(link.getAttribute('href'), window.location.origin).href;
-    });
-
-    return Array.from(new Set(urls)).filter(
-        (url) => url !== normalizedFirstPageUrl
+    throw new Error(
+        `${tt('Error loading units overview!')} ${
+            lastError && lastError.status ? lastError.status : ''
+        }`.trim()
     );
 }
 
@@ -710,13 +743,13 @@ function parseSourceVillagesFromOverviewHtml(html) {
     const combinedTable = findCombinedOverviewTable(htmlDoc);
 
     if (!combinedTable) {
-        throw new Error('Combined overview table not found');
+        throw new Error('Units overview table not found');
     }
 
     const unitColumnMap = getCombinedOverviewUnitColumnMap(combinedTable);
 
     if (!Object.keys(unitColumnMap).length) {
-        throw new Error('No unit columns found in combined overview');
+        throw new Error('No unit columns found in units overview');
     }
 
     return Array.from(combinedTable.querySelectorAll('tr'))
@@ -725,6 +758,12 @@ function parseSourceVillagesFromOverviewHtml(html) {
 }
 
 function findCombinedOverviewTable(htmlDoc) {
+    const unitsTable = htmlDoc.querySelector('#units_table');
+
+    if (unitsTable) {
+        return unitsTable;
+    }
+
     const tables = Array.from(htmlDoc.querySelectorAll('table'));
 
     for (let index = 0; index < tables.length; index++) {
@@ -878,6 +917,48 @@ function dedupeSourceVillages(villages) {
     });
 
     return Array.from(villagesById.values());
+}
+
+function readSourceVillagesCache() {
+    try {
+        const cachedValue = sessionStorage.getItem(SOURCE_VILLAGES_CACHE_KEY);
+        if (!cachedValue) {
+            return [];
+        }
+
+        const cachedPayload = JSON.parse(cachedValue);
+        if (
+            !cachedPayload ||
+            !Array.isArray(cachedPayload.villages) ||
+            !cachedPayload.createdAt
+        ) {
+            return [];
+        }
+
+        if (Date.now() - cachedPayload.createdAt > SOURCE_OVERVIEW_CACHE_MS) {
+            return [];
+        }
+
+        return cachedPayload.villages;
+    } catch (error) {
+        return [];
+    }
+}
+
+function writeSourceVillagesCache(villages) {
+    try {
+        sessionStorage.setItem(
+            SOURCE_VILLAGES_CACHE_KEY,
+            JSON.stringify({
+                createdAt: Date.now(),
+                villages: villages,
+            })
+        );
+    } catch (error) {}
+}
+
+function waitForOverviewRequestSlot(waitMs) {
+    return new Promise((resolve) => setTimeout(resolve, waitMs));
 }
 
 function parseHtml(html) {
@@ -1169,3 +1250,4 @@ function tt(string) {
         UI.ErrorMessage(tt('This script requires PA and FA to be active!'));
     }
 })();
+
