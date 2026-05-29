@@ -296,9 +296,13 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Succesvol van dorp veranderd!',
         villageError: 'Alle farms voor het huidige dorp zijn reeds verstuurd!',
         sendError: 'Error: farm niet verstuurd!',
+        sendDelayed:
+          'Een farm is niet op tijd bevestigd. Deze rij blijft gemarkeerd en FarmGod gaat verder.',
         sendPaused:
-          'FarmGod is gepauzeerd na een trage of mislukte aanvraag om dubbele farms te voorkomen. Controleer je uitgaande aanvallen.',
+          'FarmGod is gepauzeerd omdat meerdere farms nog onbevestigd zijn. Controleer je uitgaande aanvallen.',
         sendRecovered: 'Vertraagde aanvraag bevestigd, FarmGod gaat verder.',
+        sendSkipped:
+          'Een farm kon niet bevestigd worden en is gemarkeerd. FarmGod gaat verder met de rest.',
       },
     },
     hu_HU: {
@@ -329,9 +333,13 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Falu sikeresen megv\u00E1ltoztatva!',
         villageError: 'Minden farm kiment a jelenlegi falub\u00F3l!',
         sendError: 'Hiba: Farm nemvolt elk\u00FCldve!',
+        sendDelayed:
+          'Egy farm nincs idoben megerositve. A sor megjelolve marad, a FarmGod pedig tovabb megy.',
         sendPaused:
-          'A FarmGod megallt egy lassu vagy hibas keres utan, hogy elkerulje a duplikalt farmokat. Ellenorizd a kimeno tamadasokat.',
+          'A FarmGod megallt, mert egyszerre tobb farm maradt megerosites nelkul. Ellenorizd a kimeno tamadasokat.',
         sendRecovered: 'A kesleltetett kuldes megerositve, a FarmGod folytatja.',
+        sendSkipped:
+          'Egy farmot nem sikerult megerositeni, ezert meg lett jelolve. A FarmGod tovabb megy a tobbivel.',
       },
     },
     int: {
@@ -362,9 +370,13 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Successfully changed village!',
         villageError: 'All farms for the current village have been sent!',
         sendError: 'Error: farm not send!',
+        sendDelayed:
+          'A farm was not confirmed in time. The row stays marked and FarmGod continues with the rest.',
         sendPaused:
-          'FarmGod paused after a slow or failed request to avoid duplicate farms. Check outgoing commands.',
+          'FarmGod paused because multiple farms are still unconfirmed. Check outgoing commands.',
         sendRecovered: 'Delayed request confirmed, FarmGod resumed.',
+        sendSkipped:
+          'A farm could not be confirmed and stays marked. FarmGod continues with the rest.',
       },
     },
   };
@@ -385,6 +397,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   const SEND_MIN_DELAY_MS = 180;
   const SEND_MAX_DELAY_MS = 220;
   const SEND_STALL_TIMEOUT_MS = 12000;
+  const MAX_UNCERTAIN_SENDS = 2;
 
   // Keep the original pace, but never allow more than one uncertain send in flight.
   let sendQueue = [];
@@ -399,6 +412,7 @@ window.FarmGod.Main = (function (Library, Translation) {
   let activeSendRun = 0;
   let queuedSendKeys = {};
   let finishedSendKeys = {};
+  let uncertainSendKeys = {};
 
   const buildSendKey = function (origin, target, template) {
     return [origin, target, template].join('-');
@@ -441,11 +455,17 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     if (state === 'sending') {
       $row.css({ opacity: 0.65, background: '' });
+    } else if (state === 'warning') {
+      $row.css({ opacity: 1, background: '#f3e7b3' });
     } else if (state === 'error') {
       $row.css({ opacity: 1, background: '#f4d6d6' });
     } else {
       $row.css({ opacity: 1, background: '' });
     }
+  };
+
+  const getUncertainSendCount = function () {
+    return Object.keys(uncertainSendKeys).length;
   };
 
   const clearSendTimer = function () {
@@ -475,6 +495,7 @@ window.FarmGod.Main = (function (Library, Translation) {
     currentSendTimedOut = false;
     queuedSendKeys = {};
     finishedSendKeys = {};
+    uncertainSendKeys = {};
   };
 
   const enqueueSend = function ($icon, front = false) {
@@ -506,6 +527,15 @@ window.FarmGod.Main = (function (Library, Translation) {
     currentSendTimedOut = false;
   };
 
+  const tryResumeAfterUncertain = function (delay = SEND_MIN_DELAY_MS) {
+    if (sendPaused && getUncertainSendCount() < MAX_UNCERTAIN_SENDS) {
+      sendPaused = false;
+    }
+    if (!sendPaused && !sendInFlight && sendQueue.length > 0) {
+      scheduleNextSend(delay);
+    }
+  };
+
   const startSendWatchdog = function (item, runId) {
     clearSendWatchdog();
     sendWatchdog = setTimeout(() => {
@@ -518,10 +548,21 @@ window.FarmGod.Main = (function (Library, Translation) {
         return;
       }
 
+      let remainingDelay = getRemainingDelay();
       currentSendTimedOut = true;
-      sendPaused = true;
-      markSendRow(item, 'error');
-      UI.ErrorMessage(t.messages.sendPaused || 'FarmGod paused after a slow request.');
+      uncertainSendKeys[item.key] = true;
+      markSendRow(item, 'warning');
+      clearSendWatchdog();
+      finishCurrentSend();
+
+      if (getUncertainSendCount() >= MAX_UNCERTAIN_SENDS) {
+        sendPaused = true;
+        UI.ErrorMessage(t.messages.sendPaused || 'FarmGod paused after multiple slow requests.');
+        return;
+      }
+
+      UI.ErrorMessage(t.messages.sendDelayed || 'A farm was not confirmed in time.');
+      scheduleNextSend(remainingDelay);
     }, SEND_STALL_TIMEOUT_MS);
   };
 
@@ -548,37 +589,65 @@ window.FarmGod.Main = (function (Library, Translation) {
   const handleSendSuccess = function (item, response, runId) {
     if (runId !== activeSendRun) return;
 
-    clearSendWatchdog();
-    let wasTimedOut = currentSendTimedOut;
-    let remainingDelay = getRemainingDelay();
+    let wasCurrent = currentSend && currentSend.key === item.key;
+    let remainingDelay = wasCurrent ? getRemainingDelay() : SEND_MIN_DELAY_MS;
+    let wasTimedOut = !!uncertainSendKeys[item.key] || (wasCurrent && currentSendTimedOut);
+
+    if (wasCurrent) {
+      clearSendWatchdog();
+      finishCurrentSend();
+    }
+
+    if (uncertainSendKeys[item.key]) {
+      delete uncertainSendKeys[item.key];
+    }
 
     finishedSendKeys[item.key] = true;
     markSendRow(item, '');
     updateProgressBar();
     getSendIcon(item).closest('.farmRow').remove();
-    finishCurrentSend();
 
     if (response && response.success) {
       UI.SuccessMessage(response.success);
     }
     if (wasTimedOut) {
-      sendPaused = false;
       UI.SuccessMessage(t.messages.sendRecovered || 'Delayed request confirmed, resuming.');
     }
 
-    scheduleNextSend(remainingDelay);
+    if (wasCurrent) {
+      scheduleNextSend(remainingDelay);
+    } else {
+      tryResumeAfterUncertain();
+    }
   };
 
   const handleSendFailure = function (item, error, runId) {
     if (runId !== activeSendRun) return;
 
-    clearSendWatchdog();
+    let wasCurrent = currentSend && currentSend.key === item.key;
+    let remainingDelay = wasCurrent ? getRemainingDelay() : SEND_MIN_DELAY_MS;
+
+    if (wasCurrent) {
+      clearSendWatchdog();
+      finishCurrentSend();
+    }
+
+    if (uncertainSendKeys[item.key]) {
+      delete uncertainSendKeys[item.key];
+    }
+
     markSendRow(item, 'error');
-    sendPaused = true;
-    finishCurrentSend();
     let errorText = getSendErrorText(error);
-    let pauseText = t.messages.sendPaused || 'FarmGod paused after a failed request.';
-    UI.ErrorMessage(errorText && errorText !== t.messages.sendError ? `${errorText} ${pauseText}` : pauseText);
+    let continueText = t.messages.sendSkipped || 'A farm could not be confirmed and was marked.';
+    UI.ErrorMessage(
+      errorText && errorText !== t.messages.sendError ? `${errorText} ${continueText}` : continueText
+    );
+
+    if (wasCurrent) {
+      scheduleNextSend(remainingDelay);
+    } else {
+      tryResumeAfterUncertain();
+    }
   };
 
   const fireNext = function () {
