@@ -301,6 +301,7 @@ window.FarmGod.Translation = (function () {
         sendPaused:
           'FarmGod is gepauzeerd omdat meerdere farms nog onbevestigd zijn. Controleer je uitgaande aanvallen.',
         sendRecovered: 'Vertraagde aanvraag bevestigd, FarmGod gaat verder.',
+        sendRetrying: 'FarmGod probeert de overgeslagen farms nog een keer aan het einde.',
         sendSkipped:
           'Een farm kon niet bevestigd worden en is gemarkeerd. FarmGod gaat verder met de rest.',
       },
@@ -338,6 +339,7 @@ window.FarmGod.Translation = (function () {
         sendPaused:
           'A FarmGod megallt, mert egyszerre tobb farm maradt megerosites nelkul. Ellenorizd a kimeno tamadasokat.',
         sendRecovered: 'A kesleltetett kuldes megerositve, a FarmGod folytatja.',
+        sendRetrying: 'A FarmGod a vegen meg egyszer megprobalja a kihagyott farmokat.',
         sendSkipped:
           'Egy farmot nem sikerult megerositeni, ezert meg lett jelolve. A FarmGod tovabb megy a tobbivel.',
       },
@@ -375,6 +377,7 @@ window.FarmGod.Translation = (function () {
         sendPaused:
           'FarmGod paused because multiple farms are still unconfirmed. Check outgoing commands.',
         sendRecovered: 'Delayed request confirmed, FarmGod resumed.',
+        sendRetrying: 'FarmGod is retrying the skipped farms once at the end.',
         sendSkipped:
           'A farm could not be confirmed and stays marked. FarmGod continues with the rest.',
       },
@@ -397,20 +400,29 @@ window.FarmGod.Main = (function (Library, Translation) {
   const SEND_MIN_DELAY_MS = 180;
   const SEND_MAX_DELAY_MS = 220;
   const SEND_STALL_TIMEOUT_MS = 12000;
+  const FINAL_RETRY_GRACE_MS = 15000;
   const MAX_UNCERTAIN_SENDS = 2;
 
-  // Keep the original pace, but never allow more than one uncertain send in flight.
+  // Keep the original pace, but never allow more than one active send request at a time.
   let sendQueue = [];
+  let retryQueue = [];
   let sendTimer = null;
   let sendWatchdog = null;
+  let finalRetryTimer = null;
+  let pauseRecoveryTimer = null;
   let sendInFlight = false;
   let sendPaused = false;
+  let finalRetryScheduled = false;
   let currentSend = null;
   let currentSendStartedAt = 0;
   let currentSendDelay = 0;
+  let currentSendAttemptId = 0;
   let currentSendTimedOut = false;
+  let nextSendAttemptId = 0;
   let activeSendRun = 0;
   let queuedSendKeys = {};
+  let retryQueuedKeys = {};
+  let retriedSendKeys = {};
   let finishedSendKeys = {};
   let uncertainSendKeys = {};
 
@@ -482,18 +494,40 @@ window.FarmGod.Main = (function (Library, Translation) {
     }
   };
 
+  const clearFinalRetryTimer = function () {
+    if (finalRetryTimer) {
+      clearTimeout(finalRetryTimer);
+      finalRetryTimer = null;
+    }
+    finalRetryScheduled = false;
+  };
+
+  const clearPauseRecoveryTimer = function () {
+    if (pauseRecoveryTimer) {
+      clearTimeout(pauseRecoveryTimer);
+      pauseRecoveryTimer = null;
+    }
+  };
+
   const resetSendState = function () {
     activeSendRun += 1;
     clearSendTimer();
     clearSendWatchdog();
+    clearFinalRetryTimer();
+    clearPauseRecoveryTimer();
     sendQueue = [];
+    retryQueue = [];
     sendInFlight = false;
     sendPaused = false;
     currentSend = null;
     currentSendStartedAt = 0;
     currentSendDelay = 0;
+    currentSendAttemptId = 0;
     currentSendTimedOut = false;
+    nextSendAttemptId = 0;
     queuedSendKeys = {};
+    retryQueuedKeys = {};
+    retriedSendKeys = {};
     finishedSendKeys = {};
     uncertainSendKeys = {};
   };
@@ -514,6 +548,26 @@ window.FarmGod.Main = (function (Library, Translation) {
     return true;
   };
 
+  const enqueueFinalRetry = function (item) {
+    if (
+      !item ||
+      finishedSendKeys[item.key] ||
+      retryQueuedKeys[item.key] ||
+      retriedSendKeys[item.key]
+    ) {
+      return false;
+    }
+
+    retryQueue.push({
+      key: item.key,
+      origin: item.origin,
+      target: item.target,
+      template: item.template,
+    });
+    retryQueuedKeys[item.key] = true;
+    return true;
+  };
+
   const getRemainingDelay = function () {
     let elapsed = Date.now() - currentSendStartedAt;
     return Math.max(0, currentSendDelay - elapsed);
@@ -524,26 +578,105 @@ window.FarmGod.Main = (function (Library, Translation) {
     currentSend = null;
     currentSendStartedAt = 0;
     currentSendDelay = 0;
+    currentSendAttemptId = 0;
     currentSendTimedOut = false;
+  };
+
+  const startFinalRetryPass = function () {
+    clearFinalRetryTimer();
+    clearPauseRecoveryTimer();
+    if (sendInFlight || sendQueue.length > 0 || retryQueue.length === 0) {
+      return;
+    }
+
+    let pendingRetries = retryQueue.filter((item) => {
+      if (finishedSendKeys[item.key] || queuedSendKeys[item.key]) return false;
+      let $icon = getSendIcon(item);
+      return $icon.length > 0 && $icon.closest('.farmRow').length > 0;
+    });
+
+    retryQueue = [];
+    retryQueuedKeys = {};
+
+    if (pendingRetries.length === 0) {
+      return;
+    }
+
+    pendingRetries.forEach((item) => {
+      retriedSendKeys[item.key] = true;
+      sendQueue.push(item);
+      queuedSendKeys[item.key] = true;
+      markSendRow(item, 'warning');
+    });
+
+    sendPaused = false;
+    UI.SuccessMessage(t.messages.sendRetrying || 'FarmGod is retrying skipped farms once at the end.');
+    scheduleNextSend(SEND_MIN_DELAY_MS);
+  };
+
+  const scheduleFinalRetryPass = function (delay = FINAL_RETRY_GRACE_MS) {
+    if (
+      finalRetryScheduled ||
+      sendInFlight ||
+      sendQueue.length > 0 ||
+      retryQueue.length === 0
+    ) {
+      return;
+    }
+
+    finalRetryScheduled = true;
+    finalRetryTimer = setTimeout(() => {
+      finalRetryScheduled = false;
+      finalRetryTimer = null;
+      startFinalRetryPass();
+    }, Math.max(0, delay));
+  };
+
+  const continueQueue = function (delay = SEND_MIN_DELAY_MS) {
+    if (!sendInFlight && !sendPaused && sendQueue.length > 0) {
+      scheduleNextSend(delay);
+    } else if (!sendInFlight && sendQueue.length === 0) {
+      scheduleFinalRetryPass();
+    }
+  };
+
+  const schedulePauseRecovery = function () {
+    if (pauseRecoveryTimer) {
+      return;
+    }
+
+    pauseRecoveryTimer = setTimeout(() => {
+      pauseRecoveryTimer = null;
+      if (!sendPaused || sendInFlight) {
+        return;
+      }
+
+      sendPaused = false;
+      continueQueue(SEND_MIN_DELAY_MS);
+    }, FINAL_RETRY_GRACE_MS);
   };
 
   const tryResumeAfterUncertain = function (delay = SEND_MIN_DELAY_MS) {
     if (sendPaused && getUncertainSendCount() < MAX_UNCERTAIN_SENDS) {
       sendPaused = false;
+      clearPauseRecoveryTimer();
     }
     if (!sendPaused && !sendInFlight && sendQueue.length > 0) {
       scheduleNextSend(delay);
+    } else if (!sendInFlight && sendQueue.length === 0) {
+      scheduleFinalRetryPass();
     }
   };
 
-  const startSendWatchdog = function (item, runId) {
+  const startSendWatchdog = function (item, runId, attemptId) {
     clearSendWatchdog();
     sendWatchdog = setTimeout(() => {
       if (
         runId !== activeSendRun ||
         !sendInFlight ||
         !currentSend ||
-        currentSend.key !== item.key
+        currentSend.key !== item.key ||
+        currentSendAttemptId !== attemptId
       ) {
         return;
       }
@@ -551,6 +684,7 @@ window.FarmGod.Main = (function (Library, Translation) {
       let remainingDelay = getRemainingDelay();
       currentSendTimedOut = true;
       uncertainSendKeys[item.key] = true;
+      enqueueFinalRetry(item);
       markSendRow(item, 'warning');
       clearSendWatchdog();
       finishCurrentSend();
@@ -558,16 +692,18 @@ window.FarmGod.Main = (function (Library, Translation) {
       if (getUncertainSendCount() >= MAX_UNCERTAIN_SENDS) {
         sendPaused = true;
         UI.ErrorMessage(t.messages.sendPaused || 'FarmGod paused after multiple slow requests.');
+        schedulePauseRecovery();
         return;
       }
 
       UI.ErrorMessage(t.messages.sendDelayed || 'A farm was not confirmed in time.');
-      scheduleNextSend(remainingDelay);
+      continueQueue(remainingDelay);
     }, SEND_STALL_TIMEOUT_MS);
   };
 
   const scheduleNextSend = function (delay = 0) {
     clearSendTimer();
+    clearFinalRetryTimer();
     if (sendPaused || sendInFlight || sendQueue.length === 0) {
       return;
     }
@@ -586,12 +722,24 @@ window.FarmGod.Main = (function (Library, Translation) {
     return t.messages.sendError;
   };
 
-  const handleSendSuccess = function (item, response, runId) {
+  const handleSendSuccess = function (item, response, runId, attemptId) {
     if (runId !== activeSendRun) return;
 
-    let wasCurrent = currentSend && currentSend.key === item.key;
+    let wasCurrent =
+      currentSend &&
+      currentSend.key === item.key &&
+      currentSendAttemptId === attemptId;
     let remainingDelay = wasCurrent ? getRemainingDelay() : SEND_MIN_DELAY_MS;
     let wasTimedOut = !!uncertainSendKeys[item.key] || (wasCurrent && currentSendTimedOut);
+
+    if (finishedSendKeys[item.key]) {
+      if (wasCurrent) {
+        clearSendWatchdog();
+        finishCurrentSend();
+        continueQueue(remainingDelay);
+      }
+      return;
+    }
 
     if (wasCurrent) {
       clearSendWatchdog();
@@ -600,6 +748,9 @@ window.FarmGod.Main = (function (Library, Translation) {
 
     if (uncertainSendKeys[item.key]) {
       delete uncertainSendKeys[item.key];
+    }
+    if (retryQueuedKeys[item.key]) {
+      delete retryQueuedKeys[item.key];
     }
 
     finishedSendKeys[item.key] = true;
@@ -615,17 +766,29 @@ window.FarmGod.Main = (function (Library, Translation) {
     }
 
     if (wasCurrent) {
-      scheduleNextSend(remainingDelay);
+      continueQueue(remainingDelay);
     } else {
       tryResumeAfterUncertain();
     }
   };
 
-  const handleSendFailure = function (item, error, runId) {
+  const handleSendFailure = function (item, error, runId, attemptId) {
     if (runId !== activeSendRun) return;
 
-    let wasCurrent = currentSend && currentSend.key === item.key;
+    let wasCurrent =
+      currentSend &&
+      currentSend.key === item.key &&
+      currentSendAttemptId === attemptId;
     let remainingDelay = wasCurrent ? getRemainingDelay() : SEND_MIN_DELAY_MS;
+
+    if (finishedSendKeys[item.key]) {
+      if (wasCurrent) {
+        clearSendWatchdog();
+        finishCurrentSend();
+        continueQueue(remainingDelay);
+      }
+      return;
+    }
 
     if (wasCurrent) {
       clearSendWatchdog();
@@ -635,6 +798,7 @@ window.FarmGod.Main = (function (Library, Translation) {
     if (uncertainSendKeys[item.key]) {
       delete uncertainSendKeys[item.key];
     }
+    enqueueFinalRetry(item);
 
     markSendRow(item, 'error');
     let errorText = getSendErrorText(error);
@@ -644,7 +808,7 @@ window.FarmGod.Main = (function (Library, Translation) {
     );
 
     if (wasCurrent) {
-      scheduleNextSend(remainingDelay);
+      continueQueue(remainingDelay);
     } else {
       tryResumeAfterUncertain();
     }
@@ -673,16 +837,20 @@ window.FarmGod.Main = (function (Library, Translation) {
       currentSend = item;
       currentSendStartedAt = Date.now();
       currentSendDelay = getRandomSendDelay();
+      currentSendAttemptId = ++nextSendAttemptId;
       currentSendTimedOut = false;
       markSendRow(item, 'sending');
 
       let runId = activeSendRun;
-      startSendWatchdog(item, runId);
-      executeSend(item, runId)
-        .done((response) => handleSendSuccess(item, response, runId))
-        .fail((error) => handleSendFailure(item, error, runId));
+      let attemptId = currentSendAttemptId;
+      startSendWatchdog(item, runId, attemptId);
+      executeSend(item, runId, attemptId)
+        .done((response) => handleSendSuccess(item, response, runId, attemptId))
+        .fail((error) => handleSendFailure(item, error, runId, attemptId));
       return;
     }
+
+    scheduleFinalRetryPass();
   };
 
   const startSendQueue = function () {
@@ -930,8 +1098,9 @@ window.FarmGod.Main = (function (Library, Translation) {
             </div>`;
   };
 
-  const executeSend = function (item, runId) {
+  const executeSend = function (item, runId, attemptId) {
     let deferred = $.Deferred();
+    void attemptId;
 
     TribalWars.post(
       Accountmanager.send_units_link.replace(/village=(\d+)/, 'village=' + item.origin),
