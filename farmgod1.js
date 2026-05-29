@@ -296,6 +296,9 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Succesvol van dorp veranderd!',
         villageError: 'Alle farms voor het huidige dorp zijn reeds verstuurd!',
         sendError: 'Error: farm niet verstuurd!',
+        sendPaused:
+          'FarmGod is gepauzeerd na een trage of mislukte aanvraag om dubbele farms te voorkomen. Controleer je uitgaande aanvallen.',
+        sendRecovered: 'Vertraagde aanvraag bevestigd, FarmGod gaat verder.',
       },
     },
     hu_HU: {
@@ -326,6 +329,9 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Falu sikeresen megv\u00E1ltoztatva!',
         villageError: 'Minden farm kiment a jelenlegi falub\u00F3l!',
         sendError: 'Hiba: Farm nemvolt elk\u00FCldve!',
+        sendPaused:
+          'A FarmGod megallt egy lassu vagy hibas keres utan, hogy elkerulje a duplikalt farmokat. Ellenorizd a kimeno tamadasokat.',
+        sendRecovered: 'A kesleltetett kuldes megerositve, a FarmGod folytatja.',
       },
     },
     int: {
@@ -356,6 +362,9 @@ window.FarmGod.Translation = (function () {
         villageChanged: 'Successfully changed village!',
         villageError: 'All farms for the current village have been sent!',
         sendError: 'Error: farm not send!',
+        sendPaused:
+          'FarmGod paused after a slow or failed request to avoid duplicate farms. Check outgoing commands.',
+        sendRecovered: 'Delayed request confirmed, FarmGod resumed.',
       },
     },
   };
@@ -373,9 +382,71 @@ window.FarmGod.Main = (function (Library, Translation) {
   const t = Translation.get();
   let curVillage = null;
 
-  // Send queue: one attack every 180-220ms randomly.
+  const SEND_MIN_DELAY_MS = 180;
+  const SEND_MAX_DELAY_MS = 220;
+  const SEND_STALL_TIMEOUT_MS = 12000;
+
+  // Keep the original pace, but never allow more than one uncertain send in flight.
   let sendQueue = [];
   let sendTimer = null;
+  let sendWatchdog = null;
+  let sendInFlight = false;
+  let sendPaused = false;
+  let currentSend = null;
+  let currentSendStartedAt = 0;
+  let currentSendDelay = 0;
+  let currentSendTimedOut = false;
+  let activeSendRun = 0;
+  let queuedSendKeys = {};
+  let finishedSendKeys = {};
+
+  const buildSendKey = function (origin, target, template) {
+    return [origin, target, template].join('-');
+  };
+
+  const getRandomSendDelay = function () {
+    return SEND_MIN_DELAY_MS + Math.floor(Math.random() * (SEND_MAX_DELAY_MS - SEND_MIN_DELAY_MS + 1));
+  };
+
+  const getSendIcon = function (item) {
+    return $(`.farmGod_icon[data-farmgod-key="${item.key}"]`).first();
+  };
+
+  const updateProgressBar = function () {
+    let $pb = $('#FarmGodProgessbar');
+    if ($pb.length === 0) return;
+    $pb.data('current', $pb.data('current') + 1);
+    UI.updateProgressBar($pb, $pb.data('current'), $pb.data('max'));
+  };
+
+  const extractSendItem = function ($icon) {
+    if (!$icon || $icon.length === 0) return null;
+
+    let origin = parseInt($icon.data('origin'), 10);
+    let target = parseInt($icon.data('target'), 10);
+    let template = parseInt($icon.data('template'), 10);
+
+    if ([origin, target, template].some((value) => Number.isNaN(value))) {
+      return null;
+    }
+
+    let key = buildSendKey(origin, target, template);
+    $icon.attr('data-farmgod-key', key);
+    return { key, origin, target, template };
+  };
+
+  const markSendRow = function (item, state) {
+    let $row = getSendIcon(item).closest('.farmRow');
+    if ($row.length === 0) return;
+
+    if (state === 'sending') {
+      $row.css({ opacity: 0.65, background: '' });
+    } else if (state === 'error') {
+      $row.css({ opacity: 1, background: '#f4d6d6' });
+    } else {
+      $row.css({ opacity: 1, background: '' });
+    }
+  };
 
   const clearSendTimer = function () {
     if (sendTimer) {
@@ -384,29 +455,170 @@ window.FarmGod.Main = (function (Library, Translation) {
     }
   };
 
-  const resetSendState = function () {
-    clearSendTimer();
-    sendQueue = [];
+  const clearSendWatchdog = function () {
+    if (sendWatchdog) {
+      clearTimeout(sendWatchdog);
+      sendWatchdog = null;
+    }
   };
 
-  const fireNext = function () {
-    if (sendQueue.length === 0) {
-      sendTimer = null;
+  const resetSendState = function () {
+    activeSendRun += 1;
+    clearSendTimer();
+    clearSendWatchdog();
+    sendQueue = [];
+    sendInFlight = false;
+    sendPaused = false;
+    currentSend = null;
+    currentSendStartedAt = 0;
+    currentSendDelay = 0;
+    currentSendTimedOut = false;
+    queuedSendKeys = {};
+    finishedSendKeys = {};
+  };
+
+  const enqueueSend = function ($icon, front = false) {
+    let item = extractSendItem($icon);
+    if (!item) return false;
+    if (
+      finishedSendKeys[item.key] ||
+      queuedSendKeys[item.key] ||
+      (currentSend && currentSend.key === item.key)
+    ) {
+      return false;
+    }
+
+    front ? sendQueue.unshift(item) : sendQueue.push(item);
+    queuedSendKeys[item.key] = true;
+    return true;
+  };
+
+  const getRemainingDelay = function () {
+    let elapsed = Date.now() - currentSendStartedAt;
+    return Math.max(0, currentSendDelay - elapsed);
+  };
+
+  const finishCurrentSend = function () {
+    sendInFlight = false;
+    currentSend = null;
+    currentSendStartedAt = 0;
+    currentSendDelay = 0;
+    currentSendTimedOut = false;
+  };
+
+  const startSendWatchdog = function (item, runId) {
+    clearSendWatchdog();
+    sendWatchdog = setTimeout(() => {
+      if (
+        runId !== activeSendRun ||
+        !sendInFlight ||
+        !currentSend ||
+        currentSend.key !== item.key
+      ) {
+        return;
+      }
+
+      currentSendTimedOut = true;
+      sendPaused = true;
+      markSendRow(item, 'error');
+      UI.ErrorMessage(t.messages.sendPaused || 'FarmGod paused after a slow request.');
+    }, SEND_STALL_TIMEOUT_MS);
+  };
+
+  const scheduleNextSend = function (delay = 0) {
+    clearSendTimer();
+    if (sendPaused || sendInFlight || sendQueue.length === 0) {
       return;
     }
 
-    let $icon = sendQueue.shift();
-    if ($icon && $icon.closest('.farmRow').length) {
-      executeSend($icon);
+    sendTimer = setTimeout(fireNext, Math.max(0, delay));
+  };
+
+  const getSendErrorText = function (error) {
+    if (!error) return t.messages.sendError;
+    if (typeof error === 'string') return error;
+    if (typeof error.error === 'string') return error.error;
+    if (typeof error.message === 'string') return error.message;
+    if (typeof error.responseText === 'string' && error.responseText.trim()) {
+      return error.responseText;
+    }
+    return t.messages.sendError;
+  };
+
+  const handleSendSuccess = function (item, response, runId) {
+    if (runId !== activeSendRun) return;
+
+    clearSendWatchdog();
+    let wasTimedOut = currentSendTimedOut;
+    let remainingDelay = getRemainingDelay();
+
+    finishedSendKeys[item.key] = true;
+    markSendRow(item, '');
+    updateProgressBar();
+    getSendIcon(item).closest('.farmRow').remove();
+    finishCurrentSend();
+
+    if (response && response.success) {
+      UI.SuccessMessage(response.success);
+    }
+    if (wasTimedOut) {
+      sendPaused = false;
+      UI.SuccessMessage(t.messages.sendRecovered || 'Delayed request confirmed, resuming.');
     }
 
-    let delay = 180 + Math.floor(Math.random() * 41); // 180-220ms
-    sendTimer = setTimeout(fireNext, delay);
+    scheduleNextSend(remainingDelay);
+  };
+
+  const handleSendFailure = function (item, error, runId) {
+    if (runId !== activeSendRun) return;
+
+    clearSendWatchdog();
+    markSendRow(item, 'error');
+    sendPaused = true;
+    finishCurrentSend();
+    let errorText = getSendErrorText(error);
+    let pauseText = t.messages.sendPaused || 'FarmGod paused after a failed request.';
+    UI.ErrorMessage(errorText && errorText !== t.messages.sendError ? `${errorText} ${pauseText}` : pauseText);
+  };
+
+  const fireNext = function () {
+    clearSendTimer();
+    if (sendPaused || sendInFlight) {
+      return;
+    }
+
+    while (sendQueue.length > 0) {
+      let item = sendQueue.shift();
+      delete queuedSendKeys[item.key];
+
+      if (finishedSendKeys[item.key]) {
+        continue;
+      }
+
+      let $icon = getSendIcon(item);
+      if ($icon.length === 0 || $icon.closest('.farmRow').length === 0) {
+        continue;
+      }
+
+      sendInFlight = true;
+      currentSend = item;
+      currentSendStartedAt = Date.now();
+      currentSendDelay = getRandomSendDelay();
+      currentSendTimedOut = false;
+      markSendRow(item, 'sending');
+
+      let runId = activeSendRun;
+      startSendWatchdog(item, runId);
+      executeSend(item, runId)
+        .done((response) => handleSendSuccess(item, response, runId))
+        .fail((error) => handleSendFailure(item, error, runId));
+      return;
+    }
   };
 
   const startSendQueue = function () {
-    if (sendTimer) return;
-    fireNext();
+    if (sendTimer || sendInFlight || sendPaused) return;
+    scheduleNextSend();
   };
 
   const cleanupLegacyUi = function () {
@@ -479,7 +691,7 @@ window.FarmGod.Main = (function (Library, Translation) {
 
                 // Auto-enqueue all planned farm icons
                 $('.farmGod_icon').each(function () {
-                  sendQueue.push($(this));
+                  enqueueSend($(this));
                 });
                 startSendQueue();
               });
@@ -649,33 +861,28 @@ window.FarmGod.Main = (function (Library, Translation) {
             </div>`;
   };
 
-  const executeSend = function ($this) {
-    let $pb = $('#FarmGodProgessbar');
+  const executeSend = function (item, runId) {
+    let deferred = $.Deferred();
 
     TribalWars.post(
-      Accountmanager.send_units_link.replace(
-        /village=(\d+)/,
-        'village=' + $this.data('origin')
-      ),
+      Accountmanager.send_units_link.replace(/village=(\d+)/, 'village=' + item.origin),
       null,
       {
-        target: $this.data('target'),
-        template_id: $this.data('template'),
-        source: $this.data('origin'),
+        target: item.target,
+        template_id: item.template,
+        source: item.origin,
       },
-      function (r) {
-        UI.SuccessMessage(r.success);
-        $pb.data('current', $pb.data('current') + 1);
-        UI.updateProgressBar($pb, $pb.data('current'), $pb.data('max'));
-        $this.closest('.farmRow').remove();
+      function (response) {
+        if (runId !== activeSendRun) return;
+        deferred.resolve(response);
       },
-      function (r) {
-        UI.ErrorMessage(r || t.messages.sendError);
-        $pb.data('current', $pb.data('current') + 1);
-        UI.updateProgressBar($pb, $pb.data('current'), $pb.data('max'));
-        $this.closest('.farmRow').remove();
+      function (error) {
+        if (runId !== activeSendRun) return;
+        deferred.reject(error);
       }
     );
+
+    return deferred.promise();
   };
 
   const buildOptions = function () {
@@ -827,7 +1034,7 @@ window.FarmGod.Main = (function (Library, Translation) {
                     <td style="text-align:center;"><a href__="${game_data.link_base_pure}info_village&id=${val.origin.id}">${val.origin.name} (${val.origin.coord})</a></td>
                     <td style="text-align:center;"><a href__="${game_data.link_base_pure}info_village&id=${val.target.id}">${val.target.coord}</a></td>
                     <td style="text-align:center;">${val.fields.toFixed(2)}</td>
-                    <td style="text-align:center;"><a href__="#" data-origin="${val.origin.id}" data-target="${val.target.id}" data-template="${val.template.id}" class="farmGod_icon farm_icon farm_icon_${val.template.name}" style="margin:auto;"></a></td>
+                    <td style="text-align:center;"><a href__="#" data-origin="${val.origin.id}" data-target="${val.target.id}" data-template="${val.template.id}" data-farmgod-key="${buildSendKey(val.origin.id, val.target.id, val.template.id)}" class="farmGod_icon farm_icon farm_icon_${val.template.name}" style="margin:auto;"></a></td>
                   </tr>`;
         });
       }
