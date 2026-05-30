@@ -54,10 +54,10 @@ var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
     MAX_FA_PAGES_TO_FETCH: 20,
 };
-var OPEN_TARGET_DELAY_MS = 3000;
 var SOURCE_OVERVIEW_DELAY_MS = 800;
 var SOURCE_OVERVIEW_CACHE_MS = 45000;
 var SOURCE_OVERVIEW_REQUEST_RETRIES = 3;
+var OPEN_ALL_TARGETS_IN_PROGRESS = false;
 
 // Translations
 var translations = {
@@ -153,6 +153,7 @@ async function initClearBarbarianWalls(store) {
                 // event handlers
                 showSettingsPanel(store);
                 bindOpenAllTargetsButton();
+                bindAttackButtons();
             },
             function (error) {
                 UI.ErrorMessage('Error fetching FA pages!');
@@ -381,7 +382,24 @@ function bindOpenAllTargetsButton() {
     });
 }
 
+function bindAttackButtons() {
+    jQuery('.ra-clear-barb-wall-btn')
+        .off('click')
+        .on('click', function (e) {
+            e.preventDefault();
+
+            if (this.classList.contains('btn-already-sent')) {
+                return;
+            }
+
+            highlightOpenedCommands(this);
+            openCommandInCurrentTab(this.href);
+        });
+}
+
 function openGeneratedTargets() {
+    if (OPEN_ALL_TARGETS_IN_PROGRESS) return;
+
     const links = Array.from(
         document.querySelectorAll('.ra-clear-barb-wall-btn')
     ).filter((link) => !link.classList.contains('btn-already-sent'));
@@ -394,22 +412,23 @@ function openGeneratedTargets() {
         button.classList.add('btn-disabled');
         button.textContent = tt('Opening targets...');
     }
+    OPEN_ALL_TARGETS_IN_PROGRESS = true;
 
     links.forEach((link, index) => {
-        setTimeout(() => {
-            window.open(link.href, '_blank', 'noopener,noreferrer');
-            highlightOpenedCommands(link);
+        openCommandInNewTab(link.href, index);
+        highlightOpenedCommands(link);
 
-            if (status) {
-                status.textContent = `${index + 1}/${links.length}`;
-            }
-
-            if (index + 1 === links.length && button) {
-                button.classList.remove('btn-disabled');
-                button.textContent = tt('Finished opening targets!');
-            }
-        }, index * OPEN_TARGET_DELAY_MS);
+        if (status) {
+            status.textContent = `${index + 1}/${links.length}`;
+        }
     });
+
+    OPEN_ALL_TARGETS_IN_PROGRESS = false;
+
+    if (button) {
+        button.classList.remove('btn-disabled');
+        button.textContent = tt('Finished opening targets!');
+    }
 }
 
 function saveSettings() {
@@ -489,7 +508,7 @@ function buildBarbsTable(villages, maxBarbsToShow) {
               )}: ${getVillageUnitAmount(sourceVillage.units, 'catapult')}</small>`
             : `<span style="color:red;">${tt('No source village')}</span>`;
         const actionHtml = commandUrl
-            ? `<a href="${commandUrl}" onClick="highlightOpenedCommands(this);" class="ra-clear-barb-wall-btn btn" target="_self" rel="noopener noreferrer">${tt(
+            ? `<a href="${commandUrl}" class="ra-clear-barb-wall-btn btn" target="_self" rel="noopener noreferrer">${tt(
                   'Attack'
               )}</a>`
             : `<span class="btn btn-disabled">${tt('Attack')}</span>`;
@@ -521,6 +540,15 @@ function highlightOpenedCommands(element) {
     element.classList.add('btn-confirm-yes');
     element.classList.add('btn-already-sent');
     element.parentElement.parentElement.classList.add('already-sent-command');
+}
+
+function openCommandInCurrentTab(url) {
+    window.location.assign(url);
+}
+
+function openCommandInNewTab(url, index) {
+    const windowName = `raClearBarbWall_${Date.now()}_${index}`;
+    return window.open(url, windowName, 'noopener,noreferrer');
 }
 
 async function fetchFAPages(maxFAPagesToFetch) {
