@@ -629,8 +629,6 @@ function getFABarbarians(rows) {
 }
 
 function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
-    // Plan against a mutable copy so one village cannot "spend" the same rams twice.
-    const plannedSourceVillages = cloneSourceVillages(sourceVillages);
     const pendingBarbarians = barbarians.map((barbarian, index) => {
         return {
             ...barbarian,
@@ -638,7 +636,21 @@ function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
             commandUnits: parseCommandUnits(calculateUnitsToSend(barbarian.wall)),
         };
     });
-    const plannedAssignments = new Array(barbarians.length);
+
+    if (haveSameCommandUnits(pendingBarbarians)) {
+        return assignBarbariansWithUniformCommandUnits(
+            pendingBarbarians,
+            sourceVillages
+        );
+    }
+
+    return assignBarbariansWithGreedyPlanner(pendingBarbarians, sourceVillages);
+}
+
+function assignBarbariansWithGreedyPlanner(pendingBarbarians, sourceVillages) {
+    // Plan against a mutable copy so one village cannot "spend" the same rams twice.
+    const plannedSourceVillages = cloneSourceVillages(sourceVillages);
+    const plannedAssignments = new Array(pendingBarbarians.length);
 
     while (pendingBarbarians.length) {
         const nextAssignment = chooseNextBarbarianAssignment(
@@ -653,24 +665,18 @@ function getBarbariansWithSourceVillages(barbarians, sourceVillages) {
             sourceVillage.plannedCommands += 1;
         }
 
-        plannedAssignments[barbarian.originalIndex] = {
-            villageId: barbarian.villageId,
-            coord: barbarian.coord,
-            wall: barbarian.wall,
-            reportId: barbarian.reportId,
-            reportTime: barbarian.reportTime,
-            type: barbarian.type,
-            distance: barbarian.distance,
-            sourceVillage: sourceVillage
+        plannedAssignments[barbarian.originalIndex] = buildBarbarianAssignment(
+            barbarian,
+            sourceVillage
                 ? createSourceVillageSnapshot(sourceVillage)
                 : null,
-            sourceDistance: sourceDistance,
-        };
+            sourceDistance
+        );
 
         pendingBarbarians.splice(pendingIndex, 1);
     }
 
-    return plannedAssignments;
+    return plannedAssignments.map(stripOriginalIndexFromAssignment);
 }
 
 function chooseNextBarbarianAssignment(pendingBarbarians, sourceVillages) {
@@ -729,6 +735,290 @@ function chooseNextBarbarianAssignment(pendingBarbarians, sourceVillages) {
     });
 
     return bestAssignment;
+}
+
+function assignBarbariansWithUniformCommandUnits(
+    pendingBarbarians,
+    sourceVillages
+) {
+    const sharedCommandUnits = pendingBarbarians.length
+        ? pendingBarbarians[0].commandUnits
+        : {};
+    const plannedSourceVillages = cloneSourceVillages(sourceVillages);
+    const sourceVillageSlots = buildSourceVillageSlots(
+        plannedSourceVillages,
+        sharedCommandUnits,
+        pendingBarbarians.length
+    );
+
+    if (!sourceVillageSlots.length) {
+        return pendingBarbarians
+            .map((barbarian) => buildBarbarianAssignment(barbarian, null, null))
+            .sort((left, right) => left.originalIndex - right.originalIndex)
+            .map(stripOriginalIndexFromAssignment);
+    }
+
+    const assignmentsByTargetIndex = solveUniformAssignment(
+        pendingBarbarians,
+        sourceVillageSlots
+    );
+    const finalSourceSnapshots = finalizeUniformAssignments(
+        pendingBarbarians,
+        plannedSourceVillages,
+        assignmentsByTargetIndex
+    );
+
+    return pendingBarbarians
+        .map((barbarian, targetIndex) => {
+            const assignment = assignmentsByTargetIndex[targetIndex];
+            const sourceVillage = assignment
+                ? finalSourceSnapshots.get(assignment.sourceVillage.id) || null
+                : null;
+
+            return buildBarbarianAssignment(
+                barbarian,
+                sourceVillage,
+                assignment ? assignment.distance : null
+            );
+        })
+        .sort((left, right) => left.originalIndex - right.originalIndex)
+        .map(stripOriginalIndexFromAssignment);
+}
+
+function haveSameCommandUnits(pendingBarbarians) {
+    if (!pendingBarbarians.length) {
+        return true;
+    }
+
+    const firstCommandUnitsSignature = serializeCommandUnits(
+        pendingBarbarians[0].commandUnits
+    );
+
+    return pendingBarbarians.every((barbarian) => {
+        return (
+            serializeCommandUnits(barbarian.commandUnits) ===
+            firstCommandUnitsSignature
+        );
+    });
+}
+
+function serializeCommandUnits(commandUnits) {
+    return Object.keys(commandUnits)
+        .sort()
+        .map((unitName) => `${unitName}:${commandUnits[unitName]}`)
+        .join('|');
+}
+
+function buildSourceVillageSlots(
+    sourceVillages,
+    commandUnits,
+    maxAssignments
+) {
+    const slots = [];
+
+    sourceVillages.forEach((sourceVillage) => {
+        const commandCapacity = Math.min(
+            getCommandCapacity(sourceVillage.units, commandUnits),
+            maxAssignments
+        );
+
+        for (let slotIndex = 0; slotIndex < commandCapacity; slotIndex++) {
+            slots.push({
+                sourceVillageId: sourceVillage.id,
+                sourceVillage: sourceVillage,
+            });
+        }
+    });
+
+    return slots;
+}
+
+function getCommandCapacity(availableUnits, commandUnits) {
+    const requiredUnits = Object.entries(commandUnits);
+
+    if (!requiredUnits.length) {
+        return 0;
+    }
+
+    return requiredUnits.reduce((currentMin, [unitName, requiredAmount]) => {
+        const availableAmount = getVillageUnitAmount(availableUnits, unitName);
+        const unitCapacity = Math.floor(availableAmount / requiredAmount);
+        return Math.min(currentMin, unitCapacity);
+    }, Number.POSITIVE_INFINITY);
+}
+
+function solveUniformAssignment(pendingBarbarians, sourceVillageSlots) {
+    const targetCount = pendingBarbarians.length;
+    const slotCount = sourceVillageSlots.length;
+    const matrixSize = Math.max(targetCount, slotCount);
+    const costMatrix = Array.from({ length: matrixSize }, () =>
+        new Array(matrixSize).fill(0)
+    );
+    const unassignedPenalty = 1000000;
+
+    for (let rowIndex = 0; rowIndex < matrixSize; rowIndex++) {
+        for (let columnIndex = 0; columnIndex < matrixSize; columnIndex++) {
+            if (rowIndex < targetCount && columnIndex < slotCount) {
+                costMatrix[rowIndex][columnIndex] = calculateDistanceBetweenCoords(
+                    pendingBarbarians[rowIndex].coord,
+                    sourceVillageSlots[columnIndex].sourceVillage.coord
+                );
+            } else if (rowIndex < targetCount) {
+                costMatrix[rowIndex][columnIndex] = unassignedPenalty;
+            }
+        }
+    }
+
+    const selectedColumns = solveHungarian(costMatrix);
+
+    return pendingBarbarians.map((barbarian, targetIndex) => {
+        const selectedColumn = selectedColumns[targetIndex];
+
+        if (
+            typeof selectedColumn !== 'number' ||
+            selectedColumn < 0 ||
+            selectedColumn >= slotCount
+        ) {
+            return null;
+        }
+
+        const sourceVillage = sourceVillageSlots[selectedColumn].sourceVillage;
+
+        return {
+            sourceVillage: sourceVillage,
+            distance: calculateDistanceBetweenCoords(
+                barbarian.coord,
+                sourceVillage.coord
+            ),
+        };
+    });
+}
+
+function solveHungarian(costMatrix) {
+    const size = costMatrix.length;
+    const u = new Array(size + 1).fill(0);
+    const v = new Array(size + 1).fill(0);
+    const p = new Array(size + 1).fill(0);
+    const way = new Array(size + 1).fill(0);
+
+    for (let row = 1; row <= size; row++) {
+        p[0] = row;
+        let column0 = 0;
+        const minv = new Array(size + 1).fill(Number.POSITIVE_INFINITY);
+        const used = new Array(size + 1).fill(false);
+
+        do {
+            used[column0] = true;
+            const row0 = p[column0];
+            let delta = Number.POSITIVE_INFINITY;
+            let column1 = 0;
+
+            for (let column = 1; column <= size; column++) {
+                if (used[column]) continue;
+
+                const current =
+                    costMatrix[row0 - 1][column - 1] - u[row0] - v[column];
+
+                if (current < minv[column]) {
+                    minv[column] = current;
+                    way[column] = column0;
+                }
+
+                if (minv[column] < delta) {
+                    delta = minv[column];
+                    column1 = column;
+                }
+            }
+
+            for (let column = 0; column <= size; column++) {
+                if (used[column]) {
+                    u[p[column]] += delta;
+                    v[column] -= delta;
+                } else {
+                    minv[column] -= delta;
+                }
+            }
+
+            column0 = column1;
+        } while (p[column0] !== 0);
+
+        do {
+            const column1 = way[column0];
+            p[column0] = p[column1];
+            column0 = column1;
+        } while (column0 !== 0);
+    }
+
+    const assignment = new Array(size).fill(-1);
+
+    for (let column = 1; column <= size; column++) {
+        if (p[column] > 0) {
+            assignment[p[column] - 1] = column - 1;
+        }
+    }
+
+    return assignment;
+}
+
+function finalizeUniformAssignments(
+    pendingBarbarians,
+    plannedSourceVillages,
+    assignmentsByTargetIndex
+) {
+    const sourceAssignmentsCount = new Map();
+
+    assignmentsByTargetIndex.forEach((assignment) => {
+        if (!assignment || !assignment.sourceVillage) return;
+
+        const sourceVillageId = assignment.sourceVillage.id;
+        sourceAssignmentsCount.set(
+            sourceVillageId,
+            (sourceAssignmentsCount.get(sourceVillageId) || 0) + 1
+        );
+    });
+
+    pendingBarbarians.forEach((barbarian, targetIndex) => {
+        const assignment = assignmentsByTargetIndex[targetIndex];
+        if (!assignment || !assignment.sourceVillage) return;
+
+        const sourceVillage = plannedSourceVillages.find(
+            (currentSourceVillage) =>
+                currentSourceVillage.id === assignment.sourceVillage.id
+        );
+
+        if (!sourceVillage) return;
+
+        consumeVillageUnits(sourceVillage.units, barbarian.commandUnits);
+        sourceVillage.plannedCommands =
+            sourceAssignmentsCount.get(sourceVillage.id) || 0;
+    });
+
+    return new Map(
+        plannedSourceVillages.map((sourceVillage) => {
+            return [sourceVillage.id, createSourceVillageSnapshot(sourceVillage)];
+        })
+    );
+}
+
+function buildBarbarianAssignment(barbarian, sourceVillage, sourceDistance) {
+    return {
+        villageId: barbarian.villageId,
+        coord: barbarian.coord,
+        wall: barbarian.wall,
+        reportId: barbarian.reportId,
+        reportTime: barbarian.reportTime,
+        type: barbarian.type,
+        distance: barbarian.distance,
+        sourceVillage: sourceVillage,
+        sourceDistance: sourceDistance,
+        originalIndex: barbarian.originalIndex,
+    };
+}
+
+function stripOriginalIndexFromAssignment(assignment) {
+    const normalizedAssignment = { ...assignment };
+    delete normalizedAssignment.originalIndex;
+    return normalizedAssignment;
 }
 
 async function fetchOwnSourceVillages() {
