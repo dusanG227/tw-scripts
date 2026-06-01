@@ -575,9 +575,14 @@
       return;
     }
 
-    const targetVillages = resolveTargetVillages();
+    const targetInfo = resolveTargetVillages();
+    const targetVillages = targetInfo.villages;
     if (!targetVillages.length) {
-      setStatus("Nenasiel som ziadne dediny pre zadany filter.");
+      if (targetInfo.preExcludedCount > 0 && targetInfo.excludedCount > 0) {
+        setStatus(`Po odfiltrovani spojencov/vlastneho kmenu nezostala ani jedna dedina. Vyhodene: ${targetInfo.excludedCount}.`);
+      } else {
+        setStatus("Nenasiel som ziadne dediny pre zadany filter.");
+      }
       return;
     }
 
@@ -658,7 +663,7 @@
     if (playerFilter.include.length) {
       const players = resolvePlayers(playerFilter.include);
       if (!players.length) {
-        return [];
+        return { villages: [], preExcludedCount: 0, excludedCount: 0 };
       }
       allowedPlayerIds = new Set(players.map((player) => player.id));
     }
@@ -666,7 +671,7 @@
     if (tribeFilter.include.length) {
       const allies = resolveAllies(tribeFilter.include);
       if (!allies.length) {
-        return [];
+        return { villages: [], preExcludedCount: 0, excludedCount: 0 };
       }
 
       const tribePlayerIds = new Set(
@@ -683,18 +688,17 @@
     }
 
     if (!allowedPlayerIds || !allowedPlayerIds.size) {
-      return [];
+      return { villages: [], preExcludedCount: 0, excludedCount: 0 };
     }
 
-    return runtime.villages.rows.filter((village) => {
-      if (!allowedPlayerIds.has(village.playerId)) {
-        return false;
-      }
-      if (excludedTribes.has(normalizeText(village.tribeTag))) {
-        return false;
-      }
-      return true;
-    });
+    const matched = runtime.villages.rows.filter((village) => allowedPlayerIds.has(village.playerId));
+    const villages = matched.filter((village) => !excludedTribes.has(normalizeText(village.tribeTag)));
+
+    return {
+      villages,
+      preExcludedCount: matched.length,
+      excludedCount: matched.length - villages.length,
+    };
   }
 
   function resolveAllies(inputs) {
