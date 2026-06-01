@@ -11,8 +11,11 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "dk-simple-notes-scanner";
-  const MAP_CACHE_KEY = "dk-simple-notes-map-cache";
+  const WORLD_SCOPE = `${location.host}:${window.game_data?.world || "global"}`;
+  const STORAGE_KEY = `dk-simple-notes-scanner:${WORLD_SCOPE}`;
+  const MAP_CACHE_KEY = `dk-simple-notes-map-cache:${WORLD_SCOPE}`;
+  const LEGACY_STORAGE_KEY = "dk-simple-notes-scanner";
+  const LEGACY_MAP_CACHE_KEY = "dk-simple-notes-map-cache";
   const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
   const TYPE_TERMS = {
@@ -62,18 +65,19 @@
         source: "all",
         type: "all",
         tribe: "",
+        allied: "",
         player: "",
         include: "",
       },
     };
 
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
       if (!raw) {
         return fallback;
       }
       const parsed = JSON.parse(raw);
-      return {
+      const loaded = {
         ...fallback,
         ...parsed,
         filters: {
@@ -82,6 +86,10 @@
         },
         results: Array.isArray(parsed.results) ? parsed.results : [],
       };
+      if (!localStorage.getItem(STORAGE_KEY)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+      }
+      return loaded;
     } catch (error) {
       console.warn("[DK Notes Scanner] State read failed", error);
       return fallback;
@@ -115,24 +123,28 @@
             <option value="mobilka">Mobilka</option>
           </select>
         </label>
-        <label>Kmen (skratka)
-          <input data-field="tribe" data-suggest="tribe" type="text" list="dkns-tribe-list" placeholder="napr. G" />
+        <label>Kmeny (skratky)
+          <input data-field="tribe" data-suggest="tribe" type="text" placeholder="napr. G,ABC,-ALLY" />
         </label>
+        <div class="dkns-suggest" data-role="tribe-suggest"></div>
+        <label>Spojenci (ulozene)
+          <input data-field="allied" data-suggest="tribe" type="text" placeholder="napr. ALLY1,ALLY2" />
+        </label>
+        <div class="dkns-suggest" data-role="allied-suggest"></div>
         <label>Hrac
-          <input data-field="player" data-suggest="player" type="text" list="dkns-player-list" placeholder="napr. Sus scrofa" />
+          <input data-field="player" data-suggest="player" type="text" placeholder="napr. Sus scrofa" />
         </label>
+        <div class="dkns-suggest" data-role="player-suggest"></div>
         <label>Poznamka obsahuje
           <input data-field="include" type="text" placeholder="napr. noble, vlak, 1x" />
         </label>
-        <datalist id="dkns-tribe-list"></datalist>
-        <datalist id="dkns-player-list"></datalist>
         <div class="dkns-actions">
           <button type="button" data-action="scan">Spustit scan</button>
           <button type="button" data-action="stop">Stop</button>
           <button type="button" data-action="clear">Clear</button>
         </div>
         <div class="dkns-status" data-role="status">Pripravene.</div>
-        <div class="dkns-hint">Vsetky poznamky = zdielane poznamky z dedin vybraneho kmenu alebo hraca. Len moje = tvoja zalozka poznamok.</div>
+        <div class="dkns-hint">Vsetky poznamky = zdielane poznamky z dedin vybraneho kmenu alebo hraca. Spojenci sa ukladaju natrvalo pre tento svet. Len moje = tvoja zalozka poznamok.</div>
         <div class="dkns-summary" data-role="summary"></div>
         <div class="dkns-copy" data-role="copy"></div>
         <div class="dkns-results" data-role="results"></div>
@@ -206,6 +218,21 @@
         gap: 6px;
         margin-bottom: 8px;
       }
+      #dk-note-scanner-panel .dkns-suggest {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin: -2px 0 8px;
+      }
+      #dk-note-scanner-panel .dkns-suggest:empty {
+        display: none;
+      }
+      #dk-note-scanner-panel .dkns-suggest button {
+        width: auto;
+        margin-top: 0;
+        padding: 3px 7px;
+        font-size: 11px;
+      }
       #dk-note-scanner-panel .dkns-copy-row.two {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -258,6 +285,7 @@
     panel.querySelector("[data-field='source']").value = state.filters.source;
     panel.querySelector("[data-field='type']").value = state.filters.type;
     panel.querySelector("[data-field='tribe']").value = state.filters.tribe;
+    panel.querySelector("[data-field='allied']").value = state.filters.allied;
     panel.querySelector("[data-field='player']").value = state.filters.player;
     panel.querySelector("[data-field='include']").value = state.filters.include;
 
@@ -298,6 +326,11 @@
       return;
     }
 
+    if (action === "pick-suggestion") {
+      applySuggestion(event.target.dataset.kind, event.target.dataset.value);
+      return;
+    }
+
     if (action.startsWith("copy-")) {
       const group = action.replace("copy-", "");
       copyCoords(group);
@@ -315,7 +348,8 @@
 
     const suggest = event.target.dataset?.suggest;
     if (suggest) {
-      updateSuggestions(suggest, event.target.value);
+      const kind = field === "allied" ? "allied" : suggest;
+      updateSuggestions(kind, event.target.value);
     }
 
     renderAll();
@@ -331,6 +365,7 @@
   async function ensureLookupData() {
     if (runtime.lookup.loaded) {
       updateSuggestions("tribe", state.filters.tribe);
+      updateSuggestions("allied", state.filters.allied);
       updateSuggestions("player", state.filters.player);
       return;
     }
@@ -396,6 +431,7 @@
     runtime.lookup.playersById = new Map(players.map((player) => [player.id, player]));
     runtime.lookup.loaded = true;
     updateSuggestions("tribe", state.filters.tribe);
+    updateSuggestions("allied", state.filters.allied);
     updateSuggestions("player", state.filters.player);
   }
 
@@ -404,10 +440,11 @@
       return;
     }
 
-    const lower = normalizeText(query);
+    const token = getLastToken(query);
+    const lower = normalizeText(token.replace(/^[-!]/, ""));
     let values = [];
 
-    if (kind === "tribe") {
+    if (kind === "tribe" || kind === "allied") {
       values = runtime.lookup.allies
         .map((ally) => ally.tag)
         .filter(Boolean)
@@ -422,18 +459,37 @@
     }
 
     const target = kind === "tribe"
-      ? runtime.panel.querySelector("#dkns-tribe-list")
-      : runtime.panel.querySelector("#dkns-player-list");
+      ? runtime.panel.querySelector("[data-role='tribe-suggest']")
+      : kind === "allied"
+        ? runtime.panel.querySelector("[data-role='allied-suggest']")
+        : runtime.panel.querySelector("[data-role='player-suggest']");
 
-    fillDatalist(target, uniqueSortedValues(values).slice(0, 60));
+    fillSuggestionBox(target, kind, uniqueSortedValues(values).slice(0, 10));
   }
 
-  function fillDatalist(node, values) {
+  function fillSuggestionBox(node, kind, values) {
     if (!node) {
       return;
     }
 
-    node.innerHTML = values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
+    node.innerHTML = values
+      .map((value) => `<button type="button" data-action="pick-suggestion" data-kind="${escapeHtml(kind)}" data-value="${escapeHtml(value)}">${escapeHtml(value)}</button>`)
+      .join("");
+  }
+
+  function applySuggestion(kind, value) {
+    const input = runtime.panel?.querySelector(`[data-field='${kind}']`);
+    if (!input) {
+      return;
+    }
+
+    const lastToken = getLastToken(input.value);
+    const prefix = lastToken.startsWith("-") ? "-" : lastToken.startsWith("!") ? "!" : "";
+    input.value = replaceLastToken(input.value, `${prefix}${value}`);
+    state.filters[kind] = input.value;
+    saveState();
+    updateSuggestions(kind, input.value);
+    renderAll();
   }
 
   async function scanSelectedSource() {
@@ -587,28 +643,35 @@
   }
 
   function resolveTargetVillages() {
-    const tribeQuery = state.filters.tribe.trim();
-    const playerQuery = state.filters.player.trim();
+    const tribeFilter = parseSignedTokens(state.filters.tribe);
+    const alliedFilter = parseSignedTokens(state.filters.allied);
+    const playerFilter = parseSignedTokens(state.filters.player);
+    const ownTribeTag = getOwnTribeTag();
+    const excludedTribes = new Set(
+      [...tribeFilter.exclude, ...alliedFilter.include, ...alliedFilter.exclude, ownTribeTag]
+        .filter(Boolean)
+        .map((value) => normalizeText(value))
+    );
 
     let allowedPlayerIds = null;
 
-    if (playerQuery) {
-      const player = resolveSinglePlayer(playerQuery);
-      if (!player) {
+    if (playerFilter.include.length) {
+      const players = resolvePlayers(playerFilter.include);
+      if (!players.length) {
         return [];
       }
-      allowedPlayerIds = new Set([player.id]);
+      allowedPlayerIds = new Set(players.map((player) => player.id));
     }
 
-    if (tribeQuery) {
-      const ally = resolveSingleAlly(tribeQuery);
-      if (!ally) {
+    if (tribeFilter.include.length) {
+      const allies = resolveAllies(tribeFilter.include);
+      if (!allies.length) {
         return [];
       }
 
       const tribePlayerIds = new Set(
         runtime.lookup.players
-          .filter((player) => player.allyId === ally.id)
+          .filter((player) => allies.some((ally) => player.allyId === ally.id))
           .map((player) => player.id)
       );
 
@@ -623,7 +686,39 @@
       return [];
     }
 
-    return runtime.villages.rows.filter((village) => allowedPlayerIds.has(village.playerId));
+    return runtime.villages.rows.filter((village) => {
+      if (!allowedPlayerIds.has(village.playerId)) {
+        return false;
+      }
+      if (excludedTribes.has(normalizeText(village.tribeTag))) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function resolveAllies(inputs) {
+    const resolved = [];
+    for (const input of inputs) {
+      const ally = resolveSingleAlly(input);
+      if (!ally) {
+        return [];
+      }
+      resolved.push(ally);
+    }
+    return uniqueById(resolved);
+  }
+
+  function resolvePlayers(inputs) {
+    const resolved = [];
+    for (const input of inputs) {
+      const player = resolveSinglePlayer(input);
+      if (!player) {
+        return [];
+      }
+      resolved.push(player);
+    }
+    return uniqueById(resolved);
   }
 
   function resolveSingleAlly(input) {
@@ -638,9 +733,9 @@
     }
 
     if (matches.length > 1) {
-      setStatus(`Kmen nie je jednoznacny. Zhod je ${matches.length}. Dopis skratku presnejsie.`);
+      setStatus(`Kmen ${input} nie je jednoznacny.`);
     } else {
-      setStatus("Kmen som nenasiel.");
+      setStatus(`Kmen ${input} som nenasiel.`);
     }
     return null;
   }
@@ -657,9 +752,9 @@
     }
 
     if (matches.length > 1) {
-      setStatus(`Hrac nie je jednoznacny. Zhod je ${matches.length}. Dopis meno presnejsie.`);
+      setStatus(`Hrac ${input} nie je jednoznacny.`);
     } else {
-      setStatus("Hraca som nenasiel.");
+      setStatus(`Hraca ${input} som nenasiel.`);
     }
     return null;
   }
@@ -784,7 +879,8 @@
 
   function parseVillageHtml(html) {
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const rawText = doc.body?.innerText || "";
+    const root = doc.querySelector("#content_value") || doc.querySelector("#info_content") || doc.body;
+    const rawText = root?.innerText || doc.body?.innerText || "";
     const lines = rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     const header = lines.find((line) => /\b\d{3}\|\d{3}\b/.test(line)) || "";
 
@@ -793,19 +889,28 @@
       coords: extractCoords(header),
       owner: extractLabelValue(lines, /^Majit/i),
       tribeTag: extractTribeTag(extractLabelValue(lines, /^Kme/i)),
-      noteText: extractDocumentNoteText(doc, rawText),
+      noteText: extractDocumentNoteText(root, rawText),
       sharedNote: /zdie.*pozn.*dedin/i.test(rawText),
     };
   }
 
-  function extractDocumentNoteText(doc, rawText) {
-    const textarea = Array.from(doc.querySelectorAll("textarea"))
+  function extractDocumentNoteText(root, rawText) {
+    const textarea = Array.from(root.querySelectorAll("textarea"))
       .map((node) => normalizeWhitespace(node.value))
       .filter(Boolean)
       .sort((a, b) => b.length - a.length)[0];
 
     if (textarea) {
       return textarea;
+    }
+
+    const noteLike = Array.from(root.querySelectorAll(".note, .notes, [class*='note'], [id*='note'], .text, .content, pre"))
+      .map((node) => normalizeWhitespace(node.innerText))
+      .filter((value) => value.length >= 3)
+      .sort((a, b) => b.length - a.length)[0];
+
+    if (noteLike) {
+      return noteLike;
     }
 
     return stripVillageNoise(rawText);
@@ -823,10 +928,20 @@
       .filter((line) => !/^Vlastn/i.test(line))
       .filter((line) => !/zdie.*pozn.*dedin/i.test(line))
       .filter((line) => !/narok/i.test(line))
+      .filter((line) => !/Nahlady|Mapa|Spravy|Kmen|Profil|Nastavenia|Forum|Pomocnik|Hromadna sprava/i.test(line))
       .filter((line) => !/\b\d{2}:\d{2}:\d{2}\b/.test(line))
       .filter((line) => !/^\d{1,3}([.]\d{3})*$/.test(line));
 
-    return normalizeWhitespace(lines.join(" | "));
+    const compact = normalizeWhitespace(lines.join(" | "));
+    if (compact.length > 250 && compact.includes("|")) {
+      return compact
+        .split("|")
+        .map((part) => part.trim())
+        .filter((part) => part.length >= 3 && part.length <= 80)
+        .slice(0, 4)
+        .join(" | ");
+    }
+    return compact;
   }
 
   function extractLabelValue(lines, regex) {
@@ -920,6 +1035,15 @@
   }
 
   function getFilteredResults() {
+    const tribeFilter = parseSignedTokens(state.filters.tribe);
+    const alliedFilter = parseSignedTokens(state.filters.allied);
+    const playerFilter = parseSignedTokens(state.filters.player);
+    const excludedTribes = new Set(
+      [...tribeFilter.exclude, ...alliedFilter.include, ...alliedFilter.exclude]
+        .filter(Boolean)
+        .map((value) => normalizeText(value))
+    );
+
     return state.results.filter((result) => {
       if (state.filters.source !== result.sourceType && !(state.filters.source === "all" && result.sourceType === "all")) {
         if (!(state.filters.source === "mine" && result.sourceType === "mine")) {
@@ -927,14 +1051,15 @@
         }
       }
 
-      const tribeNeedle = normalizeText(state.filters.tribe);
-      const playerNeedle = normalizeText(state.filters.player);
-
-      if (tribeNeedle && !normalizeText(result.tribeTag).includes(tribeNeedle)) {
+      if (tribeFilter.include.length && !tribeFilter.include.some((needle) => normalizeText(result.tribeTag).includes(normalizeText(needle)))) {
         return false;
       }
 
-      if (playerNeedle && !normalizeText(result.owner).includes(playerNeedle)) {
+      if (excludedTribes.has(normalizeText(result.tribeTag))) {
+        return false;
+      }
+
+      if (playerFilter.include.length && !playerFilter.include.some((needle) => normalizeText(result.owner).includes(normalizeText(needle)))) {
         return false;
       }
 
@@ -1028,12 +1153,10 @@
     }[group];
 
     const preview = rows.slice(0, PREVIEW_LIMIT).map((item) => {
-      const title = [item.coords || "", item.villageName || ""].filter(Boolean).join(" ");
-      const meta = [item.owner || "?", item.tribeTag || "?", item.sourceType === "mine" ? "moje" : "vsetky"].join(" | ");
+      const title = [item.coords || "???", item.owner || "?"].join(" | ");
       return `
         <div class="dkns-row">
-          <strong>${escapeHtml(title || "Bez nazvu")}</strong>
-          <div class="dkns-meta">${escapeHtml(meta)}</div>
+          <strong>${escapeHtml(title)}</strong>
           <div class="dkns-note">${escapeHtml(item.noteText)}</div>
         </div>
       `;
@@ -1120,6 +1243,60 @@
     }).filter((row) => row.id && row.playerId);
   }
 
+  function parseSignedTokens(input) {
+    const include = [];
+    const exclude = [];
+
+    String(input || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((part) => {
+        if (part.startsWith("-") || part.startsWith("!")) {
+          const value = part.slice(1).trim();
+          if (value) {
+            exclude.push(value);
+          }
+          return;
+        }
+        include.push(part);
+      });
+
+    return { include, exclude };
+  }
+
+  function getLastToken(value) {
+    const parts = String(value || "").split(",");
+    return (parts[parts.length - 1] || "").trim();
+  }
+
+  function replaceLastToken(original, value) {
+    const parts = String(original || "").split(",");
+    if (!parts.length) {
+      return value;
+    }
+    parts[parts.length - 1] = ` ${value}`.trimStart();
+    return parts.map((part) => part.trim()).filter(Boolean).join(", ");
+  }
+
+  function uniqueById(items) {
+    const byId = new Map();
+    items.forEach((item) => {
+      if (item?.id) {
+        byId.set(item.id, item);
+      }
+    });
+    return Array.from(byId.values());
+  }
+
+  function getOwnTribeTag() {
+    const ownAllyId = String(window.game_data?.player?.ally || "");
+    if (!ownAllyId) {
+      return "";
+    }
+    return runtime.lookup.alliesById.get(ownAllyId)?.tag || "";
+  }
+
   async function fetchText(path) {
     const response = await fetch(`${location.origin}${path}`, { credentials: "include" });
     if (!response.ok) {
@@ -1130,7 +1307,7 @@
 
   function readMapCache() {
     try {
-      const raw = localStorage.getItem(MAP_CACHE_KEY);
+      const raw = localStorage.getItem(MAP_CACHE_KEY) || localStorage.getItem(LEGACY_MAP_CACHE_KEY);
       if (!raw) {
         return null;
       }
@@ -1140,6 +1317,9 @@
         return null;
       }
 
+      if (!localStorage.getItem(MAP_CACHE_KEY)) {
+        localStorage.setItem(MAP_CACHE_KEY, JSON.stringify(parsed));
+      }
       return parsed;
     } catch (error) {
       return null;
