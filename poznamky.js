@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Divoke kmene - Scanner poznamok mapy
+// @name         Divoke kmene - Notes Scanner
 // @namespace    https://divoke-kmene.sk/
-// @version      0.2.0
-// @description  Cita poznamky zo zalozky poznamok alebo zo zdielanych poznamok na dedinach mapy, doplna hraca a kmen a umoznuje filtrovanie.
+// @version      0.3.0
+// @description  Jednoduchy scanner poznamok pre Divoke kmene: vsetky zdielane alebo len moje, filtre OFF/DEF/MOBILKA, kopirovanie coords.
 // @match        *://*.divoke-kmene.sk/game.php*
 // @run-at       document-idle
 // @grant        none
@@ -11,76 +11,59 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "dk-note-scanner-state";
-  const NOTE_PRESETS = {
+  const STORAGE_KEY = "dk-simple-notes-scanner";
+  const MAP_CACHE_KEY = "dk-simple-notes-map-cache";
+  const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+  const TYPE_TERMS = {
     all: [],
-    off: ["off", "full off", "opka", "offka", "off village", "utok", "nuke"],
-    def: ["def", "deff", "support", "podpora"],
-    custom: [],
+    off: ["off", "offka", "opka", "nuke", "full off", "utok", "fake off"],
+    def: ["def", "deff", "support", "podpora", "stack", "obrana"],
+    mobilka: ["mobil", "mobilka", "mobilizacia"],
   };
 
-  const SELECTORS = {
-    likelyListRoots: [
-      "#map_notes",
-      "#notes",
-      ".notes",
-      ".note_list",
-      ".note-container",
-      ".popup_box_content",
-      ".content",
-      "#content_value",
-      "#map_config",
-    ],
-    detailContainers: [
-      "#info_content",
-      ".popup_box_content",
-      ".popup_box",
-      ".vis",
-      ".ui-dialog",
-      "#content_value",
-      ".map_popup",
-      ".dialog",
-      ".modal",
-    ],
-    noteTextTargets: [
-      "textarea",
-      "pre",
-      "[contenteditable='true']",
-      ".note",
-      ".notes",
-      "[class*='note']",
-      "[id*='note']",
-      ".text",
-      ".content",
-    ],
-  };
+  const PREVIEW_LIMIT = 30;
 
   const state = loadState();
   const runtime = {
+    panel: null,
     running: false,
     stopRequested: false,
-    panel: null,
-    detectedTargets: [],
+    lookup: {
+      loaded: false,
+      loading: false,
+      allies: [],
+      players: [],
+      playersById: new Map(),
+      alliesById: new Map(),
+    },
+    villages: {
+      loaded: false,
+      loading: false,
+      rows: [],
+    },
   };
 
   boot();
 
   function boot() {
     injectPanel();
-    renderResults();
+    renderAll();
+    ensureLookupData().catch((error) => {
+      console.error("[DK Notes Scanner] Lookup load failed", error);
+      setStatus("Nepodarilo sa nacitat kmene/hracov. Skus refresh.");
+    });
   }
 
   function loadState() {
     const fallback = {
       results: [],
       filters: {
-        source: "notes-list",
-        preset: "all",
-        owner: "",
+        source: "all",
+        type: "all",
         tribe: "",
+        player: "",
         include: "",
-        exclude: "",
-        village: "",
       },
     };
 
@@ -89,7 +72,6 @@
       if (!raw) {
         return fallback;
       }
-
       const parsed = JSON.parse(raw);
       return {
         ...fallback,
@@ -101,7 +83,7 @@
         results: Array.isArray(parsed.results) ? parsed.results : [],
       };
     } catch (error) {
-      console.warn("[DK Notes Scanner] localStorage read failed", error);
+      console.warn("[DK Notes Scanner] State read failed", error);
       return fallback;
     }
   }
@@ -121,50 +103,38 @@
       <div class="dkns-body">
         <label>Zdroj
           <select data-field="source">
-            <option value="notes-list">Zalozka poznamok</option>
-            <option value="shared-map">Zdielane poznamky z viditelnych dedin</option>
+            <option value="all">Vsetky poznamky</option>
+            <option value="mine">Len moje</option>
           </select>
         </label>
-        <label>Preset
-          <select data-field="preset">
-            <option value="all">Vsetko</option>
+        <label>Typ poznamky
+          <select data-field="type">
+            <option value="all">Vsetky</option>
             <option value="off">OFF</option>
             <option value="def">DEF</option>
-            <option value="custom">Custom</option>
+            <option value="mobilka">Mobilka</option>
           </select>
         </label>
-        <label>Hrac
-          <input data-field="owner" type="text" list="dkns-owner-list" placeholder="napr. Sus scrofa" />
+        <label>Kmen (skratka)
+          <input data-field="tribe" data-suggest="tribe" type="text" list="dkns-tribe-list" placeholder="napr. G" />
         </label>
-        <label>Kmen
-          <input data-field="tribe" type="text" list="dkns-tribe-list" placeholder="napr. GOOD GUYS 2.0" />
+        <label>Hrac
+          <input data-field="player" data-suggest="player" type="text" list="dkns-player-list" placeholder="napr. Sus scrofa" />
         </label>
         <label>Poznamka obsahuje
-          <input data-field="include" type="text" placeholder="off, nuke, 1x noble" />
+          <input data-field="include" type="text" placeholder="napr. noble, vlak, 1x" />
         </label>
-        <label>Poznamka neobsahuje
-          <input data-field="exclude" type="text" placeholder="farm, fake" />
-        </label>
-        <label>Nazov dediny / coords
-          <input data-field="village" type="text" list="dkns-village-list" placeholder="napr. 405|495 alebo -0002-" />
-        </label>
-        <datalist id="dkns-owner-list"></datalist>
         <datalist id="dkns-tribe-list"></datalist>
-        <datalist id="dkns-village-list"></datalist>
+        <datalist id="dkns-player-list"></datalist>
         <div class="dkns-actions">
-          <button type="button" data-action="detect">Najdi ciel</button>
-          <button type="button" data-action="scan">Spusti scan</button>
+          <button type="button" data-action="scan">Spustit scan</button>
           <button type="button" data-action="stop">Stop</button>
           <button type="button" data-action="clear">Clear</button>
         </div>
-        <div class="dkns-actions">
-          <button type="button" data-action="filter">Filter</button>
-          <button type="button" data-action="export-csv">CSV</button>
-          <button type="button" data-action="copy-json">JSON</button>
-        </div>
         <div class="dkns-status" data-role="status">Pripravene.</div>
-        <div class="dkns-hint">Zdroj Zalozka poznamok cita tvoj list poznamok. Zdroj Zdielane poznamky z viditelnych dedin ide po dedinach na aktualnej mape a cita info dediny, takze vie zachytit aj shared notes od inych hracov.</div>
+        <div class="dkns-hint">Vsetky poznamky = zdielane poznamky z dedin vybraneho kmenu alebo hraca. Len moje = tvoja zalozka poznamok.</div>
         <div class="dkns-summary" data-role="summary"></div>
+        <div class="dkns-copy" data-role="copy"></div>
         <div class="dkns-results" data-role="results"></div>
       </div>
     `;
@@ -176,8 +146,8 @@
         top: 70px;
         right: 20px;
         z-index: 999999;
-        width: 380px;
-        background: rgba(33, 24, 14, 0.96);
+        width: 390px;
+        background: rgba(33, 24, 14, 0.97);
         color: #f9f0d9;
         border: 2px solid #b38b4d;
         border-radius: 8px;
@@ -201,7 +171,7 @@
       }
       #dk-note-scanner-panel .dkns-body {
         padding: 10px;
-        max-height: 78vh;
+        max-height: 80vh;
         overflow: auto;
       }
       #dk-note-scanner-panel label {
@@ -229,11 +199,15 @@
         color: #2e210f;
         cursor: pointer;
       }
-      #dk-note-scanner-panel .dkns-actions {
+      #dk-note-scanner-panel .dkns-actions,
+      #dk-note-scanner-panel .dkns-copy-row {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 6px;
         margin-bottom: 8px;
+      }
+      #dk-note-scanner-panel .dkns-copy-row.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       #dk-note-scanner-panel .dkns-status,
       #dk-note-scanner-panel .dkns-hint,
@@ -247,6 +221,14 @@
       #dk-note-scanner-panel .dkns-results {
         border-top: 1px solid rgba(255,255,255,0.18);
         padding-top: 8px;
+      }
+      #dk-note-scanner-panel .dkns-group {
+        margin-bottom: 10px;
+      }
+      #dk-note-scanner-panel .dkns-group-title {
+        color: #ffe9bb;
+        font-weight: 700;
+        margin-bottom: 4px;
       }
       #dk-note-scanner-panel .dkns-row {
         padding: 6px 0;
@@ -267,10 +249,6 @@
       #dk-note-scanner-panel.is-collapsed .dkns-body {
         display: none;
       }
-      .dk-note-scanner-highlight {
-        outline: 2px solid #17d06d !important;
-        outline-offset: 1px !important;
-      }
     `;
 
     document.documentElement.appendChild(style);
@@ -278,17 +256,13 @@
     runtime.panel = panel;
 
     panel.querySelector("[data-field='source']").value = state.filters.source;
-    panel.querySelector("[data-field='preset']").value = state.filters.preset;
-    panel.querySelector("[data-field='owner']").value = state.filters.owner;
+    panel.querySelector("[data-field='type']").value = state.filters.type;
     panel.querySelector("[data-field='tribe']").value = state.filters.tribe;
+    panel.querySelector("[data-field='player']").value = state.filters.player;
     panel.querySelector("[data-field='include']").value = state.filters.include;
-    panel.querySelector("[data-field='exclude']").value = state.filters.exclude;
-    panel.querySelector("[data-field='village']").value = state.filters.village;
 
     panel.addEventListener("click", onPanelClick);
-    panel.addEventListener("input", onFilterInput);
-    refreshAutocompleteLists();
-    updateSummary();
+    panel.addEventListener("input", onPanelInput);
   }
 
   function onPanelClick(event) {
@@ -302,18 +276,9 @@
       return;
     }
 
-    if (action === "detect") {
-      if (state.filters.source === "shared-map") {
-        detectVisibleVillageTargets(true);
-      } else {
-        detectNoteRows(true);
-      }
-      return;
-    }
-
     if (action === "scan") {
       scanSelectedSource().catch((error) => {
-        console.error("[DK Notes Scanner]", error);
+        console.error("[DK Notes Scanner] Scan failed", error);
         setStatus(`Scan zlyhal: ${error.message}`);
       });
       return;
@@ -321,34 +286,25 @@
 
     if (action === "stop") {
       runtime.stopRequested = true;
-      setStatus("Zastavenie po aktualnom kroku...");
+      setStatus("Zastavujem po aktualnom kroku...");
       return;
     }
 
     if (action === "clear") {
       state.results = [];
       saveState();
-      renderResults();
+      renderAll();
       setStatus("Vysledky vymazane.");
       return;
     }
 
-    if (action === "filter") {
-      renderResults();
-      return;
-    }
-
-    if (action === "export-csv") {
-      exportCsv();
-      return;
-    }
-
-    if (action === "copy-json") {
-      copyJson();
+    if (action.startsWith("copy-")) {
+      const group = action.replace("copy-", "");
+      copyCoords(group);
     }
   }
 
-  function onFilterInput(event) {
+  function onPanelInput(event) {
     const field = event.target?.dataset?.field;
     if (!field) {
       return;
@@ -356,75 +312,120 @@
 
     state.filters[field] = event.target.value;
     saveState();
-    updateSummary();
+
+    const suggest = event.target.dataset?.suggest;
+    if (suggest) {
+      updateSuggestions(suggest, event.target.value);
+    }
+
+    renderAll();
   }
 
   function setStatus(message) {
-    const target = runtime.panel?.querySelector("[data-role='status']");
-    if (target) {
-      target.textContent = message;
+    const node = runtime.panel?.querySelector("[data-role='status']");
+    if (node) {
+      node.textContent = message;
     }
   }
 
-  function updateSummary() {
-    const filtered = getFilteredResults();
-    const summary = runtime.panel?.querySelector("[data-role='summary']");
-    if (!summary) {
+  async function ensureLookupData() {
+    if (runtime.lookup.loaded) {
+      updateSuggestions("tribe", state.filters.tribe);
+      updateSuggestions("player", state.filters.player);
       return;
     }
 
-    summary.innerHTML = [
-      `Nascannene: <strong>${state.results.length}</strong>`,
-      `Po filtri: <strong>${filtered.length}</strong>`,
-    ].join(" | ");
+    if (runtime.lookup.loading) {
+      return;
+    }
+
+    runtime.lookup.loading = true;
+    setStatus("Nacitavam kmene a hracov...");
+
+    try {
+      const cached = readMapCache();
+      if (cached?.players?.length && cached?.allies?.length) {
+        hydrateLookup(cached.allies, cached.players);
+        setStatus("Kmene a hraci nacitani.");
+        return;
+      }
+
+      const [allyText, playerText] = await Promise.all([
+        fetchText("/map/ally.txt"),
+        fetchText("/map/player.txt"),
+      ]);
+
+      const allies = parseAllies(allyText);
+      const players = parsePlayers(playerText);
+      hydrateLookup(allies, players);
+      writeMapCache({ allies, players });
+      setStatus("Kmene a hraci nacitani.");
+    } finally {
+      runtime.lookup.loading = false;
+      renderAll();
+    }
   }
 
-  function renderResults() {
-    refreshAutocompleteLists();
-    updateSummary();
-
-    const target = runtime.panel?.querySelector("[data-role='results']");
-    if (!target) {
+  async function ensureVillageData() {
+    if (runtime.villages.loaded) {
       return;
     }
 
-    const filtered = getFilteredResults().slice(0, 20);
-    if (!filtered.length) {
-      target.innerHTML = `<div class="dkns-row">Zatial nic. Spusti scan alebo uprav filter.</div>`;
+    if (runtime.villages.loading) {
       return;
     }
 
-    target.innerHTML = filtered.map((item) => {
-      const title = [item.villageName || "Bez nazvu", item.coords || "", item.continent || ""].filter(Boolean).join(" ");
-      const meta = [item.owner || "?", item.tribe || "?", item.sourceType || "", item.villageId ? `id ${item.villageId}` : ""]
+    runtime.villages.loading = true;
+    setStatus("Nacitavam dediny sveta...");
+
+    try {
+      await ensureLookupData();
+      const villageText = await fetchText("/map/village.txt");
+      runtime.villages.rows = parseVillages(villageText);
+      runtime.villages.loaded = true;
+      setStatus(`Dediny nacitane: ${runtime.villages.rows.length}`);
+    } finally {
+      runtime.villages.loading = false;
+    }
+  }
+
+  function hydrateLookup(allies, players) {
+    runtime.lookup.allies = allies;
+    runtime.lookup.players = players;
+    runtime.lookup.alliesById = new Map(allies.map((ally) => [ally.id, ally]));
+    runtime.lookup.playersById = new Map(players.map((player) => [player.id, player]));
+    runtime.lookup.loaded = true;
+    updateSuggestions("tribe", state.filters.tribe);
+    updateSuggestions("player", state.filters.player);
+  }
+
+  function updateSuggestions(kind, query) {
+    if (!runtime.panel || !runtime.lookup.loaded) {
+      return;
+    }
+
+    const lower = normalizeText(query);
+    let values = [];
+
+    if (kind === "tribe") {
+      values = runtime.lookup.allies
+        .map((ally) => ally.tag)
         .filter(Boolean)
-        .join(" | ");
-
-      return `
-        <div class="dkns-row">
-          <strong>${escapeHtml(title)}</strong>
-          <div class="dkns-meta">${escapeHtml(meta)}</div>
-          <div class="dkns-note">${escapeHtml(item.noteText || item.rowText || "(bez textu)")}</div>
-        </div>
-      `;
-    }).join("");
-  }
-
-  function refreshAutocompleteLists() {
-    if (!runtime.panel) {
-      return;
+        .filter((tag) => !lower || normalizeText(tag).startsWith(lower));
     }
 
-    fillDatalist(runtime.panel.querySelector("#dkns-owner-list"), uniqueSortedValues(state.results.map((item) => item.owner)));
-    fillDatalist(runtime.panel.querySelector("#dkns-tribe-list"), uniqueSortedValues(state.results.map((item) => item.tribe)));
-    fillDatalist(
-      runtime.panel.querySelector("#dkns-village-list"),
-      uniqueSortedValues(
-        state.results.flatMap((item) => {
-          return [item.villageName, item.coords, [item.villageName, item.coords].filter(Boolean).join(" ")];
-        })
-      )
-    );
+    if (kind === "player") {
+      values = runtime.lookup.players
+        .map((player) => player.name)
+        .filter(Boolean)
+        .filter((name) => !lower || normalizeText(name).startsWith(lower));
+    }
+
+    const target = kind === "tribe"
+      ? runtime.panel.querySelector("#dkns-tribe-list")
+      : runtime.panel.querySelector("#dkns-player-list");
+
+    fillDatalist(target, uniqueSortedValues(values).slice(0, 60));
   }
 
   function fillDatalist(node, values) {
@@ -432,610 +433,332 @@
       return;
     }
 
-    node.innerHTML = values
-      .slice(0, 300)
-      .map((value) => `<option value="${escapeHtml(value)}"></option>`)
-      .join("");
-  }
-
-  function getFilteredResults() {
-    const presetTerms = NOTE_PRESETS[state.filters.preset] || [];
-    const includeTerms = [...presetTerms, ...splitTerms(state.filters.include)];
-    const excludeTerms = splitTerms(state.filters.exclude);
-    const ownerNeedle = normalizeText(state.filters.owner);
-    const tribeNeedle = normalizeText(state.filters.tribe);
-    const villageNeedle = normalizeText(state.filters.village);
-
-    return state.results.filter((item) => {
-      const haystack = normalizeText([
-        item.noteText,
-        item.rowText,
-        item.villageName,
-        item.coords,
-        item.owner,
-        item.tribe,
-      ].filter(Boolean).join(" | "));
-
-      if (ownerNeedle && !normalizeText(item.owner).includes(ownerNeedle)) {
-        return false;
-      }
-
-      if (tribeNeedle && !normalizeText(item.tribe).includes(tribeNeedle)) {
-        return false;
-      }
-
-      if (villageNeedle && !haystack.includes(villageNeedle)) {
-        return false;
-      }
-
-      if (includeTerms.length && !includeTerms.some((term) => haystack.includes(normalizeText(term)))) {
-        return false;
-      }
-
-      if (excludeTerms.length && excludeTerms.some((term) => haystack.includes(normalizeText(term)))) {
-        return false;
-      }
-
-      return true;
-    });
+    node.innerHTML = values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
   }
 
   async function scanSelectedSource() {
-    if (state.filters.source === "shared-map") {
-      await scanVisibleVillageNotes();
-      return;
-    }
-
-    await scanNotesList();
-  }
-
-  function detectNoteRows(announce) {
-    clearHighlights();
-
-    const root = findLikelyNotesRoot();
-    if (!root) {
-      runtime.detectedTargets = [];
-      if (announce) {
-        setStatus("Nenasiel som zalozku s poznamkami. Otvor ju a skus znova.");
-      }
-      return [];
-    }
-
-    const rows = extractRowsFromRoot(root);
-    rows.forEach((row) => row.classList.add("dk-note-scanner-highlight"));
-    runtime.detectedTargets = rows;
-
-    if (announce) {
-      setStatus(`Nasiel som ${rows.length} riadkov na aktualnej strane.`);
-    }
-
-    return rows;
-  }
-
-  async function scanNotesList() {
     if (runtime.running) {
       setStatus("Scan uz bezi.");
       return;
     }
 
-    const rows = detectNoteRows(false);
+    if (state.filters.source === "mine") {
+      await scanMine();
+      return;
+    }
+
+    await scanAllShared();
+  }
+
+  async function scanMine() {
+    const rows = findMineRows();
     if (!rows.length) {
-      setStatus("Nenasli sa riadky poznamok. Skontroluj, ze je otvorena spravna zalozka.");
+      setStatus("Pre Len moje otvor svoju zalozku poznamok a skus znova.");
       return;
     }
 
     runtime.running = true;
     runtime.stopRequested = false;
-    setStatus(`Spustam scan ${rows.length} riadkov...`);
+    setStatus(`Scanujem tvoje poznamky: ${rows.length} riadkov`);
 
     try {
       const currentVillageId = getCurrentVillageId();
       for (let index = 0; index < rows.length; index += 1) {
         if (runtime.stopRequested) {
-          setStatus("Scan bol zastaveny.");
+          setStatus("Scan zastaveny.");
           break;
         }
 
         const row = rows[index];
         const rowInfo = extractRowInfo(row);
-        if (!rowInfo.signature) {
+        if (!rowInfo.villageId) {
           continue;
         }
 
-        if (hasSignature(rowInfo.signature)) {
-          setStatus(`Preskakujem duplicitu ${index + 1}/${rows.length}...`);
-          continue;
-        }
+        const detail = await openMineRow(row);
+        const info = currentVillageId
+          ? await fetchVillageInfo(currentVillageId, rowInfo.villageId).catch(() => null)
+          : null;
 
-        setStatus(`Spracovavam ${index + 1}/${rows.length}: ${rowInfo.coords || rowInfo.villageName || rowInfo.villageId || "riadok"}`);
-
-        const detail = await openRowAndExtractDetail(row);
-        const merged = {
-          ...rowInfo,
-          ...detail,
-          noteText: detail.noteText || rowInfo.rowText,
-          sourceType: "notes-list",
+        const result = {
+          villageId: rowInfo.villageId,
+          coords: rowInfo.coords || info?.coords || "",
+          villageName: rowInfo.villageName || info?.villageName || "",
+          owner: info?.owner || "",
+          tribeTag: info?.tribeTag || "",
+          noteText: detail.noteText || rowInfo.rowText || info?.noteText || "",
+          sourceType: "mine",
           scannedAt: new Date().toISOString(),
-          sourcePage: location.href,
         };
 
-        if (merged.villageId && currentVillageId) {
-          const info = await fetchVillageInfo(currentVillageId, merged.villageId).catch(() => null);
-          if (info) {
-            merged.villageName = merged.villageName || info.villageName;
-            merged.coords = merged.coords || info.coords;
-            merged.continent = merged.continent || info.continent;
-            merged.owner = merged.owner || info.owner;
-            merged.tribe = merged.tribe || info.tribe;
-            if (!merged.noteText && info.noteText) {
-              merged.noteText = info.noteText;
-            }
-          }
-        }
-
-        pushResult(merged);
-        await sleep(250);
-      }
-    } finally {
-      runtime.running = false;
-      runtime.stopRequested = false;
-      saveState();
-      renderResults();
-      setStatus(`Hotovo. Nascannene spolu ${state.results.length} zaznamov.`);
-    }
-  }
-
-  function detectVisibleVillageTargets(announce) {
-    clearHighlights();
-
-    const targets = collectVisibleVillageTargets();
-    targets.forEach((target) => {
-      target.element?.classList?.add("dk-note-scanner-highlight");
-    });
-    runtime.detectedTargets = targets;
-
-    if (announce) {
-      setStatus(`Nasiel som ${targets.length} viditelnych dedin s id na aktualnej mape.`);
-    }
-
-    return targets;
-  }
-
-  async function scanVisibleVillageNotes() {
-    if (runtime.running) {
-      setStatus("Scan uz bezi.");
-      return;
-    }
-
-    const currentVillageId = getCurrentVillageId();
-    if (!currentVillageId) {
-      setStatus("V URL chyba parameter village, neviem otvorit info dediny.");
-      return;
-    }
-
-    const targets = detectVisibleVillageTargets(false);
-    if (!targets.length) {
-      setStatus("Nenasiel som viditelne dediny na mape. Skus iny zoom alebo otvor klasicku mapu.");
-      return;
-    }
-
-    runtime.running = true;
-    runtime.stopRequested = false;
-    setStatus(`Spustam scan ${targets.length} dedin z mapy...`);
-
-    try {
-      for (let index = 0; index < targets.length; index += 1) {
-        if (runtime.stopRequested) {
-          setStatus("Scan bol zastaveny.");
-          break;
-        }
-
-        const target = targets[index];
-        setStatus(`Citam ${index + 1}/${targets.length}: ${target.coords || target.villageName || `id ${target.villageId}`}`);
-
-        const info = await fetchVillageInfo(currentVillageId, target.villageId).catch(() => null);
-        if (!info) {
-          await sleep(140);
+        if (!result.noteText) {
           continue;
         }
 
-        if (!info.sharedNote && !normalizeWhitespace(info.noteText)) {
-          await sleep(120);
-          continue;
-        }
-
-        const noteText = info.noteText || "(shared note zachytena, ale bez textu)";
-        const merged = {
-          villageId: target.villageId,
-          villageName: target.villageName || info.villageName || "",
-          coords: target.coords || info.coords || "",
-          continent: target.continent || info.continent || "",
-          owner: info.owner || target.owner || "",
-          tribe: info.tribe || target.tribe || "",
-          noteText,
-          sharedNote: Boolean(info.sharedNote),
-          sourceType: "shared-map",
-          signature: buildResultSignature("shared-map", target.villageId, noteText),
-          scannedAt: new Date().toISOString(),
-          sourcePage: location.href,
-        };
-
-        pushResult(merged);
+        pushResult(result);
+        setStatus(`Tvoje poznamky ${index + 1}/${rows.length}`);
         await sleep(180);
       }
     } finally {
       runtime.running = false;
       runtime.stopRequested = false;
-      saveState();
-      renderResults();
-      setStatus(`Hotovo. Nascannene spolu ${state.results.length} zaznamov.`);
+      renderAll();
+      setStatus(`Hotovo. Nalezy: ${getFilteredResults().length}`);
     }
   }
 
-  function findLikelyNotesRoot() {
-    const selectorHits = SELECTORS.likelyListRoots
-      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
-      .filter(isVisible);
+  async function scanAllShared() {
+    await ensureLookupData();
+    await ensureVillageData();
 
-    const rootCandidates = new Set(selectorHits);
-    Array.from(document.body.querySelectorAll("div, section, aside")).forEach((node) => {
-      if (!isVisible(node)) {
+    const tribeQuery = state.filters.tribe.trim();
+    const playerQuery = state.filters.player.trim();
+
+    if (!tribeQuery && !playerQuery) {
+      setStatus("Pri Vsetky poznamky zadaj aspon kmen alebo hraca.");
+      return;
+    }
+
+    const targetVillages = resolveTargetVillages();
+    if (!targetVillages.length) {
+      setStatus("Nenasiel som ziadne dediny pre zadany filter.");
+      return;
+    }
+
+    if (targetVillages.length > 600) {
+      const ok = window.confirm(`Nasiel som ${targetVillages.length} dedin. Scan bude dlhy. Pokracovat?`);
+      if (!ok) {
+        setStatus("Scan zruseny.");
         return;
       }
-
-      const text = normalizeWhitespace(node.innerText);
-      if (!text || text.length < 40) {
-        return;
-      }
-
-      const coordsCount = (text.match(/\b\d{3}\|\d{3}\b/g) || []).length;
-      const linkCount = node.querySelectorAll("a[href*='info_village']").length;
-      if (coordsCount >= 2 || linkCount >= 2) {
-        rootCandidates.add(node);
-      }
-    });
-
-    let winner = null;
-    let winnerScore = -1;
-
-    rootCandidates.forEach((root) => {
-      const score = scoreRoot(root);
-      if (score > winnerScore) {
-        winner = root;
-        winnerScore = score;
-      }
-    });
-
-    return winner;
-  }
-
-  function scoreRoot(root) {
-    if (!root || !isVisible(root)) {
-      return -1;
     }
 
-    const text = normalizeWhitespace(root.innerText);
-    if (!text) {
-      return -1;
+    const currentVillageId = getCurrentVillageId();
+    if (!currentVillageId) {
+      setStatus("Na mape chyba parameter village. Otvor hru normalne a skus znova.");
+      return;
     }
 
-    const coordsCount = (text.match(/\b\d{3}\|\d{3}\b/g) || []).length;
-    const linkCount = root.querySelectorAll("a[href*='info_village']").length;
-    const rowCount = extractRowsFromRoot(root).length;
-    return rowCount * 10 + linkCount * 6 + coordsCount * 3 + Math.min(text.length / 300, 10);
+    runtime.running = true;
+    runtime.stopRequested = false;
+    setStatus(`Scanujem ${targetVillages.length} dedin...`);
+
+    try {
+      for (let index = 0; index < targetVillages.length; index += 1) {
+        if (runtime.stopRequested) {
+          setStatus("Scan zastaveny.");
+          break;
+        }
+
+        const village = targetVillages[index];
+        const info = await fetchVillageInfo(currentVillageId, village.id).catch(() => null);
+        setStatus(`Dedina ${index + 1}/${targetVillages.length}: ${village.coords}`);
+
+        if (!info || (!info.sharedNote && !info.noteText)) {
+          await sleep(140);
+          continue;
+        }
+
+        const result = {
+          villageId: village.id,
+          coords: village.coords,
+          villageName: village.name,
+          owner: village.playerName || info.owner || "",
+          tribeTag: village.tribeTag || info.tribeTag || "",
+          noteText: info.noteText || "",
+          sourceType: "all",
+          scannedAt: new Date().toISOString(),
+        };
+
+        if (!result.noteText) {
+          await sleep(120);
+          continue;
+        }
+
+        pushResult(result);
+        await sleep(140);
+      }
+    } finally {
+      runtime.running = false;
+      runtime.stopRequested = false;
+      renderAll();
+      setStatus(`Hotovo. Nalezy: ${getFilteredResults().length}`);
+    }
   }
 
-  function extractRowsFromRoot(root) {
+  function resolveTargetVillages() {
+    const tribeQuery = state.filters.tribe.trim();
+    const playerQuery = state.filters.player.trim();
+
+    let allowedPlayerIds = null;
+
+    if (playerQuery) {
+      const player = resolveSinglePlayer(playerQuery);
+      if (!player) {
+        return [];
+      }
+      allowedPlayerIds = new Set([player.id]);
+    }
+
+    if (tribeQuery) {
+      const ally = resolveSingleAlly(tribeQuery);
+      if (!ally) {
+        return [];
+      }
+
+      const tribePlayerIds = new Set(
+        runtime.lookup.players
+          .filter((player) => player.allyId === ally.id)
+          .map((player) => player.id)
+      );
+
+      if (!allowedPlayerIds) {
+        allowedPlayerIds = tribePlayerIds;
+      } else {
+        allowedPlayerIds = new Set([...allowedPlayerIds].filter((id) => tribePlayerIds.has(id)));
+      }
+    }
+
+    if (!allowedPlayerIds || !allowedPlayerIds.size) {
+      return [];
+    }
+
+    return runtime.villages.rows.filter((village) => allowedPlayerIds.has(village.playerId));
+  }
+
+  function resolveSingleAlly(input) {
+    const exact = runtime.lookup.allies.find((ally) => normalizeText(ally.tag) === normalizeText(input));
+    if (exact) {
+      return exact;
+    }
+
+    const matches = runtime.lookup.allies.filter((ally) => normalizeText(ally.tag).startsWith(normalizeText(input)));
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    if (matches.length > 1) {
+      setStatus(`Kmen nie je jednoznacny. Zhod je ${matches.length}. Dopis skratku presnejsie.`);
+    } else {
+      setStatus("Kmen som nenasiel.");
+    }
+    return null;
+  }
+
+  function resolveSinglePlayer(input) {
+    const exact = runtime.lookup.players.find((player) => normalizeText(player.name) === normalizeText(input));
+    if (exact) {
+      return exact;
+    }
+
+    const matches = runtime.lookup.players.filter((player) => normalizeText(player.name).startsWith(normalizeText(input)));
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    if (matches.length > 1) {
+      setStatus(`Hrac nie je jednoznacny. Zhod je ${matches.length}. Dopis meno presnejsie.`);
+    } else {
+      setStatus("Hraca som nenasiel.");
+    }
+    return null;
+  }
+
+  function findMineRows() {
     const candidates = new Set();
 
-    root.querySelectorAll("a[href*='info_village']").forEach((link) => {
+    document.querySelectorAll("a[href*='screen=info_village']").forEach((link) => {
       const row = link.closest("tr, li, .row, .entry, .item, div") || link;
-      candidates.add(row);
-    });
-
-    root.querySelectorAll("tr, li, .row, .entry, .item, div").forEach((node) => {
-      if (!isVisible(node)) {
-        return;
-      }
-
-      const text = normalizeWhitespace(node.innerText);
-      if (!text || text.length < 3 || text.length > 600) {
-        return;
-      }
-
-      if (/\b\d{3}\|\d{3}\b/.test(text) || /screen=info_village/.test(node.innerHTML)) {
-        candidates.add(node);
+      const text = normalizeWhitespace(row.innerText);
+      if (text && text.length <= 600) {
+        candidates.add(row);
       }
     });
 
     return Array.from(candidates)
-      .filter(isVisible)
-      .filter((node) => {
-        const text = normalizeWhitespace(node.innerText);
-        return text && text.length >= 3 && text.length <= 600;
-      })
-      .filter((node) => !Array.from(node.children).some((child) => candidates.has(child)))
+      .filter((node) => isVisible(node))
+      .filter((node) => /\b\d{3}\|\d{3}\b/.test(node.innerText || ""))
       .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
   }
 
   function extractRowInfo(row) {
-    const link = row.querySelector("a[href*='info_village']") || row.closest("a[href*='info_village']");
+    const link = row.querySelector("a[href*='screen=info_village']") || row.closest("a[href*='screen=info_village']");
     const href = link?.href || "";
-    const villageId = href ? safeReadVillageId(href) : row.dataset.villageId || "";
+    const villageId = href ? new URL(href, location.origin).searchParams.get("id") || "" : "";
     const rowText = normalizeWhitespace(row.innerText);
     const coords = extractCoords(rowText);
-    const villageNameMatch = rowText.match(/^(.+?)\s+\d{3}\|\d{3}\b/);
-    const villageName = villageNameMatch ? villageNameMatch[1].trim() : "";
+    const nameMatch = rowText.match(/^(.+?)\s+\d{3}\|\d{3}\b/);
 
     return {
       villageId,
-      villageName,
       coords,
+      villageName: nameMatch ? nameMatch[1].trim() : "",
       rowText,
-      signature: buildResultSignature("notes-list", villageId, [coords, rowText].join("::")),
     };
   }
 
-  async function openRowAndExtractDetail(row) {
-    const beforeText = getBestDetailText();
+  async function openMineRow(row) {
+    const before = getBestPopupText();
     safeClick(row);
     await sleep(300);
-    await waitFor(() => getBestDetailText() !== beforeText, 2200).catch(() => null);
+    await waitFor(() => getBestPopupText() !== before, 2000).catch(() => null);
 
-    const container = findBestDetailContainer();
-    if (!container) {
+    const popup = findBestPopup();
+    if (!popup) {
       return {};
     }
 
-    const detailRaw = container.innerText || "";
     return {
-      ...parseVillageRawText(detailRaw),
-      noteText: findNoteText(container, row),
+      noteText: extractPopupNoteText(popup),
     };
   }
 
-  function getBestDetailText() {
-    const container = findBestDetailContainer();
-    return container ? normalizeWhitespace(container.innerText) : "";
+  function getBestPopupText() {
+    const popup = findBestPopup();
+    return popup ? normalizeWhitespace(popup.innerText) : "";
   }
 
-  function findBestDetailContainer() {
-    const candidates = SELECTORS.detailContainers
-      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
-      .filter(isVisible);
+  function findBestPopup() {
+    const candidates = Array.from(document.querySelectorAll("#info_content, .popup_box_content, .popup_box, .vis, .ui-dialog, #content_value"))
+      .filter((node) => isVisible(node));
 
-    let winner = null;
+    let best = null;
     let bestScore = -1;
 
     candidates.forEach((node) => {
       const text = normalizeWhitespace(node.innerText);
-      if (!text || text.length < 30) {
+      if (!text) {
         return;
       }
 
       let score = 0;
-      if (/Majit/i.test(text)) score += 8;
-      if (/Kme/i.test(text)) score += 8;
-      if (/\b\d{3}\|\d{3}\b/.test(text)) score += 5;
-      if (/pozn/i.test(text)) score += 4;
-      if (/moral/i.test(text)) score += 2;
-      score += Math.min(text.length / 150, 6);
-
+      if (/Majit/i.test(text)) score += 5;
+      if (/Kme/i.test(text)) score += 5;
+      if (/\b\d{3}\|\d{3}\b/.test(text)) score += 3;
+      if (/pozn/i.test(text)) score += 3;
       if (score > bestScore) {
-        winner = node;
+        best = node;
         bestScore = score;
       }
     });
 
-    return winner;
+    return best;
   }
 
-  function findNoteText(container, row) {
-    for (const selector of SELECTORS.noteTextTargets) {
-      const match = Array.from(container.querySelectorAll(selector)).find((node) => {
+  function extractPopupNoteText(popup) {
+    const selectors = ["textarea", "pre", ".note", ".notes", "[class*='note']", "[id*='note']", ".text", ".content"];
+    for (const selector of selectors) {
+      const found = Array.from(popup.querySelectorAll(selector)).find((node) => {
         const value = "value" in node ? node.value : node.innerText;
         return normalizeWhitespace(value).length >= 3;
       });
-
-      if (match) {
-        const value = "value" in match ? match.value : match.innerText;
-        const clean = normalizeWhitespace(value);
-        if (clean.length >= 3) {
-          return clean;
-        }
+      if (found) {
+        const value = "value" in found ? found.value : found.innerText;
+        return normalizeWhitespace(value);
       }
     }
 
-    const raw = container.innerText || "";
-    const stripped = stripVillageInfoNoise(raw);
-    if (stripped.length >= 3) {
-      return stripped;
-    }
-
-    return normalizeWhitespace(row.innerText);
-  }
-
-  function collectVisibleVillageTargets() {
-    const byId = new Map();
-
-    collectVisibleVillageTargetsFromDom().forEach((target) => {
-      if (target?.villageId) {
-        byId.set(String(target.villageId), target);
-      }
-    });
-
-    collectVisibleVillageTargetsFromGlobals().forEach((target) => {
-      if (!target?.villageId) {
-        return;
-      }
-
-      const key = String(target.villageId);
-      const existing = byId.get(key) || {};
-      byId.set(key, {
-        villageId: key,
-        villageName: existing.villageName || target.villageName || "",
-        coords: existing.coords || target.coords || "",
-        continent: existing.continent || target.continent || "",
-        owner: existing.owner || target.owner || "",
-        tribe: existing.tribe || target.tribe || "",
-        element: existing.element || target.element || null,
-      });
-    });
-
-    return Array.from(byId.values()).sort((a, b) => (a.coords || "").localeCompare(b.coords || "", "sk"));
-  }
-
-  function collectVisibleVillageTargetsFromDom() {
-    const targets = [];
-    const seen = new Set();
-    const selectors = [
-      "a[href*='screen=info_village'][href*='id=']",
-      "[data-village-id]",
-      "[data-id]",
-      "[onclick*='info_village']",
-      "[href*='info_village']",
-    ];
-
-    selectors.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((node) => {
-        if (!isVisible(node)) {
-          return;
-        }
-
-        const villageId = extractVillageIdFromNode(node);
-        if (!villageId || seen.has(villageId)) {
-          return;
-        }
-
-        seen.add(villageId);
-        const text = [node.innerText, node.getAttribute("title"), node.getAttribute("aria-label")].filter(Boolean).join(" ");
-        targets.push({
-          villageId,
-          villageName: extractVillageNameFromText(text),
-          coords: extractCoords(text),
-          continent: extractContinent(text),
-          element: node,
-        });
-      });
-    });
-
-    return targets;
-  }
-
-  function collectVisibleVillageTargetsFromGlobals() {
-    const twMap = window.TWMap;
-    if (!twMap) {
-      return [];
-    }
-
-    const sources = [
-      twMap.villages,
-      twMap.map?.villages,
-      twMap.data?.villages,
-      twMap.villageCache,
-    ].filter(Boolean);
-
-    const results = [];
-    const seen = new Set();
-
-    sources.forEach((source) => {
-      flattenVillageCandidates(source).forEach((candidate) => {
-        const normalized = normalizeVillageCandidate(candidate);
-        if (!normalized || seen.has(normalized.villageId)) {
-          return;
-        }
-
-        seen.add(normalized.villageId);
-        results.push(normalized);
-      });
-    });
-
-    return results;
-  }
-
-  function flattenVillageCandidates(source) {
-    if (!source || typeof source !== "object") {
-      return [];
-    }
-
-    const out = [];
-    const queue = [source];
-    const visited = new Set();
-
-    while (queue.length && out.length < 2500) {
-      const current = queue.shift();
-      if (!current || typeof current !== "object" || visited.has(current)) {
-        continue;
-      }
-
-      visited.add(current);
-      out.push(current);
-
-      if (Array.isArray(current)) {
-        current.forEach((item) => queue.push(item));
-      } else {
-        Object.values(current).forEach((item) => {
-          if (item && typeof item === "object") {
-            queue.push(item);
-          }
-        });
-      }
-    }
-
-    return out;
-  }
-
-  function normalizeVillageCandidate(candidate) {
-    if (!candidate || typeof candidate !== "object") {
-      return null;
-    }
-
-    const villageId = firstNonEmpty([candidate.id, candidate.villageId, candidate.village_id, candidate.vid]);
-    if (!villageId) {
-      return null;
-    }
-
-    const x = firstNonEmpty([candidate.x, candidate.posX, candidate.coord_x]);
-    const y = firstNonEmpty([candidate.y, candidate.posY, candidate.coord_y]);
-
-    return {
-      villageId: String(villageId),
-      villageName: firstNonEmpty([candidate.name, candidate.villageName, candidate.label]) || "",
-      coords: x !== "" && y !== "" ? `${String(x).padStart(3, "0")}|${String(y).padStart(3, "0")}` : "",
-      continent: extractContinent(firstNonEmpty([candidate.continent, candidate.k]) || ""),
-      owner: firstNonEmpty([candidate.owner_name, candidate.ownerName, candidate.player_name]) || "",
-      tribe: firstNonEmpty([candidate.ally_name, candidate.allyName, candidate.tribe_name]) || "",
-      element: null,
-    };
-  }
-
-  function extractVillageIdFromNode(node) {
-    const direct = firstNonEmpty([
-      node.dataset?.villageId,
-      node.dataset?.id,
-      node.getAttribute("data-village-id"),
-      node.getAttribute("data-id"),
-    ]);
-    if (direct) {
-      return String(direct);
-    }
-
-    const href = node.getAttribute("href") || "";
-    if (href.includes("info_village")) {
-      return safeReadVillageId(href);
-    }
-
-    const onclick = node.getAttribute("onclick") || "";
-    const match = onclick.match(/id[=:'"]+(\d+)/i);
-    return match ? match[1] : "";
-  }
-
-  function safeReadVillageId(href) {
-    try {
-      return new URL(href, location.origin).searchParams.get("id") || "";
-    } catch (error) {
-      return "";
-    }
+    return stripVillageNoise(popup.innerText || "");
   }
 
   async function fetchVillageInfo(currentVillageId, targetVillageId) {
@@ -1062,58 +785,69 @@
   function parseVillageHtml(html) {
     const doc = new DOMParser().parseFromString(html, "text/html");
     const rawText = doc.body?.innerText || "";
-    const parsed = parseVillageRawText(rawText);
-    const noteText = extractNoteTextFromDocument(doc, rawText);
+    const lines = rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const header = lines.find((line) => /\b\d{3}\|\d{3}\b/.test(line)) || "";
 
     return {
-      ...parsed,
-      noteText,
-      sharedNote: hasSharedNoteIndicator(rawText) || Boolean(noteText),
+      villageName: extractVillageName(header),
+      coords: extractCoords(header),
+      owner: extractLabelValue(lines, /^Majit/i),
+      tribeTag: extractTribeTag(extractLabelValue(lines, /^Kme/i)),
+      noteText: extractDocumentNoteText(doc, rawText),
+      sharedNote: /zdie.*pozn.*dedin/i.test(rawText),
     };
   }
 
-  function parseVillageRawText(rawText) {
-    const raw = String(rawText || "");
-    const lines = raw
+  function extractDocumentNoteText(doc, rawText) {
+    const textarea = Array.from(doc.querySelectorAll("textarea"))
+      .map((node) => normalizeWhitespace(node.value))
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)[0];
+
+    if (textarea) {
+      return textarea;
+    }
+
+    return stripVillageNoise(rawText);
+  }
+
+  function stripVillageNoise(rawText) {
+    const lines = String(rawText || "")
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter(Boolean);
-    const compact = normalizeWhitespace(raw);
+      .filter(Boolean)
+      .filter((line) => !/^Body:/i.test(line))
+      .filter((line) => !/^Majit/i.test(line))
+      .filter((line) => !/^Kme/i.test(line))
+      .filter((line) => !/^Moral/i.test(line))
+      .filter((line) => !/^Vlastn/i.test(line))
+      .filter((line) => !/zdie.*pozn.*dedin/i.test(line))
+      .filter((line) => !/narok/i.test(line))
+      .filter((line) => !/\b\d{2}:\d{2}:\d{2}\b/.test(line))
+      .filter((line) => !/^\d{1,3}([.]\d{3})*$/.test(line));
 
-    const headerLine = lines.find((line) => /\b\d{3}\|\d{3}\b/.test(line)) || compact;
-    const headerMatch = headerLine.match(/(.+?)\s+\((\d{3}\|\d{3})\)\s+(K\d{2})/i);
-
-    return {
-      villageName: headerMatch ? headerMatch[1].trim() : extractVillageNameFromText(headerLine),
-      coords: headerMatch ? headerMatch[2] : extractCoords(headerLine),
-      continent: headerMatch ? headerMatch[3].toUpperCase() : extractContinent(headerLine),
-      owner: extractLabeledValue(lines, /^Majit/i),
-      tribe: extractLabeledValue(lines, /^Kme/i),
-    };
+    return normalizeWhitespace(lines.join(" | "));
   }
 
-  function extractLabeledValue(lines, labelRegex) {
+  function extractLabelValue(lines, regex) {
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index];
-      if (!labelRegex.test(line)) {
+      if (!regex.test(line)) {
         continue;
       }
 
       const parts = line.split(":");
-      if (parts.length > 1 && normalizeWhitespace(parts.slice(1).join(":"))) {
-        return cleanupField(parts.slice(1).join(":"));
+      const value = normalizeWhitespace(parts.slice(1).join(":"));
+      if (value) {
+        return cleanupLabelValue(value);
       }
 
-      const next = lines[index + 1] || "";
-      if (next) {
-        return cleanupField(next);
-      }
+      return cleanupLabelValue(lines[index + 1] || "");
     }
-
     return "";
   }
 
-  function cleanupField(value) {
+  function cleanupLabelValue(value) {
     return normalizeWhitespace(
       String(value || "")
         .replace(/\(\d[\d.\s]*bodov.*?\)/i, "")
@@ -1121,177 +855,315 @@
     );
   }
 
-  function extractNoteTextFromDocument(doc, rawText) {
-    const textareaValues = Array.from(doc.querySelectorAll("textarea"))
-      .map((node) => normalizeWhitespace(node.value))
-      .filter(Boolean);
-    if (textareaValues.length) {
-      return textareaValues.sort((a, b) => b.length - a.length)[0];
+  function extractTribeTag(value) {
+    const match = String(value || "").match(/\(([^()]+)\)$/);
+    if (match) {
+      return match[1].trim();
     }
 
-    const selector = SELECTORS.noteTextTargets.join(",");
-    const blockValues = Array.from(doc.querySelectorAll(selector))
-      .map((node) => normalizeWhitespace("value" in node ? node.value : node.innerText))
-      .filter((value) => value.length >= 3);
-    if (blockValues.length) {
-      return blockValues.sort((a, b) => b.length - a.length)[0];
-    }
-
-    const stripped = stripVillageInfoNoise(rawText);
-    if (stripped.length >= 3) {
-      return stripped;
-    }
-
-    return "";
+    const exact = runtime.lookup.allies.find((ally) => normalizeText(ally.name) === normalizeText(value));
+    return exact ? exact.tag : value;
   }
 
-  function stripVillageInfoNoise(rawText) {
-    const lines = String(rawText || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const filtered = lines.filter((line) => {
-      if (/^Body:/i.test(line)) return false;
-      if (/^Majit/i.test(line)) return false;
-      if (/^Kme/i.test(line)) return false;
-      if (/^Moral/i.test(line)) return false;
-      if (/^Vlastn/i.test(line)) return false;
-      if (/zdie.*pozn.*dedine/i.test(line)) return false;
-      if (/konc/i.test(line) && /narok/i.test(line)) return false;
-      if (/\b\d{2}:\d{2}:\d{2}\b/.test(line)) return false;
-      if (/^\d+[.]?\d*$/.test(line)) return false;
-      return true;
-    });
-
-    const merged = filtered.join(" | ");
-    const compact = normalizeWhitespace(merged);
-    if (compact.length < 3) {
-      return "";
-    }
-
-    return compact;
-  }
-
-  function hasSharedNoteIndicator(text) {
-    return /zdie.*pozn.*dedin/i.test(String(text || ""));
-  }
-
-  function pushResult(result) {
-    if (!result.signature) {
-      result.signature = buildResultSignature(result.sourceType || "generic", result.villageId, result.noteText || result.rowText || result.coords);
-    }
-
-    if (hasSignature(result.signature)) {
+  function matchesFilters(result) {
+    if (!result.noteText) {
       return false;
     }
 
-    state.results.push(result);
-    saveState();
-    renderResults();
+    const haystack = normalizeText(result.noteText);
+    const includeNeedles = splitTerms(state.filters.include).map(normalizeText);
+    const type = state.filters.type;
+
+    if (type !== "all") {
+      const typeTerms = TYPE_TERMS[type] || [];
+      if (!typeTerms.some((term) => haystack.includes(normalizeText(term)))) {
+        return false;
+      }
+    }
+
+    if (includeNeedles.length && !includeNeedles.every((needle) => haystack.includes(needle))) {
+      return false;
+    }
+
     return true;
   }
 
-  function hasSignature(signature) {
-    return state.results.some((item) => item.signature === signature);
+  function classifyResult(result) {
+    const text = normalizeText(result.noteText);
+
+    if ((TYPE_TERMS.mobilka || []).some((term) => text.includes(normalizeText(term)))) {
+      return "mobilka";
+    }
+    if ((TYPE_TERMS.off || []).some((term) => text.includes(normalizeText(term)))) {
+      return "off";
+    }
+    if ((TYPE_TERMS.def || []).some((term) => text.includes(normalizeText(term)))) {
+      return "def";
+    }
+    return "other";
   }
 
-  function buildResultSignature(sourceType, villageId, uniqueText) {
-    return [sourceType || "", villageId || "", normalizeText(uniqueText || "")].join("::");
-  }
-
-  function exportCsv() {
-    const rows = getFilteredResults();
-    if (!rows.length) {
-      setStatus("Nie je co exportovat.");
-      return;
+  function pushResult(result) {
+    const signature = `${result.sourceType}::${result.villageId}::${normalizeText(result.noteText)}`;
+    if (state.results.some((item) => item.signature === signature)) {
+      return false;
     }
 
-    const header = ["villageId", "villageName", "coords", "continent", "owner", "tribe", "sourceType", "noteText", "sourcePage", "scannedAt"];
-    const csv = [
-      header.join(";"),
-      ...rows.map((item) => header.map((key) => csvEscape(item[key] || "")).join(";")),
-    ].join("\n");
-
-    downloadFile(`dk-notes-${Date.now()}.csv`, csv, "text/csv;charset=utf-8");
-    setStatus(`CSV export hotovy (${rows.length} riadkov).`);
+    state.results.push({
+      ...result,
+      signature,
+      group: classifyResult(result),
+    });
+    saveState();
+    renderAll();
+    return true;
   }
 
-  async function copyJson() {
-    const rows = getFilteredResults();
-    if (!rows.length) {
-      setStatus("Nie je co kopirovat.");
-      return;
-    }
+  function getFilteredResults() {
+    return state.results.filter((result) => {
+      if (state.filters.source !== result.sourceType && !(state.filters.source === "all" && result.sourceType === "all")) {
+        if (!(state.filters.source === "mine" && result.sourceType === "mine")) {
+          return false;
+        }
+      }
 
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(rows, null, 2));
-      setStatus(`JSON skopirovany (${rows.length} zaznamov).`);
-    } catch (error) {
-      console.error(error);
-      setStatus("Clipboard zlyhal. Skus CSV export.");
-    }
-  }
+      const tribeNeedle = normalizeText(state.filters.tribe);
+      const playerNeedle = normalizeText(state.filters.player);
 
-  function downloadFile(filename, content, mimeType) {
-    const blob = new Blob([content], { type: mimeType });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(link.href);
-  }
+      if (tribeNeedle && !normalizeText(result.tribeTag).includes(tribeNeedle)) {
+        return false;
+      }
 
-  function clearHighlights() {
-    document.querySelectorAll(".dk-note-scanner-highlight").forEach((node) => {
-      node.classList.remove("dk-note-scanner-highlight");
+      if (playerNeedle && !normalizeText(result.owner).includes(playerNeedle)) {
+        return false;
+      }
+
+      return matchesFilters(result);
     });
   }
 
-  function safeClick(node) {
+  function renderAll() {
+    renderSummary();
+    renderCopyButtons();
+    renderResults();
+  }
+
+  function renderSummary() {
+    const filtered = getFilteredResults();
+    const counts = countGroups(filtered);
+    const node = runtime.panel?.querySelector("[data-role='summary']");
     if (!node) {
       return;
     }
 
-    const clickable = node.matches("a, button") ? node : node.querySelector("a, button");
-    (clickable || node).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    node.innerHTML = [
+      `Nalezy: <strong>${filtered.length}</strong>`,
+      `OFF: <strong>${counts.off}</strong>`,
+      `DEF: <strong>${counts.def}</strong>`,
+      `Mobilka: <strong>${counts.mobilka}</strong>`,
+      `Ine: <strong>${counts.other}</strong>`,
+    ].join(" | ");
   }
 
-  function getCurrentVillageId() {
-    return new URLSearchParams(location.search).get("village") || "";
-  }
-
-  function isVisible(node) {
-    if (!node || !(node instanceof Element)) {
-      return false;
+  function renderCopyButtons() {
+    const filtered = getFilteredResults();
+    const node = runtime.panel?.querySelector("[data-role='copy']");
+    if (!node) {
+      return;
     }
 
-    const style = window.getComputedStyle(node);
-    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-      return false;
+    if (!filtered.length) {
+      node.innerHTML = "";
+      return;
     }
 
-    const rect = node.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    node.innerHTML = `
+      <div class="dkns-copy-row">
+        <button type="button" data-action="copy-all">Copy vsetko</button>
+        <button type="button" data-action="copy-off">Copy OFF</button>
+        <button type="button" data-action="copy-def">Copy DEF</button>
+      </div>
+      <div class="dkns-copy-row two">
+        <button type="button" data-action="copy-mobilka">Copy mobilka</button>
+        <button type="button" data-action="copy-other">Copy ine</button>
+      </div>
+    `;
   }
 
-  function splitTerms(input) {
-    return String(input || "")
-      .split(",")
-      .map((term) => term.trim())
-      .filter(Boolean);
+  function renderResults() {
+    const filtered = getFilteredResults();
+    const node = runtime.panel?.querySelector("[data-role='results']");
+    if (!node) {
+      return;
+    }
+
+    if (!filtered.length) {
+      node.innerHTML = `<div class="dkns-row">Zatial nic.</div>`;
+      return;
+    }
+
+    const grouped = {
+      off: filtered.filter((item) => item.group === "off"),
+      def: filtered.filter((item) => item.group === "def"),
+      mobilka: filtered.filter((item) => item.group === "mobilka"),
+      other: filtered.filter((item) => item.group === "other"),
+    };
+
+    node.innerHTML = ["off", "def", "mobilka", "other"]
+      .map((group) => renderGroup(group, grouped[group]))
+      .filter(Boolean)
+      .join("");
   }
 
-  function uniqueSortedValues(values) {
-    return Array.from(
-      new Set(
-        values
-          .map((value) => normalizeWhitespace(value))
-          .filter(Boolean)
-      )
-    ).sort((a, b) => a.localeCompare(b, "sk"));
+  function renderGroup(group, rows) {
+    if (!rows.length) {
+      return "";
+    }
+
+    const label = {
+      off: "OFF",
+      def: "DEF",
+      mobilka: "Mobilka",
+      other: "Ine",
+    }[group];
+
+    const preview = rows.slice(0, PREVIEW_LIMIT).map((item) => {
+      const title = [item.coords || "", item.villageName || ""].filter(Boolean).join(" ");
+      const meta = [item.owner || "?", item.tribeTag || "?", item.sourceType === "mine" ? "moje" : "vsetky"].join(" | ");
+      return `
+        <div class="dkns-row">
+          <strong>${escapeHtml(title || "Bez nazvu")}</strong>
+          <div class="dkns-meta">${escapeHtml(meta)}</div>
+          <div class="dkns-note">${escapeHtml(item.noteText)}</div>
+        </div>
+      `;
+    }).join("");
+
+    const rest = rows.length > PREVIEW_LIMIT
+      ? `<div class="dkns-row">... dalsich ${rows.length - PREVIEW_LIMIT}</div>`
+      : "";
+
+    return `
+      <div class="dkns-group">
+        <div class="dkns-group-title">${label} (${rows.length})</div>
+        ${preview}
+        ${rest}
+      </div>
+    `;
+  }
+
+  function copyCoords(group) {
+    const filtered = getFilteredResults();
+    const rows = group === "all"
+      ? filtered
+      : filtered.filter((item) => item.group === group);
+
+    const coords = uniqueSortedValues(rows.map((item) => item.coords).filter(Boolean));
+    if (!coords.length) {
+      setStatus("Nie su ziadne coords na kopirovanie.");
+      return;
+    }
+
+    navigator.clipboard.writeText(coords.join(" "))
+      .then(() => {
+        const label = group === "all" ? "vsetko" : group;
+        setStatus(`Skopirovane coords: ${label} (${coords.length})`);
+      })
+      .catch(() => {
+        setStatus("Clipboard zlyhal.");
+      });
+  }
+
+  function countGroups(rows) {
+    return rows.reduce((acc, row) => {
+      acc[row.group] += 1;
+      return acc;
+    }, { off: 0, def: 0, mobilka: 0, other: 0 });
+  }
+
+  function parseAllies(text) {
+    return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const cols = line.split(",");
+      return {
+        id: cols[0] || "",
+        name: safeDecode(cols[1] || ""),
+        tag: safeDecode(cols[2] || ""),
+      };
+    }).filter((row) => row.id && row.tag);
+  }
+
+  function parsePlayers(text) {
+    return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const cols = line.split(",");
+      return {
+        id: cols[0] || "",
+        name: safeDecode(cols[1] || ""),
+        allyId: cols[2] || "",
+      };
+    }).filter((row) => row.id && row.name);
+  }
+
+  function parseVillages(text) {
+    return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const cols = line.split(",");
+      const player = runtime.lookup.playersById.get(cols[4] || "");
+      const ally = player ? runtime.lookup.alliesById.get(player.allyId) : null;
+
+      return {
+        id: cols[0] || "",
+        name: safeDecode(cols[1] || ""),
+        coords: `${String(cols[2] || "").padStart(3, "0")}|${String(cols[3] || "").padStart(3, "0")}`,
+        playerId: cols[4] || "",
+        playerName: player?.name || "",
+        tribeTag: ally?.tag || "",
+      };
+    }).filter((row) => row.id && row.playerId);
+  }
+
+  async function fetchText(path) {
+    const response = await fetch(`${location.origin}${path}`, { credentials: "include" });
+    if (!response.ok) {
+      throw new Error(`${path} HTTP ${response.status}`);
+    }
+    return response.text();
+  }
+
+  function readMapCache() {
+    try {
+      const raw = localStorage.getItem(MAP_CACHE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw);
+      if (!parsed.savedAt || Date.now() - parsed.savedAt > CACHE_TTL_MS) {
+        return null;
+      }
+
+      return parsed;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeMapCache(payload) {
+    try {
+      localStorage.setItem(MAP_CACHE_KEY, JSON.stringify({
+        ...payload,
+        savedAt: Date.now(),
+      }));
+    } catch (error) {
+      console.warn("[DK Notes Scanner] Map cache write failed", error);
+    }
+  }
+
+  function safeDecode(value) {
+    const text = String(value || "");
+    try {
+      return decodeURIComponent(text.replace(/\+/g, "%20"));
+    } catch (error) {
+      return text;
+    }
   }
 
   function extractCoords(text) {
@@ -1299,15 +1171,19 @@
     return match ? match[0] : "";
   }
 
-  function extractContinent(text) {
-    const match = String(text || "").match(/\bK\d{2}\b/i);
-    return match ? match[0].toUpperCase() : "";
+  function extractVillageName(text) {
+    const cleaned = normalizeWhitespace(String(text || ""))
+      .replace(/\(\d{3}\|\d{3}\)\s*K\d{2}/i, "")
+      .replace(/\b\d{3}\|\d{3}\b/i, "")
+      .trim();
+    return cleaned;
   }
 
-  function extractVillageNameFromText(text) {
-    const compact = normalizeWhitespace(text);
-    const withoutCoords = compact.replace(/\(\d{3}\|\d{3}\)\s*K\d{2}/i, "").replace(/\b\d{3}\|\d{3}\b/i, "").trim();
-    return withoutCoords.length >= 2 ? withoutCoords : "";
+  function splitTerms(input) {
+    return String(input || "")
+      .split(",")
+      .map((term) => term.trim())
+      .filter(Boolean);
   }
 
   function normalizeText(value) {
@@ -1318,6 +1194,11 @@
     return String(value || "").replace(/\s+/g, " ").trim();
   }
 
+  function uniqueSortedValues(values) {
+    return Array.from(new Set(values.map((value) => normalizeWhitespace(value)).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, "sk"));
+  }
+
   function escapeHtml(value) {
     return String(value || "")
       .replaceAll("&", "&amp;")
@@ -1326,20 +1207,28 @@
       .replaceAll('"', "&quot;");
   }
 
-  function csvEscape(value) {
-    return `"${String(value || "").replaceAll('"', '""')}"`;
+  function getCurrentVillageId() {
+    return new URLSearchParams(location.search).get("village") || "";
   }
 
-  function firstNonEmpty(values) {
-    for (const value of values) {
-      if (value === 0 || value === "0") {
-        return value;
-      }
-      if (value !== undefined && value !== null && String(value).trim() !== "") {
-        return value;
-      }
+  function isVisible(node) {
+    if (!node || !(node instanceof Element)) {
+      return false;
     }
-    return "";
+    const style = window.getComputedStyle(node);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function safeClick(node) {
+    if (!node) {
+      return;
+    }
+    const clickable = node.matches("a, button") ? node : node.querySelector("a, button");
+    (clickable || node).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
   }
 
   function sleep(ms) {
