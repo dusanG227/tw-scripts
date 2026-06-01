@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Divoke kmene - Notes Scanner
 // @namespace    https://divoke-kmene.sk/
-// @version      0.3.0
+// @version      0.4.0
 // @description  Jednoduchy scanner poznamok pre Divoke kmene: vsetky zdielane alebo len moje, filtre OFF/DEF/MOBILKA, kopirovanie coords.
 // @match        *://*.divoke-kmene.sk/game.php*
 // @run-at       document-idle
