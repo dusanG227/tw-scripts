@@ -109,7 +109,10 @@
     panel.innerHTML = `
       <div class="dkns-header">
         <strong data-action="go-map" title="Prejst na mapu">DK Notes Scanner</strong>
-        <button type="button" data-action="toggle">_</button>
+        <div class="dkns-header-actions">
+          <button type="button" data-action="go-map">Mapa</button>
+          <button type="button" data-action="toggle">_</button>
+        </div>
       </div>
       <div class="dkns-body">
         <label>Zdroj
@@ -176,6 +179,10 @@
         justify-content: space-between;
         padding: 8px 10px;
         background: linear-gradient(180deg, #6a512d 0%, #4d391f 100%);
+      }
+      #dk-note-scanner-panel .dkns-header-actions {
+        display: flex;
+        gap: 6px;
       }
       #dk-note-scanner-panel .dkns-header strong {
         cursor: pointer;
@@ -277,7 +284,74 @@
       }
       #dk-note-scanner-panel .dkns-note {
         color: #fff8e8;
-        white-space: pre-wrap;
+        white-space: normal;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: flex-start;
+      }
+      #dk-note-scanner-panel .dkns-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 7px;
+        border: 1px solid #8f6f3d;
+        background: rgba(255, 248, 232, 0.08);
+        color: #fff6e3;
+        border-radius: 999px;
+        line-height: 1.25;
+      }
+      #dk-note-scanner-panel .dkns-chip strong {
+        display: inline;
+      }
+      #dk-note-scanner-panel .dkns-chip.off {
+        background: rgba(153, 28, 28, 0.35);
+        border-color: #d95c5c;
+      }
+      #dk-note-scanner-panel .dkns-chip.def {
+        background: rgba(32, 56, 122, 0.35);
+        border-color: #6d9cff;
+      }
+      #dk-note-scanner-panel .dkns-chip.beton {
+        background: rgba(20, 103, 103, 0.35);
+        border-color: #58d0d0;
+      }
+      #dk-note-scanner-panel .dkns-chip.wall {
+        background: rgba(92, 54, 0, 0.35);
+        border-color: #bd8a4b;
+      }
+      #dk-note-scanner-panel .dkns-chip.time {
+        background: rgba(97, 73, 20, 0.35);
+        border-color: #d8ba62;
+      }
+      #dk-note-scanner-panel .dkns-chip.misc {
+        background: rgba(87, 87, 87, 0.28);
+        border-color: #b8b8b8;
+      }
+      #dk-note-scanner-panel .dkns-building {
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        opacity: 0.9;
+      }
+      #dk-note-scanner-panel .dkns-note details {
+        margin-top: 2px;
+        width: 100%;
+        padding: 4px 6px;
+        border: 1px solid #8f6f3d;
+        background: rgba(0, 0, 0, 0.14);
+      }
+      #dk-note-scanner-panel .dkns-note summary {
+        display: inline-block;
+        cursor: pointer;
+        padding: 2px 6px;
+        border: 1px solid #8f6f3d;
+        background: linear-gradient(180deg, rgba(246, 229, 190, 0.26) 0%, rgba(228, 201, 144, 0.12) 100%);
+        color: #ffe9bb;
+      }
+      #dk-note-scanner-panel .dkns-note .dkns-report-export {
+        color: #c9b58d;
+        font-style: italic;
+        margin-top: 4px;
       }
       #dk-note-scanner-panel.is-collapsed .dkns-body {
         display: none;
@@ -1009,7 +1083,7 @@
       }
     }
 
-    if (includeNeedles.length && !includeNeedles.every((needle) => haystack.includes(needle))) {
+    if (includeNeedles.length && !includeNeedles.some((needle) => haystack.includes(needle))) {
       return false;
     }
 
@@ -1170,7 +1244,7 @@
       return `
         <div class="dkns-row">
           <strong>${escapeHtml(title)}</strong>
-          <div class="dkns-note">${escapeHtml(item.noteText)}</div>
+          <div class="dkns-note">${renderNoteMarkup(item.noteText)}</div>
         </div>
       `;
     }).join("");
@@ -1208,6 +1282,112 @@
       .catch(() => {
         setStatus("Clipboard zlyhal.");
       });
+  }
+
+  function renderNoteMarkup(noteText) {
+    const normalized = String(noteText || "")
+      .replace(/^\s*\|\s*/, "")
+      .replace(/\s*\|\s*$/, "")
+      .trim();
+
+    const spoilers = [];
+    const withoutSpoilers = normalized.replace(/\[spoiler\]([\s\S]*?)\[\/spoiler\]/gi, (_match, content) => {
+      const index = spoilers.push(content) - 1;
+      return `%%DK_SPOILER_${index}%%`;
+    });
+
+    const parts = withoutSpoilers
+      .split(/\s+\|\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return parts.map((part) => {
+      const spoilerMatch = part.match(/^%%DK_SPOILER_(\d+)%%$/);
+      if (spoilerMatch) {
+        const spoilerContent = spoilers[Number(spoilerMatch[1])] || "";
+        return renderSpoilerMarkup(spoilerContent);
+      }
+      return renderNoteChip(part);
+    }).join("");
+  }
+
+  function sanitizeColor(color) {
+    const value = String(color || "").trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(value)) {
+      return value;
+    }
+    if (/^[a-zA-Z]+$/.test(value)) {
+      return value;
+    }
+    return "#fff8e8";
+  }
+
+  function renderSpoilerMarkup(content) {
+    const stripped = String(content || "").replace(/\[report_export\][\s\S]*?\[\/report_export\]/gi, "").trim();
+    const hiddenReport = /\[report_export\][\s\S]*?\[\/report_export\]/i.test(String(content || ""));
+    const body = stripped ? renderNoteChip(stripped) : "";
+    const reportLine = hiddenReport ? `<div class="dkns-report-export">Report export skryty</div>` : "";
+    return `<details><summary>Spoiler</summary>${body}${reportLine}</details>`;
+  }
+
+  function renderNoteChip(rawPart) {
+    const buildingMatch = rawPart.match(/\[building\]([\s\S]*?)\[\/building\]/i);
+    const building = buildingMatch ? buildingMatch[1].trim() : "";
+    const withoutExport = rawPart.replace(/\[report_export\][\s\S]*?\[\/report_export\]/gi, "").trim();
+    const contentHtml = renderInlineMarkup(withoutExport.replace(/\[building\][\s\S]*?\[\/building\]/gi, "").trim());
+    const plain = stripBbCode(withoutExport);
+    const kind = classifyNotePart(plain, building);
+    const buildingHtml = building ? `<span class="dkns-building">${escapeHtml(formatBuildingName(building))}</span>` : "";
+    const reportLine = /\[report_export\][\s\S]*?\[\/report_export\]/i.test(rawPart)
+      ? `<div class="dkns-report-export">Report export skryty</div>`
+      : "";
+    return `<span class="dkns-chip ${kind}">${buildingHtml}${contentHtml || escapeHtml(plain)}</span>${reportLine}`;
+  }
+
+  function renderInlineMarkup(text) {
+    let html = escapeHtml(String(text || ""));
+    html = html.replace(/\[b\]([\s\S]*?)\[\/b\]/gi, `<strong>$1</strong>`);
+    html = html.replace(/\[color=([#a-zA-Z0-9]+)\]([\s\S]*?)\[\/color\]/gi, (_match, color, content) => {
+      const safeColor = sanitizeColor(color);
+      return `<span style="color:${safeColor}">${content}</span>`;
+    });
+    html = html.replace(/\r?\n/g, "<br>");
+    return html;
+  }
+
+  function stripBbCode(text) {
+    return normalizeWhitespace(
+      String(text || "")
+        .replace(/\[\/?(?:b|color(?:=[^\]]+)?|building|spoiler|report_export)\]/gi, " ")
+    );
+  }
+
+  function classifyNotePart(text, building) {
+    const value = normalizeText(text);
+    if (building) {
+      return "wall";
+    }
+    if (value.includes("beton") || value.includes("betón")) {
+      return "beton";
+    }
+    if (value.includes("off")) {
+      return "off";
+    }
+    if (value.includes("def")) {
+      return "def";
+    }
+    if (value.includes("cas boja") || value.includes("čas boja")) {
+      return "time";
+    }
+    return "misc";
+  }
+
+  function formatBuildingName(building) {
+    const value = normalizeText(building);
+    if (value === "wall") {
+      return "WALL";
+    }
+    return String(building || "").toUpperCase();
   }
 
   function countGroups(rows) {
