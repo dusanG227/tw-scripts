@@ -86,6 +86,9 @@
         },
         results: Array.isArray(parsed.results) ? parsed.results : [],
       };
+      loaded.filters.tribe = normalizeTokenList(loaded.filters.tribe);
+      loaded.filters.allied = normalizeTokenList(loaded.filters.allied);
+      loaded.filters.player = normalizeTokenList(loaded.filters.player);
       if (!localStorage.getItem(STORAGE_KEY)) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
       }
@@ -105,7 +108,7 @@
     panel.id = "dk-note-scanner-panel";
     panel.innerHTML = `
       <div class="dkns-header">
-        <strong>DK Notes Scanner</strong>
+        <strong data-action="go-map" title="Prejst na mapu">DK Notes Scanner</strong>
         <button type="button" data-action="toggle">_</button>
       </div>
       <div class="dkns-body">
@@ -124,7 +127,7 @@
           </select>
         </label>
         <label>Kmeny (skratky)
-          <input data-field="tribe" data-suggest="tribe" type="text" placeholder="napr. G,ABC,-ALLY" />
+          <input data-field="tribe" data-suggest="tribe" type="text" placeholder="napr. GG,GGa,GGaa" />
         </label>
         <div class="dkns-suggest" data-role="tribe-suggest"></div>
         <label>Spojenci (ulozene)
@@ -173,6 +176,9 @@
         justify-content: space-between;
         padding: 8px 10px;
         background: linear-gradient(180deg, #6a512d 0%, #4d391f 100%);
+      }
+      #dk-note-scanner-panel .dkns-header strong {
+        cursor: pointer;
       }
       #dk-note-scanner-panel .dkns-header button {
         width: 28px;
@@ -301,6 +307,11 @@
 
     if (action === "toggle") {
       runtime.panel.classList.toggle("is-collapsed");
+      return;
+    }
+
+    if (action === "go-map") {
+      goToMap();
       return;
     }
 
@@ -441,7 +452,7 @@
     }
 
     const token = getLastToken(query);
-    const lower = normalizeText(token.replace(/^[-!]/, ""));
+    const lower = normalizeText(token);
     let values = [];
 
     if (kind === "tribe" || kind === "allied") {
@@ -483,9 +494,7 @@
       return;
     }
 
-    const lastToken = getLastToken(input.value);
-    const prefix = lastToken.startsWith("-") ? "-" : lastToken.startsWith("!") ? "!" : "";
-    input.value = replaceLastToken(input.value, `${prefix}${value}`);
+    input.value = replaceLastToken(input.value, value);
     state.filters[kind] = input.value;
     saveState();
     updateSuggestions(kind, input.value);
@@ -648,28 +657,28 @@
   }
 
   function resolveTargetVillages() {
-    const tribeFilter = parseSignedTokens(state.filters.tribe);
-    const alliedFilter = parseSignedTokens(state.filters.allied);
-    const playerFilter = parseSignedTokens(state.filters.player);
+    const tribeFilter = parseListTokens(state.filters.tribe);
+    const alliedFilter = parseListTokens(state.filters.allied);
+    const playerFilter = parseListTokens(state.filters.player);
     const ownTribeTag = getOwnTribeTag();
     const excludedTribes = new Set(
-      [...tribeFilter.exclude, ...alliedFilter.include, ...alliedFilter.exclude, ownTribeTag]
+      [...alliedFilter, ownTribeTag]
         .filter(Boolean)
         .map((value) => normalizeText(value))
     );
 
     let allowedPlayerIds = null;
 
-    if (playerFilter.include.length) {
-      const players = resolvePlayers(playerFilter.include);
+    if (playerFilter.length) {
+      const players = resolvePlayers(playerFilter);
       if (!players.length) {
         return { villages: [], preExcludedCount: 0, excludedCount: 0 };
       }
       allowedPlayerIds = new Set(players.map((player) => player.id));
     }
 
-    if (tribeFilter.include.length) {
-      const allies = resolveAllies(tribeFilter.include);
+    if (tribeFilter.length) {
+      const allies = resolveAllies(tribeFilter);
       if (!allies.length) {
         return { villages: [], preExcludedCount: 0, excludedCount: 0 };
       }
@@ -1039,11 +1048,11 @@
   }
 
   function getFilteredResults() {
-    const tribeFilter = parseSignedTokens(state.filters.tribe);
-    const alliedFilter = parseSignedTokens(state.filters.allied);
-    const playerFilter = parseSignedTokens(state.filters.player);
+    const tribeFilter = parseListTokens(state.filters.tribe);
+    const alliedFilter = parseListTokens(state.filters.allied);
+    const playerFilter = parseListTokens(state.filters.player);
     const excludedTribes = new Set(
-      [...tribeFilter.exclude, ...alliedFilter.include, ...alliedFilter.exclude]
+      [...alliedFilter]
         .filter(Boolean)
         .map((value) => normalizeText(value))
     );
@@ -1055,7 +1064,7 @@
         }
       }
 
-      if (tribeFilter.include.length && !tribeFilter.include.some((needle) => normalizeText(result.tribeTag).includes(normalizeText(needle)))) {
+      if (tribeFilter.length && !tribeFilter.some((needle) => normalizeText(result.tribeTag).includes(normalizeText(needle)))) {
         return false;
       }
 
@@ -1063,7 +1072,7 @@
         return false;
       }
 
-      if (playerFilter.include.length && !playerFilter.include.some((needle) => normalizeText(result.owner).includes(normalizeText(needle)))) {
+      if (playerFilter.length && !playerFilter.some((needle) => normalizeText(result.owner).includes(normalizeText(needle)))) {
         return false;
       }
 
@@ -1247,26 +1256,15 @@
     }).filter((row) => row.id && row.playerId);
   }
 
-  function parseSignedTokens(input) {
-    const include = [];
-    const exclude = [];
-
-    String(input || "")
+  function parseListTokens(input) {
+    return String(input || "")
       .split(",")
       .map((part) => part.trim())
-      .filter(Boolean)
-      .forEach((part) => {
-        if (part.startsWith("-") || part.startsWith("!")) {
-          const value = part.slice(1).trim();
-          if (value) {
-            exclude.push(value);
-          }
-          return;
-        }
-        include.push(part);
-      });
+      .filter(Boolean);
+  }
 
-    return { include, exclude };
+  function normalizeTokenList(input) {
+    return parseListTokens(input).join(", ");
   }
 
   function getLastToken(value) {
@@ -1393,6 +1391,16 @@
 
   function getCurrentVillageId() {
     return new URLSearchParams(location.search).get("village") || "";
+  }
+
+  function goToMap() {
+    const url = new URL(location.origin + location.pathname);
+    const villageId = getCurrentVillageId() || String(window.game_data?.village?.id || "");
+    if (villageId) {
+      url.searchParams.set("village", villageId);
+    }
+    url.searchParams.set("screen", "map");
+    location.href = url.toString();
   }
 
   function isVisible(node) {
