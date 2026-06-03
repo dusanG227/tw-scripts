@@ -26,18 +26,18 @@ var scriptData = {
 if (typeof DEBUG !== 'boolean') DEBUG = false; // enable/disable debug mode
 if (typeof UNITS_TO_SEND === 'undefined')
     UNITS_TO_SEND = {
-        0: '&spy=1&light=6&ram=2&catapult=15',
-        1: '&spy=1&light=6&ram=2&catapult=15',
-        2: '&spy=1&light=6&ram=2&catapult=15',
-        3: '&spy=1&light=6&ram=2&catapult=15',
-        4: '&spy=1&light=6&ram=2&catapult=15',
-        5: '&spy=1&light=6&ram=2&catapult=15',
-        6: '&spy=1&light=6&ram=2&catapult=15',
-        7: '&spy=1&light=6&ram=2&catapult=15',
-        8: '&spy=1&light=6&ram=2&catapult=15',
-        9: '&spy=1&light=6&ram=2&catapult=15',
-        10: '&spy=1&light=6&ram=2&catapult=15',
-        '?': '&spy=1&light=6&ram=2&catapult=15',
+        0: '&spy=1&light=6&ram=10&catapult=15',
+        1: '&spy=1&light=6&ram=10&catapult=15',
+        2: '&spy=1&light=6&ram=10&catapult=15',
+        3: '&spy=1&light=6&ram=10&catapult=15',
+        4: '&spy=1&light=6&ram=10&catapult=15',
+        5: '&spy=1&light=6&ram=10&catapult=15',
+        6: '&spy=1&light=6&ram=10&catapult=15',
+        7: '&spy=1&light=6&ram=10&catapult=15',
+        8: '&spy=1&light=6&ram=10&catapult=15',
+        9: '&spy=1&light=6&ram=10&catapult=15',
+        10: '&spy=1&light=6&ram=10&catapult=15',
+        '?': '&spy=1&light=6&ram=10&catapult=15',
     };
 
 // Globals
