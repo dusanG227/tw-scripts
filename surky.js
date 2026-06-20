@@ -21,9 +21,9 @@
     var ratioStone = 30;
     var ratioIron = 25;
     var ratioTotal = ratioWood + ratioStone + ratioIron;
-    var coordinate = sessionStorage.getItem("coordinate") || "";
+    var coordinate = getStoredValue("coordinate", "");
     var resLimit = getStoredNumber("resLimit", 0);
-    var sendPercent = getStoredNumber("sendPercent", 15);
+    var sendPercent = getStoredNumber("sendPercent", 100);
     var villagesLoaded = false;
 
     var langShinko = [
@@ -131,14 +131,32 @@
         return true;
     }
 
-    function getStoredNumber(key, defaultValue) {
-        if (key in sessionStorage) {
-            var value = parseFloat(sessionStorage.getItem(key));
-            return Number.isFinite(value) ? value : defaultValue;
+    function getStoredValue(key, defaultValue) {
+        var value = localStorage.getItem(key);
+
+        if (value !== null) {
+            return value;
         }
 
-        sessionStorage.setItem(key, defaultValue);
+        value = sessionStorage.getItem(key);
+
+        if (value !== null) {
+            localStorage.setItem(key, value);
+            return value;
+        }
+
+        localStorage.setItem(key, defaultValue);
         return defaultValue;
+    }
+
+    function setStoredValue(key, value) {
+        localStorage.setItem(key, value);
+        sessionStorage.removeItem(key);
+    }
+
+    function getStoredNumber(key, defaultValue) {
+        var value = parseFloat(getStoredValue(key, defaultValue));
+        return Number.isFinite(value) ? value : defaultValue;
     }
 
     function loadVillagesData() {
@@ -473,9 +491,9 @@
         resLimit = newResLimit;
         sendPercent = newSendPercent;
 
-        sessionStorage.setItem("coordinate", coordinate);
-        sessionStorage.setItem("resLimit", resLimit);
-        sessionStorage.setItem("sendPercent", sendPercent);
+        setStoredValue("coordinate", coordinate);
+        setStoredValue("resLimit", resLimit);
+        setStoredValue("sendPercent", sendPercent);
 
         UI.SuccessMessage("Nastavenia ulozene.");
         return true;
@@ -483,6 +501,7 @@
 
     function sendResource(sourceID, targetID, woodAmount, stoneAmount, ironAmount, rowId) {
         $(".sendResourcesButton").prop("disabled", true);
+        setStoredValue("coordinate", coordinate);
 
         setTimeout(function () {
             $("#" + rowId).remove();
@@ -642,7 +661,7 @@
             }
 
             coordinate = coordMatch[0];
-            sessionStorage.setItem("coordinate", coordinate);
+            setStoredValue("coordinate", coordinate);
 
             var closeThis = document.getElementsByClassName("popup_box_close");
             closeThis[0].click();
