@@ -161,6 +161,24 @@ function getOutsideVillageType(offPop, defPop) {
     return "";
 }
 
+function getNoteTroopInfo(dados, ladoNota) {
+    if ("defensiva" == ladoNota) {
+        return {
+            tipoAldeia: dados.aldeia.defensiva.tipoAldeia,
+            offPop: dados.aldeia.defensiva.tropas.dentro.ofensivas + dados.aldeia.defensiva.tropas.fora.ofensivas,
+            deffPop: dados.aldeia.defensiva.tropas.dentro.defensivas + dados.aldeia.defensiva.tropas.fora.defensivas,
+            popFora: dados.aldeia.defensiva.tropas.fora.ofensivas + dados.aldeia.defensiva.tropas.fora.defensivas
+        };
+    }
+
+    return {
+        tipoAldeia: dados.aldeia.ofensiva.tipoAldeia,
+        offPop: dados.aldeia.ofensiva.tropas.ofensivas,
+        deffPop: dados.aldeia.ofensiva.tropas.defensivas,
+        popFora: 0
+    };
+}
+
 CriarRelatorioNotas = {
     dados: {
         player: {
@@ -296,22 +314,29 @@ CriarRelatorioNotas = {
             ? this.dados.aldeia.ofensiva.tipoAldeia = _t("offensive")
             : this.dados.aldeia.ofensiva.tropas.ofensivas < this.dados.aldeia.ofensiva.tropas.defensivas && (this.dados.aldeia.ofensiva.tipoAldeia = _t("defensive"));
     },
-    geraTextoNota: function () {
-        var a,
+    getLadoNotaAuto: function () {
+        return this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor ? "defensiva" : "ofensiva";
+    },
+    getIdAldeiaNota: function (ladoNota) {
+        return "defensiva" == ladoNota
+            ? parseInt(this.dados.aldeia.defensiva.idAldeia, 10)
+            : parseInt(this.dados.aldeia.ofensiva.idAldeia, 10);
+    },
+    geraTextoNota: function (ladoNota) {
+        ladoNota = ladoNota || this.getLadoNotaAuto();
+
+        var info = getNoteTroopInfo(this.dados, ladoNota),
+            a = info.tipoAldeia,
             e = $("#report_export_code").text(),
             i = $("#content_value > table > tbody > tr > td:nth-child(2) > table > tbody > tr > td > table:nth-child(2) > tbody > tr:nth-child(2)").text().replace(/\s+/g, " ").replace(/.{5}$/g, ""),
             s = "";
-
-        (this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor) && (a = this.dados.aldeia.defensiva.tipoAldeia);
-        this.dados.player.playerEstaAtacar && !this.dados.player.playerQuerInfoAtacante || (a = this.dados.aldeia.ofensiva.tipoAldeia);
-        !this.dados.player.playerEstaAtacar && this.dados.player.playerQuerInfoDefensor && (a = this.dados.aldeia.defensiva.tipoAldeia);
 
         s += " | [color=#" + (a == _t("offensive") || a == _t("probOffensive") ? "ff0000" : "0eae0e") + "][b]" + a + "[/b][/color] | ";
 
         var maxPop = 20500;
         var isOff = (a == _t("offensive") || a == _t("probOffensive"));
-        var offPop = this.dados.aldeia.defensiva.tropas.dentro.ofensivas + this.dados.aldeia.defensiva.tropas.fora.ofensivas;
-        var allDeffPop = this.dados.aldeia.defensiva.tropas.dentro.defensivas + this.dados.aldeia.defensiva.tropas.fora.defensivas;
+        var offPop = info.offPop;
+        var allDeffPop = info.deffPop;
         var currentPop = isOff ? offPop : offPop + allDeffPop;
         var percentLabel = isOff ? "OFF" : "SD";
         var percent = maxPop > 0 ? Math.round(currentPop / maxPop * 100) : 0;
@@ -327,7 +352,7 @@ CriarRelatorioNotas = {
 
         s += "[color=#" + popColor + "][b]" + percent + "% " + percentLabel + " (" + currentPop + "/" + maxPop + ")[/b][/color] | ";
 
-        var popFora = this.dados.aldeia.defensiva.tropas.fora.ofensivas + this.dados.aldeia.defensiva.tropas.fora.defensivas;
+        var popFora = info.popFora;
         if (popFora > 0) {
             s += "[color=#ff8c00][b]Mimo: " + popFora + " pop[/b][/color] | ";
         }
@@ -340,11 +365,11 @@ CriarRelatorioNotas = {
             s += "[color=#ff8c00][b]" + deffStr2 + " deff[/b][/color] | ";
         }
 
-        if (this.dados.aldeia.defensiva.edificios.muralha[0]) {
+        if ("defensiva" == ladoNota && this.dados.aldeia.defensiva.edificios.muralha[0]) {
             s += "[building]wall[/building][color=#5c3600][b] " + _t("wall") + " " + this.dados.aldeia.defensiva.edificios.muralha[1] + "[/b][/color] | ";
         }
 
-        if (this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor) {
+        if ("defensiva" == ladoNota) {
             if (this.dados.aldeia.defensiva.edificios.torre[0]) {
                 s += "[building]watchtower[/building] " + _t("watchtower") + this.dados.aldeia.defensiva.edificios.torre[1] + " | ";
             }
@@ -362,17 +387,16 @@ CriarRelatorioNotas = {
     },
     escreveNota: function () {
         var a, e, i = this, s = "";
+        var ladoNota = this.getLadoNotaAuto();
 
         if (
-            s = this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor
-                ? parseInt(this.dados.aldeia.defensiva.idAldeia, 10)
-                : parseInt(this.dados.aldeia.ofensiva.idAldeia, 10),
+            s = this.getIdAldeiaNota(ladoNota),
             e = "0" == game_data.player.sitter
                 ? "https://" + location.hostname + "/game.php?village=" + game_data.village.id + "&screen=api&ajaxaction=village_note_edit&h=" + game_data.csrf + "&client_time=" + Math.round(Timing.getCurrentServerTime() / 1e3)
                 : "https://" + location.hostname + "/game.php?village=" + game_data.village.id + "&screen=api&ajaxaction=village_note_edit&t=" + game_data.player.id,
             this.dados.player.playerEstaAtacar || this.dados.player.playerEstaDefender
         ) {
-            a = i.geraTextoNota(),
+            a = i.geraTextoNota(ladoNota),
             $.post(e, { note: a, village_id: s, h: game_data.csrf }, (function () {
                 UI.SuccessMessage(_t("noteCreated"), 2e3);
             }));
@@ -384,7 +408,7 @@ CriarRelatorioNotas = {
             Dialog.show("relatorio_notas", o),
             d.find("button.atk").click((function () {
                 i.dados.player.playerQuerInfoAtacante = !0,
-                a = i.geraTextoNota(),
+                a = i.geraTextoNota("ofensiva"),
                 $.post(e, { note: a, village_id: i.dados.aldeia.ofensiva.idAldeia, h: game_data.csrf }, (function () {
                     UI.SuccessMessage(_t("noteCreated"), 2e3);
                 })),
@@ -392,7 +416,7 @@ CriarRelatorioNotas = {
             })),
             d.find("button.def").click((function () {
                 i.dados.player.playerQuerInfoDefensor = !0,
-                a = i.geraTextoNota(),
+                a = i.geraTextoNota("defensiva"),
                 $.post(e, { note: a, village_id: i.dados.aldeia.defensiva.idAldeia, h: game_data.csrf }, (function () {
                     UI.SuccessMessage(_t("noteCreated"), 2e3);
                 })),
