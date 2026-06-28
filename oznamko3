@@ -179,6 +179,51 @@ function getNoteTroopInfo(dados, ladoNota) {
     };
 }
 
+function normalizeReportLabel(text) {
+    return text.toLowerCase()
+        .replace(/[áä]/g, "a")
+        .replace(/č/g, "c")
+        .replace(/ď/g, "d")
+        .replace(/[éě]/g, "e")
+        .replace(/í/g, "i")
+        .replace(/[ĺľ]/g, "l")
+        .replace(/ň/g, "n")
+        .replace(/[óô]/g, "o")
+        .replace(/ŕ/g, "r")
+        .replace(/š/g, "s")
+        .replace(/ť/g, "t")
+        .replace(/ú/g, "u")
+        .replace(/ý/g, "y")
+        .replace(/ž/g, "z")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function getReportReturnTime() {
+    var returnTime = "";
+
+    $("#content_value tr").each((function () {
+        if (returnTime) return;
+
+        var cells = $(this).children("td, th");
+        if (cells.length < 2) return;
+
+        var label = normalizeReportLabel($(cells[0]).text());
+        if (label.indexOf("cas navratu") > -1) {
+            var value = $(cells[1]).text().replace(/\s+/g, " ").trim();
+            value && (returnTime = "Návrat: " + value);
+        }
+    }));
+
+    if (returnTime) return returnTime;
+
+    return $("#content_value > table > tbody > tr > td:nth-child(2) > table > tbody > tr > td > table:nth-child(2) > tbody > tr:nth-child(4)")
+        .text()
+        .replace(/\s+/g, " ")
+        .replace(/^Čas návratu\s*/i, "Návrat: ")
+        .trim();
+}
+
 CriarRelatorioNotas = {
     dados: {
         player: {
@@ -328,7 +373,7 @@ CriarRelatorioNotas = {
         var info = getNoteTroopInfo(this.dados, ladoNota),
             a = info.tipoAldeia,
             e = $("#report_export_code").text(),
-            i = $("#content_value > table > tbody > tr > td:nth-child(2) > table > tbody > tr > td > table:nth-child(2) > tbody > tr:nth-child(2)").text().replace(/\s+/g, " ").replace(/.{5}$/g, ""),
+            i = getReportReturnTime(),
             s = "";
 
         s += " | [color=#" + (a == _t("offensive") || a == _t("probOffensive") ? "ff0000" : "0eae0e") + "][b]" + a + "[/b][/color] | ";
@@ -381,7 +426,7 @@ CriarRelatorioNotas = {
             }
         }
 
-        s += "\n\n[b]" + i + "[/b]";
+        i && (s += "\n\n[b]" + i + "[/b]");
         s += "" + e;
         return s;
     },
