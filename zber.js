@@ -1,4 +1,3 @@
-javascript:
 //mass scavenging by Sophie "Shinko to Kuma"
 serverTimeTemp = $("#serverDate")[0].innerText + " " + $("#serverTime")[0].innerText;
 serverTime = serverTimeTemp.match(/^([0][1-9]|[12][0-9]|3[01])[\/\-]([0][1-9]|1[012])[\/\-](\d{4})( (0?[0-9]|[1][0-9]|[2][0-3])[:]([0-5][0-9])([:]([0-5][0-9]))?)?$/);
@@ -51,29 +50,29 @@ if (game_data.locale == "ro_RO") {
 if (game_data.locale == "ar_AE") {
     //arabic server
     langShinko = [
-        "الاغارات",
-        "اختار الوحدات المستخدمة فى الاغارات",
-        "اختار انواع   الاغارات المستخدمة ",
-        " ما المده المده الزمنيه المراد ارسال الاغارات بها",
-        "ضع االمده هنا",
-        "حساب المده لكل صفحه ",
+        "Ř§Ů„Ř§ŘşŘ§Ř±Ř§ŘŞ",
+        "Ř§Ř®ŘŞŘ§Ř± Ř§Ů„ŮŘ­ŘŻŘ§ŘŞ Ř§Ů„Ů…ŘłŘŞŘ®ŘŻŮ…Ř© ŮŮ‰ Ř§Ů„Ř§ŘşŘ§Ř±Ř§ŘŞ",
+        "Ř§Ř®ŘŞŘ§Ř± Ř§Ů†ŮŘ§Řą   Ř§Ů„Ř§ŘşŘ§Ř±Ř§ŘŞ Ř§Ů„Ů…ŘłŘŞŘ®ŘŻŮ…Ř© ",
+        " Ů…Ř§ Ř§Ů„Ů…ŘŻŮ‡ Ř§Ů„Ů…ŘŻŮ‡ Ř§Ů„Ř˛Ů…Ů†ŮŠŮ‡ Ř§Ů„Ů…Ř±Ř§ŘŻ Ř§Ř±ŘłŘ§Ů„ Ř§Ů„Ř§ŘşŘ§Ř±Ř§ŘŞ Ř¨Ů‡Ř§",
+        "Ř¶Řą Ř§Ř§Ů„Ů…ŘŻŮ‡ Ů‡Ů†Ř§",
+        "Ř­ŘłŘ§Ř¨ Ř§Ů„Ů…ŘŻŮ‡ Ů„ŮŮ„ ŘµŮŘ­Ů‡ ",
         "Creator: ",
-        "الاغارات : ترسل لكل 50 قريه على حدى ",
-        " تشغيل المجموعة "
+        "Ř§Ů„Ř§ŘşŘ§Ř±Ř§ŘŞ : ŘŞŘ±ŘłŮ„ Ů„ŮŮ„ 50 Ů‚Ř±ŮŠŮ‡ ŘąŮ„Ů‰ Ř­ŘŻŮ‰ ",
+        " ŘŞŘ´ŘşŮŠŮ„ Ř§Ů„Ů…Ř¬Ů…ŮŘąŘ© "
     ]
 }
 if (game_data.locale == "el_GR") {
     //greek server
     langShinko = [
-        "Μαζική σάρωση",
-        "Επιλέξτε τις μονάδες με τις οποίες θα κάνετε σάρωση",
-        "Επιλέξτε επίπεδα σάρωσης που θα χρησιμοποιηθούν",
-        "Χρόνος Σάρωσης (Ώρες.Λεπτά)",
-        "Χρόνος",
-        "Υπολόγισε χρόνους σάρωσης για κάθε σελίδα.",
-        "Δημιουργός: ",
-        "Μαζική σάρωση: Αποστολή ανα 50 χωριά",
-        "Αποστολή ομάδας "
+        "ÎśÎ±Î¶ÎąÎşÎ® ĎÎ¬ĎĎ‰ĎÎ·",
+        "Î•Ď€ÎąÎ»Î­ÎľĎ„Îµ Ď„ÎąĎ‚ ÎĽÎżÎ˝Î¬Î´ÎµĎ‚ ÎĽÎµ Ď„ÎąĎ‚ ÎżĎ€ÎżÎŻÎµĎ‚ Î¸Î± ÎşÎ¬Î˝ÎµĎ„Îµ ĎÎ¬ĎĎ‰ĎÎ·",
+        "Î•Ď€ÎąÎ»Î­ÎľĎ„Îµ ÎµĎ€ÎŻĎ€ÎµÎ´Î± ĎÎ¬ĎĎ‰ĎÎ·Ď‚ Ď€ÎżĎ… Î¸Î± Ď‡ĎÎ·ĎÎąÎĽÎżĎ€ÎżÎąÎ·Î¸ÎżĎŤÎ˝",
+        "Î§ĎĎŚÎ˝ÎżĎ‚ ÎŁÎ¬ĎĎ‰ĎÎ·Ď‚ (ÎŹĎÎµĎ‚.Î›ÎµĎ€Ď„Î¬)",
+        "Î§ĎĎŚÎ˝ÎżĎ‚",
+        "ÎĄĎ€ÎżÎ»ĎŚÎłÎąĎÎµ Ď‡ĎĎŚÎ˝ÎżĎ…Ď‚ ĎÎ¬ĎĎ‰ĎÎ·Ď‚ ÎłÎąÎ± ÎşÎ¬Î¸Îµ ĎÎµÎ»ÎŻÎ´Î±.",
+        "Î”Î·ÎĽÎąÎżĎ…ĎÎłĎŚĎ‚: ",
+        "ÎśÎ±Î¶ÎąÎşÎ® ĎÎ¬ĎĎ‰ĎÎ·: Î‘Ď€ÎżĎĎ„ÎżÎ»Î® Î±Î˝Î± 50 Ď‡Ď‰ĎÎąÎ¬",
+        "Î‘Ď€ÎżĎĎ„ÎżÎ»Î® ÎżÎĽÎ¬Î´Î±Ď‚ "
     ]
 }
 if (game_data.locale == "nl_NL") {
@@ -81,7 +80,7 @@ if (game_data.locale == "nl_NL") {
     langShinko = [
         "Massa rooftochten",
         "Kies welke troeptypes je wil mee roven, sleep om prioriteit te ordenen",
-        "Kies categorieën die je wil gebruiken",
+        "Kies categorieĂ«n die je wil gebruiken",
         "Wanneer wil je dat je rooftochten terug zijn?",
         "Looptijd hier invullen",
         "Bereken rooftochten voor iedere pagina",
@@ -94,7 +93,7 @@ if (game_data.locale == "it_IT") {
     //Italian server
     langShinko = [
         "Rovistamento di massa",
-        "Seleziona i tipi da unità con cui rovistare",
+        "Seleziona i tipi da unitĂ  con cui rovistare",
         "Seleziona quali categorie utilizzare",
         "Inserisci la durata voluta dei rovistamenti in ORE",
         "Inserisci qui il tempo",
@@ -711,7 +710,7 @@ function getData() {
 //first UI, will always open as soon as you run the script.
 html = `
 <div id="massScavengeSophie" class="ui-widget-content" style="width:600px;background-color:${backgroundColor};cursor:move;z-index:50;">
-<button class="btn" id ="cog" onclick="settings()">⚙️</button>
+<button class="btn" id ="cog" onclick="settings()">âš™ď¸Ź</button>
 <button class="btn" id = "x" onclick="closeWindow('massScavengeSophie')">
             X
         </button>
