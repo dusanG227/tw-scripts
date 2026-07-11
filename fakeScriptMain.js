@@ -798,6 +798,7 @@
 
     var sortedVillages = sortVillagesByReach(viableVillages, targets);
     var attackQueue = buildAttackQueue(sortedVillages, targets, fakeLimit);
+    attackQueue = reorderAttackQueue(attackQueue);
     log('⚔️ Naplánovaných útokov: ' + attackQueue.length + ' (režim: ' + unitMode + ')');
 
     if (!attackQueue.length) {
@@ -1150,6 +1151,50 @@
     if (arrivalStart && arrivalMs < arrivalStart.getTime()) return false;
     if (arrivalEnd && arrivalMs > arrivalEnd.getTime()) return false;
     return true;
+  }
+
+  function getAttackTargetKey(attack) {
+    return attack.targetX + '|' + attack.targetY;
+  }
+
+  function getAttackSourceKey(attack) {
+    if (attack.villageId != null) return String(attack.villageId);
+    return attack.villageX + '|' + attack.villageY;
+  }
+
+  function reorderAttackQueue(queue) {
+    if (!Array.isArray(queue) || queue.length < 3) return Array.isArray(queue) ? queue.slice() : [];
+
+    var remaining = queue.slice();
+    var ordered = [];
+
+    while (remaining.length) {
+      var prev = ordered.length ? ordered[ordered.length - 1] : null;
+      var bestIndex = 0;
+      var bestScore = -1;
+
+      for (var i = 0; i < remaining.length; i++) {
+        var candidate = remaining[i];
+        var score = 0;
+
+        if (!prev) {
+          score = 2;
+        } else {
+          if (getAttackSourceKey(candidate) !== getAttackSourceKey(prev)) score++;
+          if (getAttackTargetKey(candidate) !== getAttackTargetKey(prev)) score++;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = i;
+          if (score === 2) break;
+        }
+      }
+
+      ordered.push(remaining.splice(bestIndex, 1)[0]);
+    }
+
+    return ordered;
   }
 
   function buildAttackQueue(villageList, targetList, fakeLimitPct) {
