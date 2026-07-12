@@ -4,6 +4,11 @@
   var STORAGE_KEY = 'twCourtyardFakeFill.v1';
   var PANEL_ID = 'tw-courtyard-fake-panel';
   var STATUS_ID = 'tw-courtyard-fake-status';
+  var TOAST_ID = 'tw-courtyard-fake-toast';
+  var CLICK_TIMER_KEY = '__twCourtyardFakeFillClickTimer';
+  var TOAST_TIMER_KEY = '__twCourtyardFakeFillToastTimer';
+  var DOUBLE_CLICK_MS = 320;
+  var TOAST_MS = 2600;
   var UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult'];
   var FILL_ORDER = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'spy'];
   var UNIT_POP = {
@@ -179,7 +184,7 @@
     var hardSpyCap = clampInt(state.maxSpy, 1, 50, 7);
     var hardSiegeCap = clampInt(state.maxSiege, 2, 50, 6);
 
-    // Small fake populations should keep special units modest.
+    /* Small fake populations should keep special units modest. */
     var smartSpyCap = Math.max(3, Math.ceil(requiredPop / 12));
     var smartSiegeCap = Math.max(2, Math.ceil(requiredPop / 20));
 
@@ -342,15 +347,113 @@
     status.style.color = ok ? '#2d572c' : '#8b1e1e';
   }
 
+  function showToast(message, ok) {
+    var toast = document.getElementById(TOAST_ID);
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = TOAST_ID;
+      toast.style.cssText = 'position:fixed;right:18px;bottom:18px;max-width:420px;background:#f3e5ab;border:2px solid #7a5b2e;padding:10px 12px;z-index:999999;box-shadow:0 4px 18px rgba(0,0,0,.35);font:12px Arial;color:#6b4f1d;line-height:1.4;';
+      document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.style.borderColor = ok ? '#4a7c3f' : '#8b1e1e';
+    toast.style.color = ok ? '#2d572c' : '#8b1e1e';
+    toast.style.display = 'block';
+
+    if (window[TOAST_TIMER_KEY]) window.clearTimeout(window[TOAST_TIMER_KEY]);
+    window[TOAST_TIMER_KEY] = window.setTimeout(function() {
+      var current = document.getElementById(TOAST_ID);
+      if (current) current.style.display = 'none';
+      window[TOAST_TIMER_KEY] = 0;
+    }, TOAST_MS);
+  }
+
+  function clampPanelLeft(panel, left) {
+    var maxLeft = Math.max(8, window.innerWidth - panel.offsetWidth - 8);
+    return Math.max(8, Math.min(left, maxLeft));
+  }
+
+  function clampPanelTop(panel, top) {
+    var maxTop = Math.max(8, window.innerHeight - panel.offsetHeight - 8);
+    return Math.max(8, Math.min(top, maxTop));
+  }
+
+  function positionPanel(panel) {
+    var width = Math.max(220, Math.min(360, window.innerWidth - 24));
+    var left = Math.max(8, window.innerWidth - width - 12);
+
+    panel.style.width = width + 'px';
+    panel.style.maxWidth = 'calc(100vw - 16px)';
+    panel.style.right = 'auto';
+    panel.style.left = clampPanelLeft(panel, left) + 'px';
+    panel.style.top = clampPanelTop(panel, 12) + 'px';
+  }
+
+  function makePanelDraggable(panel, handle) {
+    if (!panel || !handle) return;
+
+    var drag = null;
+
+    function getPoint(event) {
+      if (event.touches && event.touches[0]) return event.touches[0];
+      if (event.changedTouches && event.changedTouches[0]) return event.changedTouches[0];
+      return event;
+    }
+
+    function stopDrag() {
+      drag = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', stopDrag);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', stopDrag);
+    }
+
+    function onMove(event) {
+      if (!drag) return;
+      var point = getPoint(event);
+      var left = drag.left + (point.clientX - drag.x);
+      var top = drag.top + (point.clientY - drag.y);
+
+      panel.style.left = clampPanelLeft(panel, left) + 'px';
+      panel.style.top = clampPanelTop(panel, top) + 'px';
+      panel.style.right = 'auto';
+
+      if (event.cancelable) event.preventDefault();
+    }
+
+    function startDrag(event) {
+      if (event.target && event.target.closest && event.target.closest('button')) return;
+
+      var point = getPoint(event);
+      drag = {
+        x: point.clientX,
+        y: point.clientY,
+        left: panel.offsetLeft,
+        top: panel.offsetTop
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', stopDrag);
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', stopDrag);
+
+      if (event.cancelable) event.preventDefault();
+    }
+
+    handle.addEventListener('mousedown', startDrag);
+    handle.addEventListener('touchstart', startDrag, { passive: false });
+  }
+
   function showPanel(state) {
     var existing = document.getElementById(PANEL_ID);
     if (existing) existing.remove();
 
     var panel = document.createElement('div');
     panel.id = PANEL_ID;
-    panel.style.cssText = 'position:fixed;top:40px;right:40px;width:360px;max-width:92vw;background:#f3e5ab;border:2px solid #7a5b2e;padding:14px;z-index:999999;box-shadow:0 4px 20px rgba(0,0,0,.35);font:12px Arial;color:#6b4f1d;';
+    panel.style.cssText = 'position:fixed;background:#f3e5ab;border:2px solid #7a5b2e;padding:14px;z-index:999999;box-shadow:0 4px 20px rgba(0,0,0,.35);font:12px Arial;color:#6b4f1d;';
     panel.innerHTML =
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+      '<div id="tw-courtyard-drag-handle" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:move;">' +
         '<b style="font-size:16px;">Fake Fill</b>' +
         '<button id="tw-courtyard-close" style="background:#c0392b;color:#fff;border:0;padding:5px 9px;cursor:pointer;">X</button>' +
       '</div>' +
@@ -390,6 +493,8 @@
       '<div id="' + STATUS_ID + '" style="font-size:11px;line-height:1.35;"></div>';
 
     document.body.appendChild(panel);
+    positionPanel(panel);
+    makePanelDraggable(panel, document.getElementById('tw-courtyard-drag-handle'));
 
     document.getElementById('tw-courtyard-close').onclick = function() {
       panel.remove();
@@ -399,6 +504,7 @@
       var nextState = readPanelState();
       saveState(nextState);
       renderStatus('Nastavenie ulozene.', true);
+      showToast('Nastavenie ulozene.', true);
     };
 
     document.getElementById('tw-courtyard-fill-now').onclick = function() {
@@ -406,15 +512,44 @@
       saveState(nextState);
       var result = fillFake(nextState);
       renderStatus(result.message, result.ok);
+      showToast(result.message, result.ok);
     };
   }
 
-  if (!ensurePlacePage()) return;
+  function clearPendingFill() {
+    if (!window[CLICK_TIMER_KEY]) return false;
+    window.clearTimeout(window[CLICK_TIMER_KEY]);
+    window[CLICK_TIMER_KEY] = 0;
+    return true;
+  }
 
-  var state = loadState();
-  showPanel(state);
+  function runSingleFill() {
+    var state = loadState();
+    var result = fillFake(state);
+    renderStatus(result.message, result.ok);
+    showToast(result.message, result.ok);
+  }
 
-  var autoResult = fillFake(state);
-  renderStatus(autoResult.message, autoResult.ok);
+  function openSettingsPanel() {
+    var state = loadState();
+    if (!document.getElementById(PANEL_ID)) showPanel(state);
+    renderStatus('Panel otvoreny. Jedno spustenie vyplni jednotky, dvojite otvori nastavenia.', true);
+    showToast('Otvaram nastavenia fake fill.', true);
+  }
+
+  function handleInvoke() {
+    if (!ensurePlacePage()) return;
+
+    if (clearPendingFill()) {
+      openSettingsPanel();
+      return;
+    }
+
+    window[CLICK_TIMER_KEY] = window.setTimeout(function() {
+      window[CLICK_TIMER_KEY] = 0;
+      runSingleFill();
+    }, DOUBLE_CLICK_MS);
+  }
+
+  handleInvoke();
 })();
-
