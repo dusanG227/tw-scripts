@@ -57,7 +57,9 @@
     var defaults = {
       fakeLimit: 1,
       fakeMinPop: 0,
-      siege: 'ram'
+      siege: 'ram',
+      maxSpy: 7,
+      maxSiege: 6
     };
 
     var raw = safeStorageGet();
@@ -70,6 +72,8 @@
       defaults.fakeLimit = clampNumber(parsed.fakeLimit, 0, 100, defaults.fakeLimit);
       defaults.fakeMinPop = clampInt(parsed.fakeMinPop, 0, 100000, defaults.fakeMinPop);
       if (parsed.siege === 'ram' || parsed.siege === 'catapult') defaults.siege = parsed.siege;
+      defaults.maxSpy = clampInt(parsed.maxSpy, 1, 50, defaults.maxSpy);
+      defaults.maxSiege = clampInt(parsed.maxSiege, 2, 50, defaults.maxSiege);
     } catch (e) {}
 
     return defaults;
@@ -79,7 +83,9 @@
     safeStorageSet(JSON.stringify({
       fakeLimit: clampNumber(state.fakeLimit, 0, 100, 1),
       fakeMinPop: clampInt(state.fakeMinPop, 0, 100000, 0),
-      siege: state.siege === 'catapult' ? 'catapult' : 'ram'
+      siege: state.siege === 'catapult' ? 'catapult' : 'ram',
+      maxSpy: clampInt(state.maxSpy, 1, 50, 7),
+      maxSiege: clampInt(state.maxSiege, 2, 50, 6)
     }));
   }
 
@@ -169,36 +175,78 @@
     return '';
   }
 
-  function fillToRequirement(selected, availableUnits, usedPop, requiredPop) {
+  function getEffectiveSpecialCaps(requiredPop, availableUnits, state, siegeType) {
+    var hardSpyCap = clampInt(state.maxSpy, 1, 50, 7);
+    var hardSiegeCap = clampInt(state.maxSiege, 2, 50, 6);
+
+    // Small fake populations should keep special units modest.
+    var smartSpyCap = Math.max(3, Math.ceil(requiredPop / 12));
+    var smartSiegeCap = Math.max(2, Math.ceil(requiredPop / 20));
+
+    return {
+      spy: Math.max(1, Math.min(hardSpyCap, smartSpyCap, availableUnits.spy || 0)),
+      siege: Math.max(2, Math.min(hardSiegeCap, smartSiegeCap, availableUnits[siegeType] || 0)),
+      siegeType: siegeType
+    };
+  }
+
+  function getUnitCap(unitName, caps) {
+    if (unitName === 'spy') return caps.spy;
+    if (unitName === 'ram' || unitName === 'catapult') {
+      return unitName === caps.siegeType ? caps.siege : 0;
+    }
+    return Infinity;
+  }
+
+  function getBalancedOrder(caps) {
+    return ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy', 'spy', caps.siegeType];
+  }
+
+  function fillToRequirement(selected, availableUnits, usedPop, requiredPop, caps) {
+    var order = getBalancedOrder(caps);
+
     while (usedPop < requiredPop) {
       var bestUnit = '';
       var bestOvershoot = Infinity;
+      var bestSpecialPenalty = Infinity;
       var bestPop = Infinity;
-      var filledExactly = false;
+      var progressed = false;
 
-      for (var i = 0; i < FILL_ORDER.length; i++) {
-        var unitName = FILL_ORDER[i];
+      for (var i = 0; i < order.length; i++) {
+        var unitName = order[i];
         var pop = UNIT_POP[unitName] || 1;
         var already = selected[unitName] || 0;
         var available = (availableUnits[unitName] || 0) - already;
+        var cap = getUnitCap(unitName, caps);
         if (available <= 0) continue;
+        if (already >= cap) continue;
 
         if (usedPop + pop <= requiredPop) {
           selected[unitName] = already + 1;
           usedPop += pop;
-          filledExactly = true;
-          break;
+          progressed = true;
+          continue;
         }
 
         var overshoot = usedPop + pop - requiredPop;
-        if (overshoot >= 0 && (overshoot < bestOvershoot || (overshoot === bestOvershoot && pop < bestPop))) {
+        var specialPenalty = (unitName === 'spy' || unitName === caps.siegeType) ? 1 : 0;
+        if (
+          overshoot >= 0 &&
+          (
+            overshoot < bestOvershoot ||
+            (overshoot === bestOvershoot && specialPenalty < bestSpecialPenalty) ||
+            (overshoot === bestOvershoot && specialPenalty === bestSpecialPenalty && pop < bestPop)
+          )
+        ) {
           bestUnit = unitName;
           bestOvershoot = overshoot;
+          bestSpecialPenalty = specialPenalty;
           bestPop = pop;
         }
       }
 
-      if (filledExactly) continue;
+      if (usedPop >= requiredPop) break;
+      if (progressed) continue;
       if (!bestUnit) break;
 
       selected[bestUnit] = (selected[bestUnit] || 0) + 1;
@@ -241,8 +289,9 @@
 
     var usedPop = UNIT_POP.spy + (UNIT_POP[siegeType] * 2);
     var requiredPop = Math.max(Math.ceil(points * (state.fakeLimit / 100)), state.fakeMinPop, usedPop);
+    var caps = getEffectiveSpecialCaps(requiredPop, availableUnits, state, siegeType);
 
-    var result = fillToRequirement(selected, availableUnits, usedPop, requiredPop);
+    var result = fillToRequirement(selected, availableUnits, usedPop, requiredPop, caps);
     selected = result.selected;
     usedPop = result.usedPop;
 
@@ -264,7 +313,7 @@
 
     return {
       ok: true,
-      message: 'Vyplnene: ' + formatSelection(selected) + ' | pop ' + usedPop + ' / min ' + requiredPop + ' | body ' + points,
+      message: 'Vyplnene: ' + formatSelection(selected) + ' | pop ' + usedPop + ' / min ' + requiredPop + ' | body ' + points + ' | max spy ' + caps.spy + ' | max ' + siegeType + ' ' + caps.siege,
       selected: selected
     };
   }
@@ -274,11 +323,15 @@
     var fakeLimitInput = document.getElementById('tw-courtyard-fake-limit');
     var fakeMinPopInput = document.getElementById('tw-courtyard-fake-min-pop');
     var siegeSelect = document.getElementById('tw-courtyard-fake-siege');
+    var maxSpyInput = document.getElementById('tw-courtyard-max-spy');
+    var maxSiegeInput = document.getElementById('tw-courtyard-max-siege');
 
     return {
       fakeLimit: clampNumber(fakeLimitInput ? fakeLimitInput.value : current.fakeLimit, 0, 100, current.fakeLimit),
       fakeMinPop: clampInt(fakeMinPopInput ? fakeMinPopInput.value : current.fakeMinPop, 0, 100000, current.fakeMinPop),
-      siege: siegeSelect && siegeSelect.value === 'catapult' ? 'catapult' : 'ram'
+      siege: siegeSelect && siegeSelect.value === 'catapult' ? 'catapult' : 'ram',
+      maxSpy: clampInt(maxSpyInput ? maxSpyInput.value : current.maxSpy, 1, 50, current.maxSpy),
+      maxSiege: clampInt(maxSiegeInput ? maxSiegeInput.value : current.maxSiege, 2, 50, current.maxSiege)
     };
   }
 
@@ -312,6 +365,16 @@
           '<input id="tw-courtyard-fake-min-pop" type="number" step="1" min="0" max="100000" value="' + state.fakeMinPop + '" style="padding:6px;">' +
         '</label>' +
       '</div>' +
+      '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
+        '<label style="flex:1;display:flex;flex-direction:column;gap:4px;">' +
+          '<span>Max spy</span>' +
+          '<input id="tw-courtyard-max-spy" type="number" step="1" min="1" max="50" value="' + state.maxSpy + '" style="padding:6px;">' +
+        '</label>' +
+        '<label style="flex:1;display:flex;flex-direction:column;gap:4px;">' +
+          '<span>Max ram/cat</span>' +
+          '<input id="tw-courtyard-max-siege" type="number" step="1" min="2" max="50" value="' + state.maxSiege + '" style="padding:6px;">' +
+        '</label>' +
+      '</div>' +
       '<label style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">' +
         '<span>Preferovany siege</span>' +
         '<select id="tw-courtyard-fake-siege" style="padding:6px;">' +
@@ -319,6 +382,7 @@
           '<option value="catapult"' + (state.siege === 'catapult' ? ' selected' : '') + '>catapult</option>' +
         '</select>' +
       '</label>' +
+      '<div style="font-size:11px;margin-bottom:10px;">Jednotky sa doplnaju rovnomerne po kolach. Spy a ram/cat maju smart strop, ktory sa pri malom fake pope este znizi.</div>' +
       '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
         '<button id="tw-courtyard-fill-now" style="flex:1;background:#4a7c3f;color:#fff;border:0;padding:9px 12px;cursor:pointer;font-weight:bold;">Vyplnit fake</button>' +
         '<button id="tw-courtyard-save" style="background:#8b6b3f;color:#fff;border:0;padding:9px 12px;cursor:pointer;">Ulozit</button>' +
