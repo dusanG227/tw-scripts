@@ -3,8 +3,8 @@
 
     const SCRIPT_KEY = '__twCasual20PercentCoords';
     const ROOT_ID = 'tw-casual-20pct-root';
-    const CACHE_TTL_MS = 60 * 60 * 1000;
     const CASINO_URL = 'https://500casino.com/';
+    const AUTOCOMPLETE_LIMIT = 12;
 
     if (window[SCRIPT_KEY] && typeof window[SCRIPT_KEY].destroy === 'function') {
         window[SCRIPT_KEY].destroy();
@@ -98,35 +98,14 @@
         console[type === 'error' ? 'error' : 'log'](message);
     }
 
-    async function fetchTextWithCache(cacheName, url) {
-        const cacheKey = `${SCRIPT_KEY}:${location.host}:${cacheName}`;
-        const timeKey = `${cacheKey}:time`;
+    async function fetchTextFresh(url) {
+        const separator = url.indexOf('?') === -1 ? '?' : '&';
 
-        try {
-            const cachedText = localStorage.getItem(cacheKey);
-            const cachedTime = Number(localStorage.getItem(timeKey) || '0');
-
-            if (cachedText && cachedTime && Date.now() - cachedTime < CACHE_TTL_MS) {
-                return cachedText;
-            }
-        } catch (error) {
-            console.warn(`${SCRIPT_KEY}: cache read failed`, error);
-        }
-
-        const responseText = await jQuery.ajax({
-            url: url,
+        return jQuery.ajax({
+            url: `${url}${separator}_=${Date.now()}`,
             method: 'GET',
-            cache: true,
+            cache: false,
         });
-
-        try {
-            localStorage.setItem(cacheKey, responseText);
-            localStorage.setItem(timeKey, String(Date.now()));
-        } catch (error) {
-            console.warn(`${SCRIPT_KEY}: cache write failed`, error);
-        }
-
-        return responseText;
     }
 
     function parsePlayers(rows) {
@@ -171,9 +150,9 @@
 
     async function loadWorldData() {
         const [playersText, tribesText, villagesText] = await Promise.all([
-            fetchTextWithCache('players', '/map/player.txt'),
-            fetchTextWithCache('tribes', '/map/ally.txt'),
-            fetchTextWithCache('villages', '/map/village.txt'),
+            fetchTextFresh('/map/player.txt'),
+            fetchTextFresh('/map/ally.txt'),
+            fetchTextFresh('/map/village.txt'),
         ]);
 
         const players = parsePlayers(parseCsvRows(playersText));
@@ -323,6 +302,51 @@
                     min-height: 180px;
                     resize: vertical;
                 }
+                #${ROOT_ID} .tw-casual-autocomplete {
+                    position: relative;
+                }
+                #${ROOT_ID} .tw-casual-suggestions {
+                    position: absolute;
+                    left: 0;
+                    right: 0;
+                    top: calc(100% + 4px);
+                    z-index: 20;
+                    display: none;
+                    max-height: 220px;
+                    overflow-y: auto;
+                    border: 1px solid #a4824d;
+                    border-radius: 8px;
+                    background: #fffdfa;
+                    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+                }
+                #${ROOT_ID} .tw-casual-suggestions.is-open {
+                    display: block;
+                }
+                #${ROOT_ID} .tw-casual-suggestion {
+                    display: block;
+                    width: 100%;
+                    border: 0;
+                    border-bottom: 1px solid #efdfbf;
+                    background: transparent;
+                    color: #2e2011;
+                    text-align: left;
+                    padding: 8px 10px;
+                    cursor: pointer;
+                    font-size: 13px;
+                }
+                #${ROOT_ID} .tw-casual-suggestion:last-child {
+                    border-bottom: 0;
+                }
+                #${ROOT_ID} .tw-casual-suggestion:hover,
+                #${ROOT_ID} .tw-casual-suggestion:focus {
+                    outline: none;
+                    background: #fff1d0;
+                }
+                #${ROOT_ID} .tw-casual-suggestions-empty {
+                    padding: 8px 10px;
+                    font-size: 12px;
+                    color: #6a5133;
+                }
                 #${ROOT_ID} .tw-casual-hint {
                     margin-top: 6px;
                     font-size: 12px;
@@ -466,16 +490,20 @@
                     <div class="tw-casual-grid">
                         <div class="tw-casual-card">
                             <label class="tw-casual-label" for="tw-casual-players">Hrac (oddel ciarkou)</label>
-                            <input id="tw-casual-players" class="tw-casual-input" list="tw-casual-player-list" placeholder="PlayerOne, PlayerTwo">
-                            <datalist id="tw-casual-player-list"></datalist>
+                            <div class="tw-casual-autocomplete">
+                                <input id="tw-casual-players" class="tw-casual-input" autocomplete="off" placeholder="PlayerOne, PlayerTwo">
+                                <div id="tw-casual-player-suggestions" class="tw-casual-suggestions"></div>
+                            </div>
                             <div class="tw-casual-hint">
                                 Zadaj presne meno hraca. Viac mien mozes oddelit ciarkou.
                             </div>
                         </div>
                         <div class="tw-casual-card">
                             <label class="tw-casual-label" for="tw-casual-tribes">Kmen alebo tag (oddel ciarkou)</label>
-                            <input id="tw-casual-tribes" class="tw-casual-input" list="tw-casual-tribe-list" placeholder="TAG, Nazov kmena">
-                            <datalist id="tw-casual-tribe-list"></datalist>
+                            <div class="tw-casual-autocomplete">
+                                <input id="tw-casual-tribes" class="tw-casual-input" autocomplete="off" placeholder="TAG, Nazov kmena">
+                                <div id="tw-casual-tribe-suggestions" class="tw-casual-suggestions"></div>
+                            </div>
                             <div class="tw-casual-hint">
                                 Funguje podla tagu aj podla nazvu kmena. Zo zvoleneho kmena vezme vsetkych clenov.
                             </div>
@@ -500,17 +528,20 @@
         return root;
     }
 
-    function populateDatalists(root, worldData) {
-        const playerList = root.querySelector('#tw-casual-player-list');
-        const tribeList = root.querySelector('#tw-casual-tribe-list');
-
-        playerList.innerHTML = worldData.players
+    function buildAutocompleteOptions(worldData) {
+        const seenPlayers = new Set();
+        const playerOptions = worldData.players
             .slice()
             .sort((a, b) => a.rank - b.rank)
-            .map((player) => `<option value="${escapeAttribute(player.name)}"></option>`)
-            .join('');
+            .map((player) => cleanString(player.name))
+            .filter((name) => {
+                const key = normalize(name);
+                if (!key || seenPlayers.has(key)) return false;
+                seenPlayers.add(key);
+                return true;
+            });
 
-        const seenTribeOptions = new Set();
+        const seenTribes = new Set();
         const tribeOptions = [];
 
         worldData.tribes
@@ -519,19 +550,134 @@
             .forEach((tribe) => {
                 [tribe.tag, tribe.name].forEach((label) => {
                     const value = cleanString(label);
-                    if (!value) return;
-
                     const key = normalize(value);
-                    if (seenTribeOptions.has(key)) return;
 
-                    seenTribeOptions.add(key);
-                    tribeOptions.push(
-                        `<option value="${escapeAttribute(value)}"></option>`
-                    );
+                    if (!key || seenTribes.has(key)) return;
+
+                    seenTribes.add(key);
+                    tribeOptions.push(value);
                 });
             });
 
-        tribeList.innerHTML = tribeOptions.join('');
+        return {
+            players: playerOptions,
+            tribes: tribeOptions,
+        };
+    }
+
+    function getAutocompleteMeta(type) {
+        if (type === 'players') {
+            return {
+                inputSelector: '#tw-casual-players',
+                suggestionsSelector: '#tw-casual-player-suggestions',
+            };
+        }
+
+        return {
+            inputSelector: '#tw-casual-tribes',
+            suggestionsSelector: '#tw-casual-tribe-suggestions',
+        };
+    }
+
+    function getAutocompleteState(value) {
+        const currentValue = String(value || '');
+        const lastCommaIndex = currentValue.lastIndexOf(',');
+
+        if (lastCommaIndex === -1) {
+            return {
+                prefix: '',
+                token: currentValue,
+            };
+        }
+
+        return {
+            prefix: currentValue.slice(0, lastCommaIndex),
+            token: currentValue.slice(lastCommaIndex + 1),
+        };
+    }
+
+    function buildCommaSeparatedValue(currentValue, pickedValue) {
+        const { prefix } = getAutocompleteState(currentValue);
+        const normalizedPrefix = prefix
+            .split(',')
+            .map((item) => cleanString(item))
+            .filter(Boolean)
+            .join(', ');
+
+        return normalizedPrefix
+            ? `${normalizedPrefix}, ${pickedValue}, `
+            : `${pickedValue}, `;
+    }
+
+    function filterAutocompleteOptions(options, value) {
+        const { token } = getAutocompleteState(value);
+        const needle = normalize(token);
+
+        if (!needle) {
+            return options.slice(0, AUTOCOMPLETE_LIMIT);
+        }
+
+        const startsWithMatches = [];
+        const containsMatches = [];
+
+        options.forEach((option) => {
+            const normalizedOption = normalize(option);
+
+            if (normalizedOption.startsWith(needle)) {
+                startsWithMatches.push(option);
+            } else if (normalizedOption.includes(needle)) {
+                containsMatches.push(option);
+            }
+        });
+
+        return startsWithMatches
+            .concat(containsMatches)
+            .slice(0, AUTOCOMPLETE_LIMIT);
+    }
+
+    function closeAutocomplete(root, type) {
+        const meta = getAutocompleteMeta(type);
+        const suggestions = root.querySelector(meta.suggestionsSelector);
+
+        if (!suggestions) return;
+
+        suggestions.classList.remove('is-open');
+        suggestions.innerHTML = '';
+    }
+
+    function closeAllAutocompletes(root) {
+        closeAutocomplete(root, 'players');
+        closeAutocomplete(root, 'tribes');
+    }
+
+    function renderAutocomplete(root, type, options, value) {
+        const meta = getAutocompleteMeta(type);
+        const suggestions = root.querySelector(meta.suggestionsSelector);
+        const filteredOptions = filterAutocompleteOptions(options, value);
+
+        if (!suggestions) return;
+
+        if (!filteredOptions.length) {
+            suggestions.innerHTML = '';
+            suggestions.classList.remove('is-open');
+            return;
+        }
+
+        suggestions.innerHTML = filteredOptions
+            .map((option) => {
+                return `
+                    <button
+                        type="button"
+                        class="tw-casual-suggestion"
+                        data-action="pick-suggestion"
+                        data-target="${type}"
+                        data-value="${escapeAttribute(option)}"
+                    >${escapeHtml(option)}</button>
+                `;
+            })
+            .join('');
+
+        suggestions.classList.add('is-open');
     }
 
     function renderStatus(root, lines) {
@@ -719,7 +865,7 @@
         }
     }
 
-    function bindEvents(root, worldData, indexes) {
+    function bindEvents(root, worldData, indexes, autocompleteOptions) {
         const onKeyDown = function (event) {
             if (event.key === 'Escape') {
                 destroy();
@@ -729,8 +875,75 @@
         window[SCRIPT_KEY].onKeyDown = onKeyDown;
         document.addEventListener('keydown', onKeyDown);
 
+        root.addEventListener('input', (event) => {
+            if (event.target && event.target.id === 'tw-casual-players') {
+                renderAutocomplete(
+                    root,
+                    'players',
+                    autocompleteOptions.players,
+                    event.target.value
+                );
+                return;
+            }
+
+            if (event.target && event.target.id === 'tw-casual-tribes') {
+                renderAutocomplete(
+                    root,
+                    'tribes',
+                    autocompleteOptions.tribes,
+                    event.target.value
+                );
+            }
+        });
+
+        root.addEventListener('focusin', (event) => {
+            if (event.target && event.target.id === 'tw-casual-players') {
+                renderAutocomplete(
+                    root,
+                    'players',
+                    autocompleteOptions.players,
+                    event.target.value
+                );
+                return;
+            }
+
+            if (event.target && event.target.id === 'tw-casual-tribes') {
+                renderAutocomplete(
+                    root,
+                    'tribes',
+                    autocompleteOptions.tribes,
+                    event.target.value
+                );
+            }
+        });
+
         root.addEventListener('click', async (event) => {
             const action = event.target && event.target.getAttribute('data-action');
+
+            if (action === 'pick-suggestion') {
+                const targetType = event.target.getAttribute('data-target');
+                const pickedValue = cleanString(event.target.getAttribute('data-value'));
+                const meta = getAutocompleteMeta(targetType);
+                const input = root.querySelector(meta.inputSelector);
+
+                if (input) {
+                    input.value = buildCommaSeparatedValue(input.value, pickedValue);
+                    renderAutocomplete(
+                        root,
+                        targetType,
+                        autocompleteOptions[targetType],
+                        input.value
+                    );
+                    input.focus();
+                }
+
+                return;
+            }
+
+            if (!event.target.closest('.tw-casual-autocomplete')) {
+                closeAllAutocompletes(root);
+            }
+
             if (!action) return;
 
             if (action === 'close') {
@@ -761,6 +974,7 @@
 
         root.addEventListener('click', (event) => {
             if (event.target.id === ROOT_ID) {
+                closeAllAutocompletes(root);
                 destroy();
             }
         });
@@ -787,8 +1001,8 @@
     try {
         const worldData = await loadWorldData();
         const indexes = buildIndexes(worldData);
+        const autocompleteOptions = buildAutocompleteOptions(worldData);
 
-        populateDatalists(root, worldData);
         setLoading(root, false, 'Click to visit');
         renderStatus(root, [
             `<strong>Tvoje body:</strong> ${formatNumber(game_data.player.points)}`,
@@ -797,7 +1011,7 @@
             )} - ${formatNumber(Math.ceil(Number(game_data.player.points || 0) * 1.2))}`,
             'Data sveta su nacitane. Zadaj hracov alebo kmene a klikni na Generovat coordy.',
         ]);
-        bindEvents(root, worldData, indexes);
+        bindEvents(root, worldData, indexes, autocompleteOptions);
     } catch (error) {
         console.error(`${SCRIPT_KEY}:`, error);
         setLoading(root, false, 'Load failed');
