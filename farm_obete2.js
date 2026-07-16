@@ -5,7 +5,7 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.9.0-safety-checks
+ * Version: v1.9.1-safety-filter
  * Last Updated: 2026-07-16
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
@@ -15,7 +15,7 @@
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.9.0-safety-checks',
+    version: 'v1.9.1-safety-filter',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -59,6 +59,7 @@ var SOURCE_OVERVIEW_CACHE_MS = 45000;
 var SOURCE_OVERVIEW_REQUEST_RETRIES = 3;
 var TARGET_SAFETY_REQUEST_DELAY_MS = 300;
 var TARGET_SAFETY_REQUEST_RETRIES = 2;
+var MAX_TARGETS_TO_OPEN_AT_ONCE = 10;
 var OPEN_ALL_TARGETS_IN_PROGRESS = false;
 
 // Translations
@@ -186,13 +187,21 @@ async function initClearBarbarianWalls(store) {
                     safetyCheckedBarbarians,
                     sourceVillages
                 );
+                const visibleBarbarians = sortBarbariansForDisplay(
+                    barbarians.filter(
+                        (barbarian) => !barbarian.safetyBlocked
+                    )
+                );
 
-                const content = prepareContent(barbarians, MAX_BARBARIANS);
+                const content = prepareContent(
+                    visibleBarbarians,
+                    MAX_BARBARIANS
+                );
                 renderUI(content);
-                jQuery('#barbVillagesCount').text(barbarians.length);
+                jQuery('#barbVillagesCount').text(visibleBarbarians.length);
                 UI.SuccessMessage(tt('Safety checks finished!'));
 
-                updateMap(barbarians);
+                updateMap(visibleBarbarians);
 
                 // event handlers
                 showSettingsPanel(store);
@@ -313,6 +322,14 @@ function prepareContent(villages, maxBarbsToShow) {
             'No barbarian villages found fitting the criteria!'
         )}</b>`;
     }
+}
+
+function sortBarbariansForDisplay(barbarians) {
+    return [...barbarians].sort((left, right) => {
+        const leftCanAttack = left.sourceVillage ? 1 : 0;
+        const rightCanAttack = right.sourceVillage ? 1 : 0;
+        return rightCanAttack - leftCanAttack;
+    });
 }
 
 function renderUI(body) {
@@ -459,7 +476,9 @@ function openGeneratedTargets() {
 
     const links = Array.from(
         document.querySelectorAll('.ra-clear-barb-wall-btn')
-    ).filter((link) => !link.classList.contains('btn-already-sent'));
+    )
+        .filter((link) => !link.classList.contains('btn-already-sent'))
+        .slice(0, MAX_TARGETS_TO_OPEN_AT_ONCE);
     const button = document.querySelector('#openAllTargetsBtn');
     const status = document.querySelector('#openAllTargetsStatus');
 
@@ -794,8 +813,12 @@ async function enrichBarbariansWithSafetyData(barbarians) {
                 ? 'present'
                 : 'none'
             : 'unknown';
+        const hasDefenseNote =
+            noteResult.status === 'present' && isDefenseNote(noteResult.note);
         const safetyBlocked =
-            noteResult.status !== 'none' || outgoingAttackStatus !== 'none';
+            noteResult.status === 'unknown' ||
+            hasDefenseNote ||
+            outgoingAttackStatus !== 'none';
 
         return {
             ...barbarian,
@@ -915,6 +938,10 @@ function extractVillageNoteFromHtml(html) {
 
 function normalizeNoteText(value) {
     return String(value || '').replace(/\r\n?/g, '\n').trim();
+}
+
+function isDefenseNote(note) {
+    return /deff/i.test(String(note || ''));
 }
 
 async function fetchOutgoingAttackTargets() {
