@@ -5,7 +5,7 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.10.0-summary-hidden-manager
+ * Version: v1.10.1-outgoing-info-only
  * Last Updated: 2026-07-16
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
@@ -15,7 +15,7 @@
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.10.0-summary-hidden-manager',
+    version: 'v1.10.1-outgoing-info-only',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -1083,12 +1083,10 @@ async function enrichBarbariansWithSafetyData(barbarians) {
                 ? 'present'
                 : 'none'
             : 'unknown';
-        const hasDefenseNote =
-            noteResult.status === 'present' && isDefenseNote(noteResult.note);
-        const safetyBlocked =
-            noteResult.status === 'unknown' ||
-            hasDefenseNote ||
-            outgoingAttackStatus !== 'none';
+        const safetyBlocked = isSafetyBlocked(
+            noteResult.status,
+            noteResult.note
+        );
 
         return {
             ...barbarian,
@@ -1212,6 +1210,13 @@ function normalizeNoteText(value) {
 
 function isDefenseNote(note) {
     return /deff/i.test(String(note || ''));
+}
+
+function isSafetyBlocked(noteStatus, note) {
+    return (
+        noteStatus === 'unknown' ||
+        (noteStatus === 'present' && isDefenseNote(note))
+    );
 }
 
 async function fetchOutgoingAttackTargets() {
