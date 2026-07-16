@@ -679,16 +679,26 @@
 
         autoSending = true;
         UI.SuccessMessage("Automaticke posielanie zacalo. Pocet dedin: " + queue.length);
+        var pendingRequests = 0;
+        var allRequestsStarted = false;
 
-        function sendNext() {
-            if (!queue.length) {
+        function finishIfDone() {
+            if (allRequestsStarted && pendingRequests === 0) {
                 autoSending = false;
                 $(".sendResourcesButton").prop("disabled", false);
                 alert("Automaticke posielanie dokoncene!");
+            }
+        }
+
+        function sendNext() {
+            if (!queue.length) {
+                allRequestsStarted = true;
+                finishIfDone();
                 return;
             }
 
             var item = queue.shift();
+            pendingRequests++;
             sendResource(
                 item.sourceID,
                 item.targetID,
@@ -697,9 +707,13 @@
                 item.iron,
                 item.rowId,
                 function () {
-                    setTimeout(sendNext, 700);
+                    pendingRequests--;
+                    finishIfDone();
                 }
             );
+
+            // Four requests per second in the native mobile application.
+            setTimeout(sendNext, 250);
         }
 
         sendNext();
