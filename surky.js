@@ -215,7 +215,15 @@
                 allWarehouses = $(page).find(".mheader.ressources");
                 allVillages = $(page).find(".quickedit-vn");
                 allFarms = $(page).find(".header.population");
-                allMerchants = $(page).find(".trader_img").parent();
+                // On the mobile production overview the merchant count is inside
+                // the village's market link (there is no .trader_img element).
+                allMerchants = $(page).find('a[href*="market"]');
+
+                // The first market link can belong to the global navigation.
+                // Keep the links belonging to the village cards at the end.
+                if (allMerchants.length > allVillages.length) {
+                    allMerchants = allMerchants.slice(allMerchants.length - allVillages.length);
+                }
 
                 for (var mobileWood = 0; mobileWood < allWoodObjects.length; mobileWood++) {
                     allWoodTotals.push(parseResource(allWoodObjects[mobileWood].textContent));
@@ -236,10 +244,10 @@
                         : "0";
                     warehouseCapacity.push(parseResource(warehouseText));
 
-                    var merchantText = allMerchants[mobileIndex] ? allMerchants[mobileIndex].innerText : "0/0";
-                    var merchantMatch = merchantText.match(/(\d+)\s*\/\s*(\d+)/);
-                    availableMerchants.push(merchantMatch ? parseInt(merchantMatch[1], 10) : 0);
-                    totalMerchants.push(merchantMatch ? parseInt(merchantMatch[2], 10) : 0);
+                    var merchantText = allMerchants[mobileIndex] ? allMerchants[mobileIndex].innerText : "0";
+                    var merchantNumbers = merchantText.match(/\d+/g) || [];
+                    availableMerchants.push(merchantNumbers[0] ? parseInt(merchantNumbers[0], 10) : 0);
+                    totalMerchants.push(merchantNumbers[1] ? parseInt(merchantNumbers[1], 10) : 999);
 
                     var farmElement = allFarms[mobileIndex];
                     var farmText = farmElement && farmElement.parentElement
