@@ -122,6 +122,7 @@
 @media (max-width: 600px) {
     #resourceSenderWrapper {
         width: 100%;
+        overflow-x: visible;
     }
     #resourceSenderWrapper input[type="text"] {
         box-sizing: border-box;
@@ -129,6 +130,77 @@
     }
     #resourceSenderWrapper td {
         padding: 5px;
+    }
+    #Settings,
+    #Settings tbody,
+    #Settings tr,
+    #Settings td {
+        box-sizing: border-box;
+        display: block;
+        width: 100% !important;
+    }
+    #Settings thead {
+        display: none;
+    }
+    #Settings td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 4px;
+        font-weight: bold;
+        text-align: left;
+    }
+    #Settings input[type="text"],
+    #Settings button {
+        box-sizing: border-box;
+        max-width: none;
+        width: 100%;
+    }
+    #Settings #resPercent,
+    #Settings #sendPercent {
+        width: calc(100% - 28px);
+    }
+    #playerTarget {
+        width: 100% !important;
+    }
+    #playerTarget img {
+        max-width: 55px;
+    }
+    #tableSend {
+        min-width: 0;
+        width: 100% !important;
+    }
+    #tableSend tr:nth-child(2) {
+        display: none;
+    }
+    #tableSend tr:nth-child(n+3) {
+        display: block;
+        margin: 8px 0;
+        border: 1px solid #202225;
+    }
+    #tableSend tr:nth-child(n+3) td {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100% !important;
+        min-height: 38px;
+        text-align: right !important;
+    }
+    #tableSend tr:nth-child(n+3) td::before {
+        flex: 0 0 42%;
+        font-weight: bold;
+        text-align: left;
+    }
+    #tableSend tr:nth-child(n+3) td:nth-child(1)::before { content: "Zdrojová dedina"; }
+    #tableSend tr:nth-child(n+3) td:nth-child(2)::before { content: "Cieľová dedina"; }
+    #tableSend tr:nth-child(n+3) td:nth-child(3)::before { content: "Vzdialenosť"; }
+    #tableSend tr:nth-child(n+3) td:nth-child(4)::before { content: "Drevo"; }
+    #tableSend tr:nth-child(n+3) td:nth-child(5)::before { content: "Hlina"; }
+    #tableSend tr:nth-child(n+3) td:nth-child(6)::before { content: "Železo"; }
+    #tableSend tr:nth-child(n+3) td:nth-child(7)::before { content: "Odoslanie"; }
+    #tableSend .sendResourcesButton {
+        min-height: 44px;
+        white-space: normal;
     }
 }
 </style>`;
@@ -215,15 +287,9 @@
                 allWarehouses = $(page).find(".mheader.ressources");
                 allVillages = $(page).find(".quickedit-vn");
                 allFarms = $(page).find(".header.population");
-                // On the mobile production overview the merchant count is inside
-                // the village's market link (there is no .trader_img element).
-                allMerchants = $(page).find('a[href*="market"]');
-
-                // The first market link can belong to the global navigation.
-                // Keep the links belonging to the village cards at the end.
-                if (allMerchants.length > allVillages.length) {
-                    allMerchants = allMerchants.slice(allMerchants.length - allVillages.length);
-                }
+                // iOS/mobile overview shows one trader icon per village. The
+                // available count is text in the icon's parent element.
+                allMerchants = $(page).find(".trader_img").parent();
 
                 for (var mobileWood = 0; mobileWood < allWoodObjects.length; mobileWood++) {
                     allWoodTotals.push(parseResource(allWoodObjects[mobileWood].textContent));
@@ -364,19 +430,19 @@
         </thead>
         <tbody>
             <tr>
-                <td class="sophRowA">
+                <td class="sophRowA" data-label="${langShinko[7]}">
                     <input type="text" id="coordinateTarget" name="coordinateTarget" size="20">
                 </td>
-                <td class="sophRowA" align="right">
+                <td class="sophRowA" align="right" data-label="${langShinko[8]}">
                     <input type="text" id="resPercent" name="resPercent" size="3">%
                 </td>
-                <td class="sophRowA" align="right">
+                <td class="sophRowA" align="right" data-label="${langShinko[19]}">
                     <input type="text" id="sendPercent" name="sendPercent" size="3">%
                 </td>
-                <td class="sophRowA">
+                <td class="sophRowA" data-label="">
                     <button type="button" id="saveSettings" class="btn-confirm-yes">${langShinko[2]}</button>
                 </td>
-                <td class="sophRowA">
+                <td class="sophRowA" data-label="">
                     <button type="button" id="recalculateResources" class="btn" name="sendRes">${langShinko[9]}</button>
                 </td>
             </tr>
