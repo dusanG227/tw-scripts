@@ -166,7 +166,21 @@
         max-width: 55px;
     }
     #tableSend {
+        display: block;
         min-width: 0;
+        width: 100% !important;
+    }
+    #tableSend tbody {
+        display: block;
+        width: 100%;
+    }
+    #tableSend tr:first-child {
+        display: block;
+        width: 100%;
+    }
+    #tableSend tr:first-child td {
+        box-sizing: border-box;
+        display: block;
         width: 100% !important;
     }
     #tableSend tr:nth-child(2) {
@@ -174,6 +188,11 @@
     }
     #tableSend tr:nth-child(n+3) {
         display: block;
+        box-sizing: border-box;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: hidden;
+        width: 100%;
         margin: 8px 0;
         border: 1px solid #202225;
     }
@@ -182,8 +201,13 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        float: none !important;
+        position: static !important;
         width: 100% !important;
+        height: auto !important;
         min-height: 38px;
+        gap: 8px;
+        overflow-wrap: anywhere;
         text-align: right !important;
     }
     #tableSend tr:nth-child(n+3) td::before {
