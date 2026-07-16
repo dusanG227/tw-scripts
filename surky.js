@@ -92,6 +92,23 @@
 #resourceSender input {
     max-width: 110px;
 }
+#resourceSenderWrapper {
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+#resourceSenderWrapper table {
+    border-collapse: collapse;
+}
+#resourceSenderWrapper input,
+#resourceSenderWrapper button {
+    min-height: 36px;
+    touch-action: manipulation;
+}
+#tableSend {
+    min-width: 760px;
+}
 .totalsSummaryLine {
     display: block;
     margin: 2px 0;
@@ -102,14 +119,25 @@
 .copyTotalsButton {
     width: 100%;
 }
+@media (max-width: 600px) {
+    #resourceSenderWrapper {
+        width: 100%;
+    }
+    #resourceSenderWrapper input[type="text"] {
+        box-sizing: border-box;
+        font-size: 16px;
+    }
+    #resourceSenderWrapper td {
+        padding: 5px;
+    }
+}
 </style>`;
 
     if (!ensureProductionOverview()) {
         return;
     }
 
-    $("#contentContainer").eq(0).prepend(cssClassesSophie);
-    $("#mobileHeader").eq(0).prepend(cssClassesSophie);
+    $("head").append(cssClassesSophie);
 
     loadVillagesData().done(function () {
         villagesLoaded = true;
@@ -202,14 +230,22 @@
                 }
 
                 for (var mobileIndex = 0; mobileIndex < allVillages.length; mobileIndex++) {
-                    warehouseCapacity.push(parseResource(allWarehouses[mobileIndex].parentElement.innerText));
+                    var warehouseElement = allWarehouses[mobileIndex];
+                    var warehouseText = warehouseElement && warehouseElement.parentElement
+                        ? warehouseElement.parentElement.innerText
+                        : "0";
+                    warehouseCapacity.push(parseResource(warehouseText));
 
                     var merchantText = allMerchants[mobileIndex] ? allMerchants[mobileIndex].innerText : "0/0";
                     var merchantMatch = merchantText.match(/(\d+)\s*\/\s*(\d+)/);
                     availableMerchants.push(merchantMatch ? parseInt(merchantMatch[1], 10) : 0);
                     totalMerchants.push(merchantMatch ? parseInt(merchantMatch[2], 10) : 0);
 
-                    var farmMatch = allFarms[mobileIndex].parentElement.innerText.match(/(\d+)\s*\/\s*(\d+)/);
+                    var farmElement = allFarms[mobileIndex];
+                    var farmText = farmElement && farmElement.parentElement
+                        ? farmElement.parentElement.innerText
+                        : "0/0";
+                    var farmMatch = farmText.match(/(\d+)\s*\/\s*(\d+)/);
                     farmSpaceUsed.push(farmMatch ? parseInt(farmMatch[1], 10) : 0);
                     farmSpaceTotal.push(farmMatch ? parseInt(farmMatch[2], 10) : 0);
                 }
@@ -248,24 +284,25 @@
 
             for (var i = 0; i < allVillages.length; i++) {
                 var coordMatch = allVillages[i].innerText.trim().match(/\d+\|\d+/);
+                var villageLink = $(allVillages[i]).find("a").eq(0);
 
-                if (!coordMatch) {
+                if (!coordMatch || !villageLink.length) {
                     continue;
                 }
 
                 villagesData.push({
-                    id: allVillages[i].dataset.id,
-                    url: allVillages[i].children[0].children[0].href,
+                    id: allVillages[i].dataset.id || villageLink.data("id"),
+                    url: villageLink.attr("href"),
                     coord: coordMatch[0],
                     name: allVillages[i].innerText.trim(),
-                    wood: allWoodTotals[i],
-                    stone: allClayTotals[i],
-                    iron: allIronTotals[i],
-                    availableMerchants: availableMerchants[i],
-                    totalMerchants: totalMerchants[i],
-                    warehouseCapacity: warehouseCapacity[i],
-                    farmSpaceUsed: farmSpaceUsed[i],
-                    farmSpaceTotal: farmSpaceTotal[i]
+                    wood: allWoodTotals[i] || 0,
+                    stone: allClayTotals[i] || 0,
+                    iron: allIronTotals[i] || 0,
+                    availableMerchants: availableMerchants[i] || 0,
+                    totalMerchants: totalMerchants[i] || 0,
+                    warehouseCapacity: warehouseCapacity[i] || 0,
+                    farmSpaceUsed: farmSpaceUsed[i] || 0,
+                    farmSpaceTotal: farmSpaceTotal[i] || 0
                 });
             }
         });
@@ -294,11 +331,14 @@
             return;
         }
 
-        var targetContainer = $("#mobileHeader")[0] ? $("#mobileHeader").eq(0) : $("#contentContainer").eq(0);
+        var targetContainer = $("#contentContainer").eq(0);
 
-        if ($("#sendResourcesTable")[0]) {
-            $("#sendResourcesTable").remove();
-            $("#resourceSender").remove();
+        if (!targetContainer.length) {
+            targetContainer = $("#mobileHeader").eq(0);
+        }
+
+        if ($("#resourceSenderWrapper")[0]) {
+            $("#resourceSenderWrapper").remove();
         }
 
         var htmlString = `
