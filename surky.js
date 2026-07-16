@@ -25,6 +25,8 @@
     var resLimit = getStoredNumber("resLimit", 0);
     var sendPercent = getStoredNumber("sendPercent", 100);
     var villagesLoaded = false;
+    var autoSendAfterRecalculate = false;
+    var autoSending = false;
 
     var langShinko = [
         "Resource sender - percentage mode",
@@ -506,12 +508,25 @@
         $("#sendPercent").val(sendPercent);
         $("#coordinateTarget").val(coordinate);
 
+        if (isNativeMobileApp()) {
+            $("#recalculateResources").text("Prepocitat");
+        }
+
         $("#saveSettings").click(function () {
             saveSettingsFromUi();
         });
 
         $("#recalculateResources").click(function () {
-            saveSettingsFromUi();
+            if (autoSending) {
+                UI.ErrorMessage("Automaticke posielanie uz prebieha.");
+                return;
+            }
+
+            if (!saveSettingsFromUi()) {
+                return;
+            }
+
+            autoSendAfterRecalculate = isNativeMobileApp();
             reDo();
         });
 
@@ -637,23 +652,62 @@
         return true;
     }
 
-    function sendResource(sourceID, targetID, woodAmount, stoneAmount, ironAmount, rowId) {
+    function isNativeMobileApp() {
+        var device = String(game_data.device || "").toLowerCase();
+        return device === "ios" || device === "android";
+    }
+
+    function startAutomaticSending() {
+        var queue = [];
+
+        $(".sendResourcesButton").each(function () {
+            var button = $(this);
+            queue.push({
+                sourceID: button.data("source-id"),
+                targetID: button.data("target-id"),
+                wood: button.data("wood"),
+                stone: button.data("stone"),
+                iron: button.data("iron"),
+                rowId: button.data("row-id")
+            });
+        });
+
+        if (!queue.length) {
+            UI.ErrorMessage("Nie su ziadne dediny, z ktorych sa daju poslat suroviny.");
+            return;
+        }
+
+        autoSending = true;
+        UI.SuccessMessage("Automaticke posielanie zacalo. Pocet dedin: " + queue.length);
+
+        function sendNext() {
+            if (!queue.length) {
+                autoSending = false;
+                $(".sendResourcesButton").prop("disabled", false);
+                alert("Automaticke posielanie dokoncene!");
+                return;
+            }
+
+            var item = queue.shift();
+            sendResource(
+                item.sourceID,
+                item.targetID,
+                item.wood,
+                item.stone,
+                item.iron,
+                item.rowId,
+                function () {
+                    setTimeout(sendNext, 700);
+                }
+            );
+        }
+
+        sendNext();
+    }
+
+    function sendResource(sourceID, targetID, woodAmount, stoneAmount, ironAmount, rowId, onComplete) {
         $(".sendResourcesButton").prop("disabled", true);
         setStoredValue("coordinate", coordinate);
-
-        setTimeout(function () {
-            $("#" + rowId).remove();
-            $(".sendResourcesButton").prop("disabled", false);
-            $(".sendResourcesButton").first().focus();
-
-            if ($("#tableSend tr").length <= 2) {
-                alert("Finished sending!");
-
-                if ($(".btn-pp").length > 0) {
-                    $(".btn-pp").remove();
-                }
-            }
-        }, 200);
 
         var payload = {
             target_id: targetID,
@@ -681,6 +735,28 @@
                 $("#stoneSent").eq(0).text(numberWithCommas(totalStoneSent));
                 $("#ironSent").eq(0).text(numberWithCommas(totalIronSent));
                 $("#totalsSummary").eq(0).html(buildTotalsSummaryHtml());
+
+                $("#" + rowId).remove();
+
+                if (typeof onComplete !== "function") {
+                    $(".sendResourcesButton").prop("disabled", false);
+                }
+
+                if (!isNativeMobileApp() && typeof onComplete !== "function") {
+                    $(".sendResourcesButton").first().focus();
+                }
+
+                if ($("#tableSend tr").length <= 2 && typeof onComplete !== "function") {
+                    alert("Finished sending!");
+
+                    if ($(".btn-pp").length > 0) {
+                        $(".btn-pp").remove();
+                    }
+                }
+
+                if (typeof onComplete === "function") {
+                    onComplete();
+                }
             },
             false
         );
@@ -854,6 +930,7 @@
 
         $.get(sitterID).done(function (data) {
             if (!data.villages || !data.villages[0]) {
+                autoSendAfterRecalculate = false;
                 UI.ErrorMessage("Cielova dedina sa nenasla.");
                 return;
             }
@@ -869,6 +946,11 @@
             ];
 
             createList();
+
+            if (autoSendAfterRecalculate) {
+                autoSendAfterRecalculate = false;
+                startAutomaticSending();
+            }
         });
     }
 
