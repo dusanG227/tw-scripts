@@ -5,7 +5,7 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.9.1-safety-filter
+ * Version: v1.9.2-safety-visible
  * Last Updated: 2026-07-16
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
@@ -15,7 +15,7 @@
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.9.1-safety-filter',
+    version: 'v1.9.2-safety-visible',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -187,11 +187,7 @@ async function initClearBarbarianWalls(store) {
                     safetyCheckedBarbarians,
                     sourceVillages
                 );
-                const visibleBarbarians = sortBarbariansForDisplay(
-                    barbarians.filter(
-                        (barbarian) => !barbarian.safetyBlocked
-                    )
-                );
+                const visibleBarbarians = sortBarbariansForDisplay(barbarians);
 
                 const content = prepareContent(
                     visibleBarbarians,
@@ -326,9 +322,13 @@ function prepareContent(villages, maxBarbsToShow) {
 
 function sortBarbariansForDisplay(barbarians) {
     return [...barbarians].sort((left, right) => {
-        const leftCanAttack = left.sourceVillage ? 1 : 0;
-        const rightCanAttack = right.sourceVillage ? 1 : 0;
-        return rightCanAttack - leftCanAttack;
+        const getPriority = (barbarian) => {
+            if (!barbarian.safetyBlocked && barbarian.sourceVillage) return 0;
+            if (!barbarian.safetyBlocked) return 1;
+            return 2;
+        };
+
+        return getPriority(left) - getPriority(right);
     });
 }
 
@@ -578,9 +578,7 @@ function buildBarbsTable(villages, maxBarbsToShow) {
             ? buildCommandUrl(sourceVillage.id, villageId, unitsToSend, wall)
             : null;
         const sourceVillageHtml = safetyBlocked
-            ? `<span style="color:#9b1c1c;font-weight:700;">${tt(
-                  'Skipped for safety'
-              )}</span>`
+            ? '<span aria-label="blocked">—</span>'
             : sourceVillage
             ? `<a href="${sourceVillageUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(
                   sourceVillage.name
