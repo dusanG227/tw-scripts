@@ -5,7 +5,7 @@
 
 /*
  * Script Name: Clear Barbarian Walls
- * Version: v1.9.2-safety-visible
+ * Version: v1.10.0-summary-hidden-manager
  * Last Updated: 2026-07-16
  * Author: RedAlert
  * Author URL: https://twscripts.dev/
@@ -15,7 +15,7 @@
 
 var scriptData = {
     name: 'Clear Barbarian Walls',
-    version: 'v1.9.2-safety-visible',
+    version: 'v1.10.0-summary-hidden-manager',
     author: 'RedAlert',
     authorUrl: 'https://twscripts.dev/',
     helpLink:
@@ -49,6 +49,7 @@ if ('TWMap' in window) mapOverlay = TWMap;
 
 // Data Store Config
 var STORAGE_KEY = 'RA_CBW_STORE'; // key for sessionStorage
+var HIDDEN_TARGETS_STORAGE_PREFIX = 'RA_CBW_HIDDEN_TARGETS_V1';
 var SOURCE_VILLAGES_CACHE_KEY = 'RA_CBW_SOURCE_VILLAGES_CACHE_V2';
 var DEFAULT_STATE = {
     MAX_BARBARIANS: 100,
@@ -124,6 +125,21 @@ var translations = {
         'Skipped for safety': 'Skipped for safety',
         'Error loading outgoing attacks!':
             'Error loading outgoing attacks!',
+        Hide: 'Hide',
+        'Restore hidden': 'Restore hidden',
+        'Hidden targets restored!': 'Hidden targets restored!',
+        'Ready to attack': 'Ready to attack',
+        'Attacks already going': 'Attacks already going',
+        'Defense notes': 'Defense notes',
+        Unverified: 'Unverified',
+        Hidden: 'Hidden',
+        'Open next 10': 'Open next 10',
+        Remaining: 'remaining',
+        'No targets left': 'No targets left',
+        'Manage hidden': 'Manage hidden',
+        Restore: 'Restore',
+        'Restore all': 'Restore all',
+        'No hidden targets': 'No hidden targets',
     },
     sk_SK: {
         Note: 'Poznámka',
@@ -139,6 +155,21 @@ var translations = {
         'Skipped for safety': 'Vynechané kvôli bezpečnosti',
         'Error loading outgoing attacks!':
             'Nepodarilo sa načítať odchádzajúce útoky!',
+        Hide: 'Skryť',
+        'Restore hidden': 'Obnoviť skryté',
+        'Hidden targets restored!': 'Skryté ciele boli obnovené!',
+        'Ready to attack': 'Pripravené na útok',
+        'Attacks already going': 'Už sa na ne útočí',
+        'Defense notes': 'Označené deff',
+        Unverified: 'Neoverené',
+        Hidden: 'Ručne skryté',
+        'Open next 10': 'Otvoriť ďalších 10',
+        Remaining: 'zostáva',
+        'No targets left': 'Žiadne ďalšie ciele',
+        'Manage hidden': 'Spravovať skryté',
+        Restore: 'Obnoviť',
+        'Restore all': 'Obnoviť všetky',
+        'No hidden targets': 'Žiadne skryté ciele',
     },
 };
 
@@ -175,10 +206,15 @@ async function initClearBarbarianWalls(store) {
                     0,
                     parseInt(MAX_BARBARIANS, 10) || 0
                 );
-                const rawBarbarians = getFABarbarians(faTableRows).slice(
-                    0,
-                    maxBarbarians
-                );
+                const allBarbarians = getFABarbarians(faTableRows);
+                updateHiddenTargetCoords(allBarbarians);
+                const hiddenTargetIds = readHiddenTargetIds();
+                const rawBarbarians = allBarbarians
+                    .filter(
+                        (barbarian) =>
+                            !hiddenTargetIds.has(String(barbarian.villageId))
+                    )
+                    .slice(0, maxBarbarians);
 
                 UI.InfoMessage(tt('Checking notes and outgoing attacks...'));
                 const safetyCheckedBarbarians =
@@ -203,6 +239,8 @@ async function initClearBarbarianWalls(store) {
                 showSettingsPanel(store);
                 bindOpenAllTargetsButton();
                 bindAttackButtons();
+                bindHiddenTargetButtons();
+                bindManageHiddenTargetsButton();
                 } catch (error) {
                     UI.ErrorMessage(
                         `${tt('Error preparing source villages!')} ${
@@ -288,6 +326,12 @@ function updateMap(barbarians) {
 }
 
 function prepareContent(villages, maxBarbsToShow) {
+    const hiddenTargetsControls = buildHiddenTargetsControls();
+    const safetySummary = buildSafetySummary(villages);
+    const remainingTargets = villages.filter(
+        (village) => !village.safetyBlocked && village.sourceVillage
+    ).length;
+
     if (villages.length) {
         const barbsTable = buildBarbsTable(villages, maxBarbsToShow);
         var content = `
@@ -301,23 +345,74 @@ function prepareContent(villages, maxBarbsToShow) {
         )}</em>
 				</p>
 			</div>
+            ${safetySummary}
             <div class="ra-table-container">
                 ${barbsTable}
             </div>
             <div class="ra-open-targets-controls">
                 <a href="javascript:void(0);" id="openAllTargetsBtn" class="btn">
-                    ${tt('Open all targets')}
+                    ${formatOpenTargetsButtonText(remainingTargets)}
                 </a>
                 <span id="openAllTargetsStatus"></span>
             </div>
+            ${hiddenTargetsControls}
         `;
 
         return content;
     } else {
-        return `<b>${tt(
+        return `${safetySummary}<b>${tt(
             'No barbarian villages found fitting the criteria!'
-        )}</b>`;
+        )}</b>${hiddenTargetsControls}`;
     }
+}
+
+function buildSafetySummary(villages) {
+    const summary = {
+        ready: villages.filter(
+            (village) => !village.safetyBlocked && village.sourceVillage
+        ).length,
+        outgoing: villages.filter(
+            (village) => village.outgoingAttackStatus === 'present'
+        ).length,
+        defense: villages.filter(
+            (village) =>
+                village.noteStatus === 'present' && isDefenseNote(village.note)
+        ).length,
+        unverified: villages.filter(
+            (village) =>
+                village.noteStatus === 'unknown' ||
+                village.outgoingAttackStatus === 'unknown'
+        ).length,
+        hidden: readHiddenTargetIds().size,
+    };
+
+    return `
+        <div class="ra-safety-summary">
+            <span><b>${tt('Ready to attack')}:</b> <span id="summaryReadyCount">${summary.ready}</span></span>
+            <span><b>${tt('Attacks already going')}:</b> <span id="summaryOutgoingCount">${summary.outgoing}</span></span>
+            <span><b>${tt('Defense notes')}:</b> <span id="summaryDefenseCount">${summary.defense}</span></span>
+            <span><b>${tt('Unverified')}:</b> <span id="summaryUnverifiedCount">${summary.unverified}</span></span>
+            <span><b>${tt('Hidden')}:</b> <span id="summaryHiddenCount">${summary.hidden}</span></span>
+        </div>
+    `;
+}
+
+function formatOpenTargetsButtonText(remainingTargets) {
+    if (!remainingTargets) return tt('No targets left');
+    return `${tt('Open next 10')} (${tt('Remaining')}: ${remainingTargets})`;
+}
+
+function buildHiddenTargetsControls() {
+    const hiddenTargetsCount = readHiddenTargetIds().size;
+    const disabledClass = hiddenTargetsCount ? '' : ' btn-disabled';
+
+    return `
+        <div class="ra-hidden-targets-controls">
+            <a href="javascript:void(0);" id="manageHiddenTargetsBtn" class="btn${disabledClass}">
+                ${tt('Manage hidden')} (${hiddenTargetsCount})
+            </a>
+        </div>
+    `;
 }
 
 function sortBarbariansForDisplay(barbarians) {
@@ -381,6 +476,10 @@ function renderUI(body) {
             .ra-popup-content input[type="text"] { padding: 3px; width: 100%; }
             .ra-mb15 { margin-bottom: 15px; }
             .ra-open-targets-controls { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+            .ra-hidden-targets-controls { margin-top: 8px; }
+            .ra-safety-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 10px; padding: 7px; border: 1px solid #bc6e1f; background: #fff5da; }
+            .ra-hidden-targets-table td, .ra-hidden-targets-table th { padding: 4px 8px; }
+            .ra-hide-target-btn { display: inline-block; margin-top: 4px; color: #8b1a1a; font-size: 11px; }
             #openAllTargetsStatus { font-weight: 600; }
             .already-sent-command { opacity: 0.6; }
             .ra-safety-blocked td { background-color: #f3c6c0 !important; }
@@ -471,18 +570,160 @@ function bindAttackButtons() {
         });
 }
 
+function bindHiddenTargetButtons() {
+    jQuery('.ra-hide-target-btn')
+        .off('click')
+        .on('click', function (e) {
+            e.preventDefault();
+
+            const villageId = String(jQuery(this).data('village-id') || '');
+            const coord = String(jQuery(this).data('coord') || '');
+            if (!villageId) return;
+
+            addHiddenTarget(villageId, coord);
+            const row = this.closest('tr');
+            if (row) row.remove();
+
+            renumberBarbarianRows();
+            updateVisibleBarbarianCount();
+            updateManageHiddenTargetsButton();
+            updateSafetySummaryFromTable();
+            updateOpenTargetsButtonState();
+        });
+}
+
+function bindManageHiddenTargetsButton() {
+    jQuery('#manageHiddenTargetsBtn')
+        .off('click')
+        .on('click', function (e) {
+            e.preventDefault();
+            if (!readHiddenTargetIds().size) return;
+            showHiddenTargetsDialog();
+        });
+}
+
+function showHiddenTargetsDialog() {
+    const hiddenTargets = readHiddenTargets();
+    const rows = Array.from(hiddenTargets.values())
+        .sort((left, right) => left.coord.localeCompare(right.coord))
+        .map(
+            (target) => `
+                <tr data-hidden-village-id="${escapeHtml(target.id)}">
+                    <td>${escapeHtml(target.coord || `ID ${target.id}`)}</td>
+                    <td><a href="javascript:void(0);" class="btn ra-restore-one-target" data-village-id="${escapeHtml(
+                        target.id
+                    )}">${tt('Restore')}</a></td>
+                </tr>
+            `
+        )
+        .join('');
+
+    const content = `
+        <div class="ra-popup-content">
+            <table class="vis ra-hidden-targets-table" width="100%">
+                <thead><tr><th>${tt('Barbarian')}</th><th>${tt('Actions')}</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+            <div style="margin-top:10px;">
+                <a href="javascript:void(0);" id="restoreAllHiddenTargetsBtn" class="btn">${tt(
+                    'Restore all'
+                )}</a>
+            </div>
+        </div>
+    `;
+
+    Dialog.show('HiddenTargets', content);
+
+    jQuery('.ra-restore-one-target').on('click', function (e) {
+        e.preventDefault();
+        const villageId = String(jQuery(this).data('village-id') || '');
+        if (!villageId) return;
+
+        removeHiddenTargetId(villageId);
+        const row = this.closest('tr');
+        if (row) row.remove();
+        updateManageHiddenTargetsButton();
+        updateSafetySummaryFromTable();
+
+        if (!readHiddenTargetIds().size) {
+            jQuery('.ra-hidden-targets-table tbody').html(
+                `<tr><td colspan="2">${tt('No hidden targets')}</td></tr>`
+            );
+        }
+    });
+
+    jQuery('#restoreAllHiddenTargetsBtn').on('click', function (e) {
+        e.preventDefault();
+        clearHiddenTargetIds();
+        jQuery('.ra-hidden-targets-table tbody').html(
+            `<tr><td colspan="2">${tt('No hidden targets')}</td></tr>`
+        );
+        updateManageHiddenTargetsButton();
+        updateSafetySummaryFromTable();
+        UI.SuccessMessage(tt('Hidden targets restored!'));
+    });
+}
+
+function renumberBarbarianRows() {
+    document.querySelectorAll('.ra-table tbody tr').forEach((row, index) => {
+        const firstCell = row.querySelector('td');
+        if (firstCell) firstCell.textContent = String(index + 1);
+    });
+}
+
+function updateVisibleBarbarianCount() {
+    const countElement = document.querySelector('#barbVillagesCount');
+    if (!countElement) return;
+
+    countElement.textContent = String(
+        document.querySelectorAll('.ra-table tbody tr').length
+    );
+}
+
+function updateManageHiddenTargetsButton() {
+    const button = document.querySelector('#manageHiddenTargetsBtn');
+    if (!button) return;
+
+    const hiddenTargetsCount = readHiddenTargetIds().size;
+    button.textContent = `${tt('Manage hidden')} (${hiddenTargetsCount})`;
+    button.classList.toggle('btn-disabled', hiddenTargetsCount === 0);
+}
+
+function updateSafetySummaryFromTable() {
+    const rows = Array.from(document.querySelectorAll('.ra-table tbody tr'));
+    const setCount = (elementId, dataKey) => {
+        const element = document.querySelector(`#${elementId}`);
+        if (!element) return;
+        element.textContent = String(
+            rows.filter((row) => row.dataset[dataKey] === '1').length
+        );
+    };
+
+    setCount('summaryReadyCount', 'ready');
+    setCount('summaryOutgoingCount', 'outgoing');
+    setCount('summaryDefenseCount', 'defense');
+    setCount('summaryUnverifiedCount', 'unverified');
+
+    const hiddenCountElement = document.querySelector('#summaryHiddenCount');
+    if (hiddenCountElement) {
+        hiddenCountElement.textContent = String(readHiddenTargetIds().size);
+    }
+}
+
 function openGeneratedTargets() {
     if (OPEN_ALL_TARGETS_IN_PROGRESS) return;
 
-    const links = Array.from(
-        document.querySelectorAll('.ra-clear-barb-wall-btn')
-    )
-        .filter((link) => !link.classList.contains('btn-already-sent'))
-        .slice(0, MAX_TARGETS_TO_OPEN_AT_ONCE);
+    const links = getRemainingTargetLinks().slice(
+        0,
+        MAX_TARGETS_TO_OPEN_AT_ONCE
+    );
     const button = document.querySelector('#openAllTargetsBtn');
     const status = document.querySelector('#openAllTargetsStatus');
 
-    if (!links.length) return;
+    if (!links.length) {
+        updateOpenTargetsButtonState();
+        return;
+    }
 
     if (button) {
         button.classList.add('btn-disabled');
@@ -503,8 +744,23 @@ function openGeneratedTargets() {
 
     if (button) {
         button.classList.remove('btn-disabled');
-        button.textContent = tt('Finished opening targets!');
     }
+    updateOpenTargetsButtonState();
+}
+
+function getRemainingTargetLinks() {
+    return Array.from(
+        document.querySelectorAll('.ra-clear-barb-wall-btn')
+    ).filter((link) => !link.classList.contains('btn-already-sent'));
+}
+
+function updateOpenTargetsButtonState() {
+    const button = document.querySelector('#openAllTargetsBtn');
+    if (!button) return;
+
+    const remainingTargets = getRemainingTargetLinks().length;
+    button.textContent = formatOpenTargetsButtonText(remainingTargets);
+    button.classList.toggle('btn-disabled', remainingTargets === 0);
 }
 
 function saveSettings() {
@@ -606,9 +862,25 @@ function buildBarbsTable(villages, maxBarbsToShow) {
                   'Blocked target'
               )}">${tt('Blocked')}</span>`
             : `<span class="btn btn-disabled">${tt('Attack')}</span>`;
+        const hideTargetHtml = `<br><a href="javascript:void(0);" class="ra-hide-target-btn" data-village-id="${villageId}" data-coord="${escapeHtml(
+            coord
+        )}">${tt(
+            'Hide'
+        )}</a>`;
+
+        const isUnverified =
+            noteStatus === 'unknown' || outgoingAttackStatus === 'unknown';
+        const hasDefenseNote =
+            noteStatus === 'present' && isDefenseNote(note);
 
         barbsTable += `
-			<tr class="${safetyBlocked ? 'ra-safety-blocked' : ''}">
+			<tr class="${safetyBlocked ? 'ra-safety-blocked' : ''}" data-ready="${
+            commandUrl ? '1' : '0'
+        }" data-outgoing="${
+            outgoingAttackStatus === 'present' ? '1' : '0'
+        }" data-defense="${hasDefenseNote ? '1' : '0'}" data-unverified="${
+            isUnverified ? '1' : '0'
+        }">
 				<td>${index}</td>
 				<td><img src="${type}"></td>
 				<td><a href="${villageUrl}" target="_blank" rel="noopener noreferrer">${coord}</a></td>
@@ -619,7 +891,7 @@ function buildBarbsTable(villages, maxBarbsToShow) {
 				<td>${outgoingAttackHtml}</td>
 				<td>${wall !== '?' ? wall : '<b style="color:red;">?</b>'}</td>
 				<td>${reportTime}</td>
-				<td>${actionHtml}</td>
+				<td>${actionHtml}${hideTargetHtml}</td>
 			</tr>
 		`;
     });
@@ -1931,6 +2203,110 @@ function updateProgressBar(index, total) {
         UI.SuccessMessage(tt('Finished fetching FA pages!'));
         jQuery('#progressbar').fadeOut(1000);
     }
+}
+
+function getHiddenTargetsStorageKey() {
+    const world = String(game_data.world || 'unknown');
+    const playerId = String(
+        game_data.player && game_data.player.id
+            ? game_data.player.id
+            : 'unknown'
+    );
+    return `${HIDDEN_TARGETS_STORAGE_PREFIX}_${world}_${playerId}`;
+}
+
+function readHiddenTargets() {
+    try {
+        const storedValue = localStorage.getItem(getHiddenTargetsStorageKey());
+        if (!storedValue) return new Map();
+
+        const parsedValue = JSON.parse(storedValue);
+        if (!Array.isArray(parsedValue)) return new Map();
+
+        const hiddenTargets = new Map();
+        parsedValue.forEach((storedTarget) => {
+            const isLegacyValue =
+                typeof storedTarget === 'string' ||
+                typeof storedTarget === 'number';
+            const id = String(
+                isLegacyValue
+                    ? storedTarget
+                    : storedTarget && storedTarget.id
+                    ? storedTarget.id
+                    : ''
+            );
+            if (!id) return;
+
+            hiddenTargets.set(id, {
+                id: id,
+                coord: isLegacyValue
+                    ? ''
+                    : String(storedTarget.coord || ''),
+            });
+        });
+
+        return hiddenTargets;
+    } catch (error) {
+        return new Map();
+    }
+}
+
+function readHiddenTargetIds() {
+    return new Set(readHiddenTargets().keys());
+}
+
+function writeHiddenTargets(hiddenTargets) {
+    try {
+        localStorage.setItem(
+            getHiddenTargetsStorageKey(),
+            JSON.stringify(Array.from(hiddenTargets.values()))
+        );
+    } catch (error) {}
+}
+
+function addHiddenTarget(villageId, coord) {
+    const hiddenTargets = readHiddenTargets();
+    const normalizedId = String(villageId || '');
+    if (!normalizedId) return;
+
+    hiddenTargets.set(normalizedId, {
+        id: normalizedId,
+        coord: String(coord || ''),
+    });
+    writeHiddenTargets(hiddenTargets);
+}
+
+function addHiddenTargetId(villageId) {
+    addHiddenTarget(villageId, '');
+}
+
+function removeHiddenTargetId(villageId) {
+    const hiddenTargets = readHiddenTargets();
+    hiddenTargets.delete(String(villageId || ''));
+    writeHiddenTargets(hiddenTargets);
+}
+
+function updateHiddenTargetCoords(barbarians) {
+    const hiddenTargets = readHiddenTargets();
+    let hasChanges = false;
+
+    barbarians.forEach((barbarian) => {
+        const villageId = String(barbarian.villageId || '');
+        const storedTarget = hiddenTargets.get(villageId);
+        if (!storedTarget || storedTarget.coord === barbarian.coord) return;
+
+        storedTarget.coord = barbarian.coord;
+        hiddenTargets.set(villageId, storedTarget);
+        hasChanges = true;
+    });
+
+    if (hasChanges) writeHiddenTargets(hiddenTargets);
+}
+
+function clearHiddenTargetIds() {
+    try {
+        localStorage.removeItem(getHiddenTargetsStorageKey());
+    } catch (error) {}
 }
 
 function readStorage(defaultState) {
