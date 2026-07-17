@@ -1,4 +1,4 @@
-// TW Fake Executor v4.2
+// TW Fake Executor v4.4
 (function() {
   'use strict';
 
@@ -330,7 +330,27 @@
     return cheap.concat(medium);
   }
 
-  function fillCloseToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder) {
+  function getSiegeUnitLimit(fakeLimitPct) {
+    return Math.max(2, Math.min(6, Math.ceil((Number(fakeLimitPct) || 0) * 6)));
+  }
+
+  function getRemainingUnitCapacity(unitName, selected, availableUnits, siegeLimit) {
+    var already = selected[unitName] || 0;
+    var available = Math.max(0, (availableUnits[unitName] || 0) - already);
+
+    if (unitName === 'spy') {
+      return Math.min(available, Math.max(0, 5 - already));
+    }
+
+    if (unitName === 'ram' || unitName === 'catapult') {
+      var selectedSiege = (selected.ram || 0) + (selected.catapult || 0);
+      return Math.min(available, Math.max(0, siegeLimit - selectedSiege));
+    }
+
+    return available;
+  }
+
+  function fillCloseToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder, siegeLimit) {
     var changed = true;
 
     while (changed && usedPop < requiredPop) {
@@ -341,7 +361,7 @@
         var unitName = fillOrder[i];
         var pop = unitPop[unitName] || 1;
         var already = selected[unitName] || 0;
-        var available = (availableUnits[unitName] || 0) - already;
+        var available = getRemainingUnitCapacity(unitName, selected, availableUnits, siegeLimit);
 
         if (available <= 0) continue;
         if (pop > remaining) continue;
@@ -357,7 +377,7 @@
     return { selected: selected, usedPop: usedPop };
   }
 
-  function topOffToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder) {
+  function topOffToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder, siegeLimit) {
     while (usedPop < requiredPop) {
       var bestUnit = null;
       var bestOvershoot = Infinity;
@@ -367,7 +387,7 @@
         var unitName = fillOrder[i];
         var pop = unitPop[unitName] || 1;
         var already = selected[unitName] || 0;
-        var available = (availableUnits[unitName] || 0) - already;
+        var available = getRemainingUnitCapacity(unitName, selected, availableUnits, siegeLimit);
         if (available <= 0) continue;
 
         var overshoot = usedPop + pop - requiredPop;
@@ -392,8 +412,9 @@
   function buildFakeCoreSelection(availableUnits, preferRandomSiege) {
     if (!canStartFakeFromUnits(availableUnits)) return null;
 
-    var selected = { spy: 1 };
-    var usedPop = unitPop.spy;
+    var spyCount = Math.min(availableUnits.spy || 0, randInt(3, 5));
+    var selected = { spy: spyCount };
+    var usedPop = unitPop.spy * spyCount;
     var hasRam = (availableUnits.ram || 0) >= 2;
     var hasCat = (availableUnits.catapult || 0) >= 2;
     var siegeType = hasRam ? 'ram' : 'catapult';
@@ -411,16 +432,17 @@
     };
   }
 
-  function finalizeSelectedUnits(selected, availableUnits, requiredPop, usedPop) {
+  function finalizeSelectedUnits(selected, availableUnits, requiredPop, usedPop, fakeLimitPct) {
     if (getUnitsPopulation(availableUnits) < requiredPop) return {};
 
     var fillOrder = getFillOrder();
-    var filled = fillCloseToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder);
+    var siegeLimit = getSiegeUnitLimit(fakeLimitPct);
+    var filled = fillCloseToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder, siegeLimit);
     selected = filled.selected;
     usedPop = filled.usedPop;
 
     if (usedPop < requiredPop) {
-      filled = topOffToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder);
+      filled = topOffToRequired(selected, availableUnits, usedPop, requiredPop, fillOrder, siegeLimit);
       selected = filled.selected;
       usedPop = filled.usedPop;
     }
@@ -440,7 +462,7 @@
     if (!core) return {};
 
     var requiredPop = getFakePopBudget(fakeLimitPct, villagePoints, core.usedPop);
-    return finalizeSelectedUnits(core.selected, availableUnits, requiredPop, core.usedPop);
+    return finalizeSelectedUnits(core.selected, availableUnits, requiredPop, core.usedPop, fakeLimitPct);
   }
 
   function selectManualUnits(availableUnits, fakeLimitPct, villagePoints) {
@@ -448,7 +470,7 @@
     if (!core) return {};
 
     var requiredPop = getFakePopBudget(fakeLimitPct, villagePoints, core.usedPop);
-    return finalizeSelectedUnits(core.selected, availableUnits, requiredPop, core.usedPop);
+    return finalizeSelectedUnits(core.selected, availableUnits, requiredPop, core.usedPop, fakeLimitPct);
   }
 
   function selectUnitsForFake(availableUnits, fakeLimitPct, villagePoints) {
@@ -609,7 +631,7 @@
 
     var h = '<div style="text-align:center;margin-bottom:12px;">';
     h += '<h2 style="margin:0;color:#7d510f;font-size:18px;">⚔️ TW Fake - Konfigurácia</h2>';
-    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v4.2 | svet: ' + escapeHtml(config.worldId || '?') + ' | rýchlosť: ' + worldSpeed + 'x | jednotky: ' + unitSpeedMod + 'x</p>';
+    h += '<p style="margin:2px 0 0;font-size:10px;color:#8b7355;">v4.4 | svet: ' + escapeHtml(config.worldId || '?') + ' | rýchlosť: ' + worldSpeed + 'x | jednotky: ' + unitSpeedMod + 'x</p>';
     h += '</div>';
 
     h += '<div style="margin-bottom:10px;padding:10px;background:#e8d5a3;border-radius:4px;">';
@@ -677,7 +699,7 @@
     h += '</table>';
 
     h += '<div style="background:#e8f4e8;padding:6px 10px;border-radius:4px;margin-bottom:10px;font-size:10px;color:#2d5a27;">';
-    h += '🪖 Základ fake: <b>1 spy + 2 ram/cat</b> | 🔀 Dorovná na <b>aspoň required pop</b> | 💾 Pamätá si posledné nastavenia aj tabuľky coordov';
+    h += '🪖 Základ fake: <b>3–5 spy + 2 ram/cat</b> | strop ram/cat spolu: <b>3 pri 0,5% / 6 pri 1%</b> | 🔀 Dorovná na <b>aspoň required pop</b> | 💾 Pamätá si posledné nastavenia aj tabuľky coordov';
     h += '<br/>Pri percentovom svete sa required pop ráta osobitne z bodov každej dediny. Príklad: svet s <b>0,5%</b> nastavíš ako <b>0.5</b> + <b>0</b>.';
     h += '<br/>Pevné minimum používaj len ak svet vyžaduje napríklad <b>100 pop</b> na každý fake bez ohľadu na body dediny.';
     h += '</div>';
