@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DK Command Planner
 // @namespace    https://github.com/dusanG227/tw-scripts
-// @version      1.0.0
-// @description  Vypocita cas odoslania prikazu, zobrazi odpocet a upozorni na rucne potvrdenie.
+// @version      1.1.0
+// @description  Vypocita cas odoslania, upozorni na rucne potvrdenie a otvara prikazy z rychleho nahladu v novej karte.
 // @author       dusanG227
 // @match        https://*.divokekmene.sk/game.php*
 // @match        https://*.tribalwars.net/game.php*
@@ -18,6 +18,8 @@
   const STORAGE_KEY = "dk-command-planner-settings-v1";
   const PANEL_ID = "dk-command-planner";
   const TICK_MS = 40;
+
+  enableQuickPreviewNewTab();
 
   if (document.getElementById(PANEL_ID)) return;
 
@@ -192,6 +194,48 @@
   function setStatus(message, kind) {
     status.textContent = message;
     status.dataset.kind = kind;
+  }
+
+  function enableQuickPreviewNewTab() {
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (event.defaultPrevented || event.button !== 0) return;
+
+        const link = event.target.closest("a[href]");
+        if (!link || !isQuickPreviewCommandLink(link)) return;
+
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      },
+      true,
+    );
+  }
+
+  function isQuickPreviewCommandLink(link) {
+    const href = link.href || "";
+    const isCommandLink =
+      href.includes("screen=info_command") ||
+      (href.includes("screen=place") &&
+        (href.includes("mode=command") || href.includes("target=") || href.includes("try=confirm")));
+
+    if (!isCommandLink) return false;
+
+    return Boolean(
+      link.closest(
+        [
+          ".popup_box",
+          ".popup_box_content",
+          ".quickedit-content",
+          ".quick-command",
+          ".command-row",
+          "#commands_outgoings",
+          "#commands_incomings",
+          "[id*='quick_preview']",
+          "[class*='quick-preview']",
+        ].join(","),
+      ),
+    );
   }
 
   function findSendButton() {
