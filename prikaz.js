@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DK Command Planner
 // @namespace    https://github.com/dusanG227/tw-scripts
-// @version      1.1.1
+// @version      1.2.0
 // @description  Vypocita cas odoslania, upozorni na rucne potvrdenie a otvara prikazy z rychleho nahladu v novej karte.
 // @author       dusanG227
 // @match        https://*.divokekmene.sk/game.php*
@@ -39,8 +39,10 @@
     <div class="dkcp-grid">
       <label for="dkcp-arrival">Čas príchodu</label>
       <input id="dkcp-arrival" type="datetime-local" step="1">
+      <label for="dkcp-seconds">Sekundy</label>
+      <input id="dkcp-seconds" type="number" inputmode="numeric" min="0" max="59" step="1" value="${settings.seconds}">
       <label for="dkcp-ms">Milisekundy</label>
-      <input id="dkcp-ms" type="number" min="0" max="999" step="1" value="${settings.milliseconds}">
+      <input id="dkcp-ms" type="number" inputmode="numeric" min="0" max="999" step="1" value="${settings.milliseconds}">
       <label>Trvanie príkazu</label>
       <output id="dkcp-duration">${formatDuration(travelMs)}</output>
     </div>
@@ -78,6 +80,7 @@
   insertPanel(panel, sendButton);
 
   const arrivalInput = panel.querySelector("#dkcp-arrival");
+  const secondsInput = panel.querySelector("#dkcp-seconds");
   const msInput = panel.querySelector("#dkcp-ms");
   const planButton = panel.querySelector("#dkcp-plan");
   const cancelButton = panel.querySelector("#dkcp-cancel");
@@ -90,8 +93,11 @@
   arrivalInput.value = toDateTimeLocalValue(new Date(Date.now() + travelMs + 5 * 60_000));
 
   planButton.addEventListener("click", () => {
+    const seconds = clamp(Number.parseInt(secondsInput.value, 10) || 0, 0, 59);
     const milliseconds = clamp(Number.parseInt(msInput.value, 10) || 0, 0, 999);
-    const arrivalAt = parseLocalDateTime(arrivalInput.value, milliseconds);
+    secondsInput.value = String(seconds);
+    msInput.value = String(milliseconds);
+    const arrivalAt = parseLocalDateTime(arrivalInput.value, seconds, milliseconds);
 
     if (!arrivalAt) {
       setStatus("Neplatný čas príchodu.", "error");
@@ -107,9 +113,10 @@
 
     plan = { arrivalAt, sendAt };
     notified = false;
-    saveSettings({ milliseconds });
+    saveSettings({ seconds, milliseconds });
     cancelButton.disabled = false;
     arrivalInput.disabled = true;
+    secondsInput.disabled = true;
     msInput.disabled = true;
     planButton.disabled = true;
     arrivalView.textContent = formatDateTime(arrivalAt, true);
@@ -159,6 +166,7 @@
     plan = null;
     notified = false;
     arrivalInput.disabled = false;
+    secondsInput.disabled = false;
     msInput.disabled = false;
     planButton.disabled = false;
     cancelButton.disabled = true;
@@ -281,7 +289,7 @@
     anchor.parentElement.insertBefore(element, anchor);
   }
 
-  function parseLocalDateTime(value, milliseconds) {
+  function parseLocalDateTime(value, seconds, milliseconds) {
     const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
     if (!match) return null;
     const date = new Date(
@@ -290,7 +298,7 @@
       Number(match[3]),
       Number(match[4]),
       Number(match[5]),
-      Number(match[6] || 0),
+      seconds,
       milliseconds,
     );
 
@@ -300,7 +308,7 @@
       date.getDate() === Number(match[3]) &&
       date.getHours() === Number(match[4]) &&
       date.getMinutes() === Number(match[5]) &&
-      date.getSeconds() === Number(match[6] || 0);
+      date.getSeconds() === seconds;
 
     return Number.isNaN(date.getTime()) || !valuesMatch ? null : date;
   }
@@ -367,9 +375,9 @@
 
   function loadSettings() {
     try {
-      return { milliseconds: 0, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") };
+      return { seconds: 0, milliseconds: 0, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") };
     } catch {
-      return { milliseconds: 0 };
+      return { seconds: 0, milliseconds: 0 };
     }
   }
 
