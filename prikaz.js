@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DK Command Planner
 // @namespace    https://github.com/dusanG227/tw-scripts
-// @version      1.1.0
+// @version      1.1.1
 // @description  Vypocita cas odoslania, upozorni na rucne potvrdenie a otvara prikazy z rychleho nahladu v novej karte.
 // @author       dusanG227
 // @match        https://*.divokekmene.sk/game.php*
@@ -282,7 +282,7 @@
   }
 
   function parseLocalDateTime(value, milliseconds) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(value);
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
     if (!match) return null;
     const date = new Date(
       Number(match[1]),
@@ -290,10 +290,19 @@
       Number(match[3]),
       Number(match[4]),
       Number(match[5]),
-      Number(match[6]),
+      Number(match[6] || 0),
       milliseconds,
     );
-    return Number.isNaN(date.getTime()) ? null : date;
+
+    const valuesMatch =
+      date.getFullYear() === Number(match[1]) &&
+      date.getMonth() === Number(match[2]) - 1 &&
+      date.getDate() === Number(match[3]) &&
+      date.getHours() === Number(match[4]) &&
+      date.getMinutes() === Number(match[5]) &&
+      date.getSeconds() === Number(match[6] || 0);
+
+    return Number.isNaN(date.getTime()) || !valuesMatch ? null : date;
   }
 
   function toDateTimeLocalValue(date) {
