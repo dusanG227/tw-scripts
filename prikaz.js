@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         DK Command Planner
 // @namespace    https://github.com/dusanG227/tw-scripts
-// @version      1.2.0
-// @description  Vypocita cas odoslania, upozorni na rucne potvrdenie a otvara prikazy z rychleho nahladu v novej karte.
+// @version      1.3.0
+// @description  Vypocita cas odoslania, automaticky potvrdi prikaz a otvara prikazy z rychleho nahladu v novej karte.
 // @author       dusanG227
 // @match        https://*.divokekmene.sk/game.php*
 // @match        https://*.tribalwars.net/game.php*
-// @updateURL    https://raw.githubusercontent.com/dusanG227/tw-scripts/refs/heads/main/tw-command-planner.user.js
-// @downloadURL  https://raw.githubusercontent.com/dusanG227/tw-scripts/refs/heads/main/tw-command-planner.user.js
+// @updateURL    https://raw.githubusercontent.com/dusanG227/tw-scripts/refs/heads/main/prikaz.js
+// @downloadURL  https://raw.githubusercontent.com/dusanG227/tw-scripts/refs/heads/main/prikaz.js
 // @grant        GM_notification
 // @run-at       document-idle
 // ==/UserScript==
@@ -17,7 +17,7 @@
 
   const STORAGE_KEY = "dk-command-planner-settings-v1";
   const PANEL_ID = "dk-command-planner";
-  const TICK_MS = 40;
+  const TICK_MS = 10;
 
   enableQuickPreviewNewTab();
 
@@ -31,6 +31,7 @@
   let plan = null;
   let timerId = null;
   let notified = false;
+  let submitted = false;
 
   const panel = document.createElement("section");
   panel.id = PANEL_ID;
@@ -72,7 +73,7 @@
       </tbody>
     </table>
     <p class="dkcp-note">
-      Príkaz sa neodošle automaticky. Po skončení odpočtu ho musíš potvrdiť ručne.
+      Príkaz sa v naplánovanom čase odošle automaticky. Kartu nechaj otvorenú.
     </p>
   `;
 
@@ -113,6 +114,7 @@
 
     plan = { arrivalAt, sendAt };
     notified = false;
+    submitted = false;
     saveSettings({ seconds, milliseconds });
     cancelButton.disabled = false;
     arrivalInput.disabled = true;
@@ -147,17 +149,32 @@
     }
 
     countdown.textContent = "TERAZ";
-    state.textContent = "Ručne odošli";
+    state.textContent = "Odosielam";
     state.className = "dkcp-due";
     panel.classList.remove("dkcp-pulse");
     panel.classList.add("dkcp-ready");
     sendButton.classList.add("dkcp-send-ready");
-    sendButton.scrollIntoView({ behavior: "smooth", block: "center" });
-    setStatus("Čas nastal — skontroluj údaje a klikni na pôvodné tlačidlo odoslania.", "due");
-
     clearInterval(timerId);
     timerId = null;
-    notify();
+    submitCommand();
+  }
+
+  function submitCommand() {
+    if (submitted) return;
+
+    if (!sendButton.isConnected || sendButton.disabled) {
+      state.textContent = "Neodoslané";
+      state.className = "dkcp-due";
+      setStatus("Príkaz sa nepodarilo odoslať — potvrdzovacie tlačidlo nie je dostupné.", "error");
+      notify("Automatické odoslanie zlyhalo. Skontroluj kartu.");
+      return;
+    }
+
+    submitted = true;
+    state.textContent = "Odoslané";
+    setStatus("Čas nastal — príkaz bol automaticky odoslaný.", "due");
+    sendButton.click();
+    notify("Príkaz bol automaticky odoslaný.");
   }
 
   function resetPlan() {
@@ -165,6 +182,7 @@
     timerId = null;
     plan = null;
     notified = false;
+    submitted = false;
     arrivalInput.disabled = false;
     secondsInput.disabled = false;
     msInput.disabled = false;
@@ -180,7 +198,7 @@
     setStatus("Plán bol zrušený.", "neutral");
   }
 
-  function notify() {
+  function notify(message) {
     if (notified) return;
     notified = true;
     playAlert();
@@ -188,13 +206,13 @@
     if (typeof GM_notification === "function") {
       GM_notification({
         title: "Divoké kmene — čas odoslať príkaz",
-        text: "Skontroluj príkaz a potvrď ho ručne.",
+        text: message,
         timeout: 15_000,
         onclick: () => window.focus(),
       });
     } else if ("Notification" in window && Notification.permission === "granted") {
       new Notification("Čas odoslať príkaz", {
-        body: "Skontroluj príkaz a potvrď ho ručne.",
+        body: message,
       });
     }
   }
