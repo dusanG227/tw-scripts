@@ -1,4 +1,4 @@
-var ScriptData = { name: "Auto notes from report", version: "v2.2", lastUpdate: "2026-05-11", author: "xdam98 + Codex", authorContact: "Xico#7941 (Discord)" },
+var ScriptData = { name: "Auto notes from report", version: "v2.3", lastUpdate: "2026-08-01", author: "xdam98 + Codex", authorContact: "Xico#7941 (Discord)" },
 LS_prefix = "xd",
 translations = {
     pt_PT: {
@@ -152,6 +152,105 @@ function addTroopPop(target, index, amount, farmPop, hasArchers) {
     }
 }
 
+function createTroopSummary() {
+    return { ofensivas: 0, defensivas: 0 };
+}
+
+function getCatapultIndex(hasArchers) {
+    return hasArchers ? 9 : 7;
+}
+
+function getTroopRowValues(selector, expectedLength) {
+    var values = new Array(expectedLength).fill(0);
+
+    $(selector).each((function (index, cell) {
+        if (index < expectedLength) values[index] = parseInt(cell.textContent, 10) || 0;
+    }));
+
+    return values;
+}
+
+function calculateSurvivors(sent, losses) {
+    return sent.map((function (amount, index) {
+        return Math.max(0, amount - (losses[index] || 0));
+    }));
+}
+
+function summarizeTroops(values, farmPop, hasArchers) {
+    var summary = createTroopSummary();
+
+    values.forEach((function (amount, index) {
+        addTroopPop(summary, index, amount, farmPop, hasArchers);
+    }));
+
+    return summary;
+}
+
+function formatImpactDate(rawText) {
+    rawText = rawText || "";
+    var match = rawText.match(/(\d{1,2})\s*[.\/-]\s*(\d{1,2})\s*[.\/-]\s*(\d{2,4})/i);
+    if (!match) return "";
+
+    var year = match[3].length == 2 ? "20" + match[3] : match[3];
+    var timeMatch = rawText.match(/(?:^|\D)(\d{1,2}:\d{2}(?::\d{2})?)(?:\D|$)/);
+    return parseInt(match[1], 10) + "." + parseInt(match[2], 10) + "." + year + (timeMatch ? " " + timeMatch[1] : "");
+}
+
+function getReportImpactDate() {
+    var impactDate = "";
+    var preferredLabels = ["cas dopadu", "datum dopadu", "dopad", "prichod", "datum"];
+
+    $("#content_value tr").each((function () {
+        if (impactDate) return;
+
+        var row = $(this);
+        var normalized = normalizeReportLabel(row.text());
+        if (normalized.indexOf("navratu") > -1) return;
+
+        var isPreferred = preferredLabels.some((function (label) {
+            return normalized.indexOf(label) > -1;
+        }));
+
+        if (isPreferred) impactDate = formatImpactDate(row.text());
+    }));
+
+    if (impactDate) return impactDate;
+
+    // Na roznych svetoch nema oznam o dopade rovnaky popis. Ako zaloha
+    // vezmeme prvy datum v hlavicke reportu, nikdy vsak datum z riadku Navrat.
+    $("#content_value tr").each((function () {
+        if (impactDate) return;
+        var rowText = $(this).text();
+        if (normalizeReportLabel(rowText).indexOf("navratu") == -1) {
+            impactDate = formatImpactDate(rowText);
+        }
+    }));
+
+    return impactDate;
+}
+
+function getOffRipText(dados) {
+    var sentOff = dados.aldeia.ofensiva.tropas.vyslane.ofensivas;
+    var lostOff = dados.aldeia.ofensiva.tropas.straty.ofensivas;
+
+    // Male farmy a spionaze sa nemaju oznacovat ako znicena OFF armada.
+    if (sentOff < 1000 || lostOff <= 0) return "";
+
+    var remainingOff = Math.max(0, sentOff - lostOff);
+    var lossRatio = Math.min(1, lostOff / sentOff);
+    var dateText = getReportImpactDate();
+    var prefix = dateText ? dateText + " " : "";
+
+    if (remainingOff <= Math.max(10, Math.round(sentOff * .01))) {
+        return prefix + "OFF RIP";
+    }
+
+    var quarters = Math.round(lossRatio * 4);
+    if (quarters < 1) return "";
+    if (quarters > 3) quarters = 3;
+    return prefix + quarters + "/4 OFF RIP";
+}
+
 function getOutsideVillageType(offPop, defPop) {
     if (offPop > 3e3 && offPop > defPop) return _t("offensive");
     if (defPop > 1e3 && defPop >= offPop) return _t("defensive");
@@ -165,22 +264,27 @@ function getNoteTroopInfo(dados, ladoNota) {
     if ("defensiva" == ladoNota) {
         return {
             tipoAldeia: dados.aldeia.defensiva.tipoAldeia,
-            offPop: dados.aldeia.defensiva.tropas.dentro.ofensivas + dados.aldeia.defensiva.tropas.fora.ofensivas,
-            deffPop: dados.aldeia.defensiva.tropas.dentro.defensivas + dados.aldeia.defensiva.tropas.fora.defensivas,
-            popFora: dados.aldeia.defensiva.tropas.fora.ofensivas + dados.aldeia.defensiva.tropas.fora.defensivas
+            offPop: dados.aldeia.defensiva.tropas.dentro.ofensivas,
+            deffPop: dados.aldeia.defensiva.tropas.dentro.defensivas,
+            popFora: dados.aldeia.defensiva.tropas.fora.ofensivas + dados.aldeia.defensiva.tropas.fora.defensivas,
+            troopsVisible: dados.aldeia.defensiva.tropas.visiveis
         };
     }
 
     return {
         tipoAldeia: dados.aldeia.ofensiva.tipoAldeia,
-        offPop: dados.aldeia.ofensiva.tropas.ofensivas,
-        deffPop: dados.aldeia.ofensiva.tropas.defensivas,
-        popFora: 0
+        offPop: dados.aldeia.ofensiva.tropas.prezivsi.ofensivas,
+        deffPop: dados.aldeia.ofensiva.tropas.prezivsi.defensivas,
+        popFora: 0,
+        troopsVisible: !0
     };
 }
 
 function normalizeReportLabel(text) {
-    return text.toLowerCase()
+    text = (text || "").toLowerCase();
+    text = text.normalize ? text.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : text;
+
+    return text
         .replace(/[áä]/g, "a")
         .replace(/č/g, "c")
         .replace(/ď/g, "d")
@@ -237,7 +341,14 @@ CriarRelatorioNotas = {
             ofensiva: {
                 idAldeia: "-1",
                 tipoAldeia: _t("unknown"),
-                tropas: { totais: [], ofensivas: 0, defensivas: 0 }
+                tropas: {
+                    totais: [],
+                    perdasTotais: [],
+                    sobreviventesTotais: [],
+                    vyslane: { ofensivas: 0, defensivas: 0 },
+                    straty: { ofensivas: 0, defensivas: 0 },
+                    prezivsi: { ofensivas: 0, defensivas: 0 }
+                }
             },
             defensiva: {
                 idAldeia: "-1",
@@ -277,6 +388,8 @@ CriarRelatorioNotas = {
         this.dados.mundo.arqueirosAtivos
             ? (
                 this.dados.aldeia.ofensiva.tropas.totais = new Array(10).fill(0),
+                this.dados.aldeia.ofensiva.tropas.perdasTotais = new Array(10).fill(0),
+                this.dados.aldeia.ofensiva.tropas.sobreviventesTotais = new Array(10).fill(0),
                 this.dados.aldeia.defensiva.tropas.totais = new Array(10).fill(0),
                 this.dados.aldeia.defensiva.tropas.fora.totais = new Array(10).fill(0),
                 this.dados.aldeia.defensiva.tropas.dentro.totais = new Array(10).fill(0),
@@ -284,6 +397,8 @@ CriarRelatorioNotas = {
             )
             : (
                 this.dados.aldeia.ofensiva.tropas.totais = new Array(8).fill(0),
+                this.dados.aldeia.ofensiva.tropas.perdasTotais = new Array(8).fill(0),
+                this.dados.aldeia.ofensiva.tropas.sobreviventesTotais = new Array(8).fill(0),
                 this.dados.aldeia.defensiva.tropas.totais = new Array(8).fill(0),
                 this.dados.aldeia.defensiva.tropas.fora.totais = new Array(8).fill(0),
                 this.dados.aldeia.defensiva.tropas.dentro.totais = new Array(8).fill(0),
@@ -310,17 +425,33 @@ CriarRelatorioNotas = {
 
         $("#attack_info_def_units > tbody > tr:nth-child(2) > td").length && (this.dados.aldeia.defensiva.tropas.visiveis = !0),
 
-        this.dados.aldeia.defensiva.tropas.visiveis && $("#attack_info_def_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
-            var s = parseInt(i.textContent, 10) || 0;
-            e < a.dados.aldeia.defensiva.tropas.totais.length && (a.dados.aldeia.defensiva.tropas.dentro.totais[e] = s),
-            addTroopPop(a.dados.aldeia.defensiva.tropas.dentro, e, s, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
-        })),
+        this.dados.aldeia.defensiva.tropas.visiveis && (function () {
+            var troopCount = a.dados.aldeia.defensiva.tropas.totais.length;
+            var original = getTroopRowValues("#attack_info_def_units > tbody > tr:nth-child(2) > td.unit-item", troopCount);
+            var losses = getTroopRowValues("#attack_info_def_units > tbody > tr:nth-child(3) > td.unit-item", troopCount);
+            var survivors = calculateSurvivors(original, losses);
 
-        $("#attack_info_att_units > tbody > tr:nth-child(2) > td.unit-item").each((function (e, i) {
-            var s = parseInt(i.textContent, 10) || 0;
-            e < a.dados.aldeia.ofensiva.tropas.totais.length && (a.dados.aldeia.ofensiva.tropas.totais[e] = s),
-            addTroopPop(a.dados.aldeia.ofensiva.tropas, e, s, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
-        })),
+            a.dados.aldeia.defensiva.tropas.totais = original;
+            a.dados.aldeia.defensiva.tropas.dentro.totais = survivors;
+
+            var remainingSummary = summarizeTroops(survivors, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+            a.dados.aldeia.defensiva.tropas.dentro.ofensivas = remainingSummary.ofensivas;
+            a.dados.aldeia.defensiva.tropas.dentro.defensivas = remainingSummary.defensivas;
+        }()),
+
+        (function () {
+            var troopCount = a.dados.aldeia.ofensiva.tropas.totais.length;
+            var sent = getTroopRowValues("#attack_info_att_units > tbody > tr:nth-child(2) > td.unit-item", troopCount);
+            var losses = getTroopRowValues("#attack_info_att_units > tbody > tr:nth-child(3) > td.unit-item", troopCount);
+            var survivors = calculateSurvivors(sent, losses);
+
+            a.dados.aldeia.ofensiva.tropas.totais = sent;
+            a.dados.aldeia.ofensiva.tropas.perdasTotais = losses;
+            a.dados.aldeia.ofensiva.tropas.sobreviventesTotais = survivors;
+            a.dados.aldeia.ofensiva.tropas.vyslane = summarizeTroops(sent, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+            a.dados.aldeia.ofensiva.tropas.straty = summarizeTroops(losses, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+            a.dados.aldeia.ofensiva.tropas.prezivsi = summarizeTroops(survivors, a.dados.mundo.fazendaPorTropa, a.dados.mundo.arqueirosAtivos);
+        }()),
 
         $("#attack_spy_buildings_left > tbody > tr:nth-child(1) > th:nth-child(1)").length && (
             this.dados.aldeia.defensiva.edificios.edificiosVisiveis = !0,
@@ -355,9 +486,9 @@ CriarRelatorioNotas = {
             foraType && (this.dados.aldeia.defensiva.tipoAldeia = foraType);
         }
 
-        this.dados.aldeia.ofensiva.tropas.ofensivas > this.dados.aldeia.ofensiva.tropas.defensivas
+        this.dados.aldeia.ofensiva.tropas.prezivsi.ofensivas > this.dados.aldeia.ofensiva.tropas.prezivsi.defensivas
             ? this.dados.aldeia.ofensiva.tipoAldeia = _t("offensive")
-            : this.dados.aldeia.ofensiva.tropas.ofensivas < this.dados.aldeia.ofensiva.tropas.defensivas && (this.dados.aldeia.ofensiva.tipoAldeia = _t("defensive"));
+            : this.dados.aldeia.ofensiva.tropas.prezivsi.ofensivas < this.dados.aldeia.ofensiva.tropas.prezivsi.defensivas && (this.dados.aldeia.ofensiva.tipoAldeia = _t("defensive"));
     },
     getLadoNotaAuto: function () {
         return this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor ? "defensiva" : "ofensiva";
@@ -402,6 +533,10 @@ CriarRelatorioNotas = {
             s += "[color=#ff8c00][b]Mimo: " + popFora + " pop[/b][/color] | ";
         }
 
+        if ("defensiva" == ladoNota && info.troopsVisible) {
+            s += "[color=#0eae0e][b]Zostatok: " + allDeffPop + " deff pop[/b][/color] | ";
+        }
+
         if (allDeffPop >= 20000) {
             var deffStr = Math.round(allDeffPop / 1000) + "K";
             s += "[color=#00ffff][b]BETÓN (" + deffStr + " deff)[/b][/color] | ";
@@ -424,6 +559,16 @@ CriarRelatorioNotas = {
             if (this.dados.aldeia.defensiva.edificios.igreja[0]) {
                 s += "[building]church_f[/building] " + _t("church") + " " + this.dados.aldeia.defensiva.edificios.igreja[1] + " | ";
             }
+        }
+
+        var catapultCount = this.dados.aldeia.ofensiva.tropas.totais[getCatapultIndex(this.dados.mundo.arqueirosAtivos)] || 0;
+        if (catapultCount > 0) {
+            s += "[unit]catapult[/unit] [color=#8b0000][b]Katova\u010dka: " + catapultCount + " katapultov[/b][/color] | ";
+        }
+
+        if ("ofensiva" == ladoNota) {
+            var offRipText = getOffRipText(this.dados);
+            offRipText && (s += "[color=#ff0000][b]" + offRipText + "[/b][/color] | ");
         }
 
         i && (s += "\n\n[b]" + i + "[/b]");
